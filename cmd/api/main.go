@@ -1,0 +1,195 @@
+package main
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
+	"github.com/vpnplatform/internal/anticheat"
+	"github.com/vpnplatform/internal/config"
+	adminHandler "github.com/vpnplatform/internal/handler/admin"
+	httpHandler "github.com/vpnplatform/internal/handler/http"
+	webhookHandler "github.com/vpnplatform/internal/handler/webhook"
+	"github.com/vpnplatform/internal/integration/platega"
+	"github.com/vpnplatform/internal/integration/remnawave"
+	"github.com/vpnplatform/internal/middleware"
+	dbpkg "github.com/vpnplatform/internal/repository/postgres"
+	redisrepo "github.com/vpnplatform/internal/repository/redis"
+	"github.com/vpnplatform/internal/service"
+	jwtpkg "github.com/vpnplatform/pkg/jwt"
+	"github.com/vpnplatform/pkg/logger"
+)
+
+func main() {
+	cfg := config.Load()
+
+	log, err := logger.New(cfg.App.Env)
+	if err != nil {
+		panic(err)
+	}
+	defer log.Sync()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	// ── Database ──────────────────────────────────────────────────────────
+	db, err := dbpkg.New(ctx, cfg.DB)
+	if err != nil {
+		log.Fatal("connect db", zap.Error(err))
+	}
+	defer db.Close()
+
+	// ── Run pending migrations ────────────────────────────────────────────
+	if err := dbpkg.RunMigrations(ctx, db); err != nil {
+		log.Fatal("run migrations", zap.Error(err))
+	}
+
+	// ── Redis ─────────────────────────────────────────────────────────────
+	rdb := redisrepo.New(cfg.Redis)
+	defer rdb.Close()
+
+	// ── External clients ──────────────────────────────────────────────────
+	platClient := platega.NewClient(cfg.Platega, log)
+	remnaClient := remnawave.NewClient(cfg.Remna)
+
+	// ── Repositories & services ───────────────────────────────────────────
+	userRepo := dbpkg.NewUserRepo(db)
+	antiEngine := anticheat.NewEngine(rdb, log)
+
+	authSvc := service.NewAuthService(userRepo, antiEngine, log, cfg.App.AdminLogin)
+	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log)
+	ecoSvc := service.NewEconomyService(userRepo, antiEngine, log)
+	trialSvc := service.NewTrialService(userRepo, remnaClient, log)
+
+	// ── JWT ───────────────────────────────────────────────────────────────
+	jwtMgr := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTLHours)
+
+	// ── Handlers ──────────────────────────────────────────────────────────
+	authH := httpHandler.NewAuthHandler(authSvc, jwtMgr, log)
+	profileH := httpHandler.NewProfileHandler(userRepo, remnaClient, log)
+	balanceH := httpHandler.NewBalanceHandler(userRepo, log)
+	subH := httpHandler.NewSubscriptionHandler(subSvc, log)
+	paymentH := httpHandler.NewPaymentHandler(subSvc, log)
+	referralH := httpHandler.NewReferralHandler(userRepo, log)
+	promoH := httpHandler.NewPromoHandler(ecoSvc, log)
+	trialH := httpHandler.NewTrialHandler(trialSvc, log)
+	ticketH := httpHandler.NewTicketHandler(userRepo, log)
+	shopH := httpHandler.NewShopHandler(userRepo, ecoSvc, log)
+	webhookH := webhookHandler.NewPlategalHandler(platClient, userRepo, rdb, log)
+	adminH := adminHandler.NewHandler(userRepo, antiEngine, log)
+
+	// ── Gin Router ────────────────────────────────────────────────────────
+	if cfg.App.Env == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	r := gin.New()
+	r.Use(
+		middleware.Recovery(log),
+		middleware.RequestID(),
+		middleware.Logger(log),
+		middleware.SecurityHeaders(),
+	)
+
+	// Suppress browser noise
+	r.GET("/favicon.ico", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	// Health check (no auth)
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "ts": time.Now().Unix()})
+	})
+
+	// Webhook (no JWT — authenticated by Platega headers)
+	r.POST(cfg.App.WebhookPath, webhookH.Handle)
+
+	// Public auth endpoints
+	auth := r.Group("/api/auth")
+	{
+		auth.POST("/register", authH.Register)
+		auth.POST("/login", authH.Login)
+	}
+
+	// Protected user endpoints
+	api := r.Group("/api", middleware.Auth(jwtMgr))
+	{
+		api.GET("/profile", profileH.Get)
+		api.GET("/profile/connection", profileH.GetConnection)
+		api.GET("/balance", balanceH.Get)
+		api.GET("/balance/history", balanceH.History)
+
+		api.GET("/subscriptions", subH.List)
+		api.GET("/subscriptions/:id", subH.GetByID)
+		api.POST("/subscriptions/buy", subH.Buy)
+		api.POST("/subscriptions/renew", subH.Renew)
+
+		api.GET("/payments/pending", paymentH.ListPending)
+		api.GET("/payments/:id", paymentH.GetByID)
+		api.POST("/payments/:id/check", paymentH.Check)
+
+		api.GET("/referrals", referralH.List)
+
+		api.POST("/promo/use", promoH.Use)
+		api.POST("/trial/activate", trialH.Activate)
+
+		api.GET("/tickets", ticketH.List)
+		api.POST("/tickets", ticketH.Create)
+		api.GET("/tickets/:id", ticketH.GetWithMessages)
+		api.POST("/tickets/:id/reply", ticketH.Reply)
+
+		api.GET("/shop", shopH.List)
+		api.POST("/shop/buy", shopH.Buy)
+	}
+
+	// Admin endpoints (JWT required + is_admin flag)
+	adm := r.Group("/admin", middleware.Auth(jwtMgr), middleware.AdminOnly())
+	{
+		adm.GET("/users", adminH.ListUsers)
+		adm.GET("/users/:id", adminH.GetUser)
+		adm.POST("/users/:id/ban", adminH.BanUser)
+		adm.POST("/users/:id/unban", adminH.UnbanUser)
+		adm.POST("/users/:id/reset-payment-limit", adminH.ResetPaymentLimit)
+		adm.PATCH("/users/:id/risk", adminH.SetRiskScore)
+
+		adm.GET("/analytics", adminH.Analytics)
+
+		adm.GET("/promocodes", adminH.ListPromoCodes)
+		adm.POST("/promocodes", adminH.CreatePromoCode)
+
+		adm.GET("/tickets", adminH.ListTickets)
+		adm.GET("/tickets/:id", adminH.GetTicket)
+		adm.POST("/tickets/:id/reply", adminH.ReplyToTicket)
+		adm.POST("/tickets/:id/close", adminH.CloseTicket)
+
+		adm.POST("/shop/items", adminH.CreateShopItem)
+	}
+
+	// ── HTTP Server ───────────────────────────────────────────────────────
+	srv := &http.Server{
+		Addr:         ":" + cfg.App.Port,
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		log.Info("API server starting", zap.String("addr", srv.Addr))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("server error", zap.Error(err))
+		}
+	}()
+
+	<-ctx.Done()
+	log.Info("shutting down API server")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("graceful shutdown error", zap.Error(err))
+	}
+}

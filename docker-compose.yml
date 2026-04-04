@@ -1,0 +1,168 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vpn_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vpn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: vpnplatform
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vpn} -d ${POSTGRES_DB:-vpnplatform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: vpn_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--pass", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  backend:
+    build:
+      context: .
+      dockerfile: deployments/Dockerfile.backend
+    container_name: vpn_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_PORT: 8080
+      APP_ENV: production
+      DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/vpnplatform?sslmode=disable
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      PLATEGA_MERCHANT_ID: ${PLATEGA_MERCHANT_ID:?required}
+      PLATEGA_SECRET: ${PLATEGA_SECRET:?required}
+      PLATEGA_BASE_URL: https://app.platega.io
+      PLATEGA_CALLBACK_URL: ${PLATEGA_CALLBACK_URL:?required}
+      PLATEGA_WEBHOOK_PATH: /webhooks/platega
+      REMNA_BASE_URL: ${REMNA_BASE_URL:?required}
+      REMNA_API_KEY: ${REMNA_API_KEY:?required}
+      REMNA_SQUAD_UUID: ${REMNA_SQUAD_UUID:-}
+      ADMIN_LOGIN: ${ADMIN_LOGIN:-}
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  worker:
+    build:
+      context: .
+      dockerfile: deployments/Dockerfile.worker
+    container_name: vpn_worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/vpnplatform?sslmode=disable
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      PLATEGA_MERCHANT_ID: ${PLATEGA_MERCHANT_ID}
+      PLATEGA_SECRET: ${PLATEGA_SECRET}
+      PLATEGA_BASE_URL: https://app.platega.io
+      REMNA_BASE_URL: ${REMNA_BASE_URL}
+      REMNA_API_KEY: ${REMNA_API_KEY}
+      REMNA_SQUAD_UUID: ${REMNA_SQUAD_UUID:-}
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  bot:
+    build:
+      context: .
+      dockerfile: deployments/Dockerfile.bot
+    container_name: vpn_bot
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/vpnplatform?sslmode=disable
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?required}
+      TELEGRAM_ADMIN_ID: ${TELEGRAM_ADMIN_ID}
+      PLATEGA_MERCHANT_ID: ${PLATEGA_MERCHANT_ID}
+      PLATEGA_SECRET: ${PLATEGA_SECRET}
+      PLATEGA_BASE_URL: https://app.platega.io
+      PLATEGA_CALLBACK_URL: ${PLATEGA_CALLBACK_URL}
+      REMNA_BASE_URL: ${REMNA_BASE_URL}
+      REMNA_API_KEY: ${REMNA_API_KEY}
+      REMNA_SQUAD_UUID: ${REMNA_SQUAD_UUID:-}
+      JWT_SECRET: ${JWT_SECRET}
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+    container_name: vpn_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "0.0.0.0:80:80"
+    networks:
+      - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  internal:
+    driver: bridge
