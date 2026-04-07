@@ -11,6 +11,7 @@
 //	/referral              — show referral link and stats
 //	/ticket                — open/manage support tickets
 //	/trial                 — info about free trial (redirect to site)
+//	/info                  — info with links to privacy policy and user agreement
 package bot
 
 import (
@@ -115,6 +116,7 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle("/ticket", b.handleTicketMenu)
 	b.bot.Handle("/help", b.handleHelp)
 	b.bot.Handle("/link", b.handleLink)
+	b.bot.Handle("/info", b.handleInfo)
 }
 
 // ─── Link handler ─────────────────────────────────────────────────────────────
@@ -642,6 +644,39 @@ func (b *Bot) handleHelp(c tele.Context) error {
 			"\U0001f527 /ticket \u2014 \u041f\u043e\u0434\u0434\u0435\u0440\u0436\u043a\u0430\n"+
 			"\U0001f39f /promo <\u043a\u043e\u0434> \u2014 \u0410\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043f\u0440\u043e\u043c\u043e\u043a\u043e\u0434\n\n"+
 			"_\u041f\u043e \u0432\u0441\u0435\u043c \u0432\u043e\u043f\u0440\u043e\u0441\u0430\u043c \u043e\u0431\u0440\u0430\u0449\u0430\u0439\u0442\u0435\u0441\u044c \u0447\u0435\u0440\u0435\u0437 /ticket_",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+		rm,
+	)
+}
+
+// ─── /info ────────────────────────────────────────────────────────────────────
+
+func (b *Bot) handleInfo(c tele.Context) error {
+	rm := &tele.ReplyMarkup{}
+
+	// Кнопки с ссылками на политику и соглашение
+	btnPrivacy := rm.URL("🔒 Политика конфиденциальности", b.cfg.WebAppURL+"/PrivacyPolicy")
+	btnAgreement := rm.URL("📋 Пользовательское соглашение", b.cfg.WebAppURL+"/UserAgreement")
+	btnSupport := rm.URL("💬 Поддержка: @Mellow_support", "https://t.me/Mellow_support")
+	btnBack := backBtn(rm)
+
+	rows := []tele.Row{
+		rm.Row(btnPrivacy),
+		rm.Row(btnAgreement),
+		rm.Row(btnSupport),
+		rm.Row(btnBack),
+	}
+
+	rm.Inline(rows...)
+
+	return c.Send(
+		"ℹ️ *Помощь и контакты*\n"+
+			"═════════════════════════\n\n"+
+			"Если что-то непонятно, здесь все быстрые ссылки.\n\n"+
+			"• *Поддержка:* @Mellow_support\n"+
+			"• *Кабинет:* управление подпиской, балансом и установкой\n"+
+			"• *Политика конфиденциальности:* читать\n"+
+			"• *Пользовательское соглашение:* читать",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 		rm,
 	)
