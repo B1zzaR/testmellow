@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -94,6 +96,7 @@ type Worker struct {
 	remna   *remnawave.Client
 	platega *platega.Client
 	anti    *anticheat.Engine
+	tgToken string // Telegram bot token for notifications (may be empty)
 	log     *zap.Logger
 }
 
@@ -103,9 +106,10 @@ func NewWorker(
 	remna *remnawave.Client,
 	platega *platega.Client,
 	anti *anticheat.Engine,
+	tgToken string,
 	log *zap.Logger,
 ) *Worker {
-	return &Worker{rdb: rdb, repo: repo, remna: remna, platega: platega, anti: anti, log: log}
+	return &Worker{rdb: rdb, repo: repo, remna: remna, platega: platega, anti: anti, tgToken: tgToken, log: log}
 }
 
 // Run starts all worker goroutines and blocks.
@@ -114,11 +118,13 @@ func (w *Worker) Run(ctx context.Context) {
 	go w.loop(ctx, QueueSubscriptionActivate, w.handleSubscriptionActivate)
 	go w.loop(ctx, QueueReferralReward, w.handleReferralReward)
 	go w.loop(ctx, QueueReferralPayout, w.handleReferralPayout)
+	go w.loop(ctx, QueueNotifyTelegram, w.handleNotifyTelegram)
 
 	// Periodic tasks
 	go w.periodicExpirySweep(ctx)
 	go w.periodicRewardSweep(ctx)
 	go w.periodicPaymentExpirySweep(ctx)
+	go w.periodicExpiryWarnings(ctx)
 
 	<-ctx.Done()
 	w.log.Info("worker shutting down")
@@ -345,14 +351,47 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 		zap.String("plan", string(plan)),
 		zap.Time("expires_at", newExpiry),
 	)
+
+	// Notify via Telegram
+	if user.TelegramID != nil {
+		planRu := map[domain.SubscriptionPlan]string{
+			domain.PlanWeek:       "1 неделя",
+			domain.PlanMonth:      "1 месяц",
+			domain.PlanThreeMonth: "3 месяца",
+		}
+		label := planRu[plan]
+		if label == "" {
+			label = string(plan)
+		}
+		w.enqueueNotify(ctx, *user.TelegramID,
+			fmt.Sprintf("✅ <b>Подписка активирована!</b>\n\nТариф: %s\nДействует до: %s", label, newExpiry.Format("02.01.2006")),
+		)
+	}
+
+	// Credit ЯД bonus for purchasing with rubles
+	if bonus := domain.PlanYADBonus(plan); bonus > 0 {
+		bonusTx, err := w.repo.BeginTx(ctx)
+		if err == nil {
+			if err := w.repo.AdjustYADBalance(ctx, bonusTx, userID, bonus, domain.YADTxBonus, nil, "Бонус за тариф: "+string(plan)); err != nil {
+				bonusTx.Rollback(ctx)
+				w.log.Warn("failed to credit ЯД subscription bonus",
+					zap.String("user_id", userID.String()),
+					zap.Int64("bonus", bonus),
+					zap.Error(err),
+				)
+			} else {
+				_ = bonusTx.Commit(ctx)
+			}
+		}
+	}
+
 	return nil
 }
 
 // ─── Referral Reward ──────────────────────────────────────────────────────────
 // LTV = total kopecks paid by the referee
 // Reward = 15% of payment amount in YAD  (1 YAD = 2.5 ₽)
-// 30% paid immediately (after 24–72h delay)
-// 70% paid after 30 days
+// 100% paid immediately (after 24–72h delay)
 
 func (w *Worker) handleReferralReward(ctx context.Context, payload string) error {
 	var job ReferralRewardJob
@@ -404,13 +443,13 @@ func (w *Worker) handleReferralReward(ctx context.Context, payload string) error
 		return nil
 	}
 
-	immediateYAD := int64(float64(totalYAD) * 0.30)
-	deferredYAD := totalYAD - immediateYAD
+	immediateYAD := totalYAD
+	deferredYAD := int64(0)
 
 	// Random delay 24–72 hours
 	delaySecs := 24*3600 + rand.Intn(48*3600)
 	scheduledAt := time.Now().Add(time.Duration(delaySecs) * time.Second)
-	deferredAt := scheduledAt.Add(30 * 24 * time.Hour)
+	var deferredAt *time.Time
 
 	rr := &domain.ReferralReward{
 		ID:           uuid.New(),
@@ -423,7 +462,7 @@ func (w *Worker) handleReferralReward(ctx context.Context, payload string) error
 		Status:       domain.SplitPending,
 		RiskScore:    referrer.RiskScore,
 		ScheduledAt:  scheduledAt,
-		DeferredAt:   &deferredAt,
+		DeferredAt:   deferredAt,
 		CreatedAt:    time.Now(),
 	}
 
@@ -599,7 +638,7 @@ func (w *Worker) periodicRewardSweep(ctx context.Context) {
 			return
 		case <-ticker.C:
 			w.payoutPendingRewards(ctx)
-			w.payoutDeferredRewards(ctx)
+			// w.payoutDeferredRewards(ctx)  // No longer needed: 100% immediate payout
 		}
 	}
 }
@@ -627,11 +666,11 @@ func (w *Worker) payoutPendingRewards(ctx context.Context) {
 			}
 			defer tx.Rollback(ctx)
 
-			// Credit immediate 30%
+			// Credit immediate 100%
 			refID := rr.ID
 			if err := w.repo.AdjustYADBalance(ctx, tx, rr.ReferrerID,
 				rr.ImmediateYAD, domain.YADTxReferralReward, &refID,
-				fmt.Sprintf("Referral reward (immediate 30%%)")); err != nil {
+				fmt.Sprintf("Referral reward (100%% immediate)")); err != nil {
 				w.log.Error("credit immediate yad", zap.Error(err))
 				return
 			}
@@ -689,5 +728,89 @@ func (w *Worker) payoutDeferredRewards(ctx context.Context) {
 				zap.Int64("yad", rr.DeferredYAD),
 			)
 		}()
+	}
+}
+
+// ─── Telegram Notifications ───────────────────────────────────────────────────
+
+// enqueueNotify enqueues a Telegram notification if the user has a telegram_id.
+func (w *Worker) enqueueNotify(ctx context.Context, tgID int64, msg string) {
+	if tgID == 0 || w.tgToken == "" {
+		return
+	}
+	_ = Enqueue(ctx, w.rdb, QueueNotifyTelegram, NotifyTelegramJob{
+		TelegramID: tgID,
+		Message:    msg,
+	})
+}
+
+// handleNotifyTelegram sends a Telegram message via Bot API HTTP call.
+func (w *Worker) handleNotifyTelegram(ctx context.Context, payload string) error {
+	if w.tgToken == "" {
+		return nil
+	}
+	var job NotifyTelegramJob
+	if err := json.Unmarshal([]byte(payload), &job); err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", w.tgToken)
+	body := fmt.Sprintf(`{"chat_id":%d,"text":%q,"parse_mode":"HTML"}`, job.TelegramID, job.Message)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram send: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		w.log.Warn("telegram send failed", zap.Int("status", resp.StatusCode), zap.Int64("tg_id", job.TelegramID))
+	}
+	return nil
+}
+
+// periodicExpiryWarnings sends Telegram notifications 3 days before subscription expires.
+func (w *Worker) periodicExpiryWarnings(ctx context.Context) {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.sendExpiryWarnings(ctx)
+		}
+	}
+}
+
+func (w *Worker) sendExpiryWarnings(ctx context.Context) {
+	if w.tgToken == "" {
+		return
+	}
+	subs, err := w.repo.GetSubscriptionsExpiringIn(ctx, 3*24*time.Hour)
+	if err != nil {
+		w.log.Error("get expiring subscriptions", zap.Error(err))
+		return
+	}
+	for _, sub := range subs {
+		// Deduplicate: only send once per subscription per warning cycle
+		dedupKey := fmt.Sprintf("notify:expiry3d:%s", sub.ID.String())
+		ok, _ := redisrepo.SetNX(ctx, w.rdb, dedupKey, 7*24*time.Hour)
+		if !ok {
+			continue
+		}
+		user, err := w.repo.GetByID(ctx, sub.UserID)
+		if err != nil || user == nil || user.TelegramID == nil {
+			continue
+		}
+		daysLeft := int(time.Until(sub.ExpiresAt).Hours() / 24)
+		msg := fmt.Sprintf("⚠️ <b>Ваша подписка истекает через %d дн.</b>\n\nПродлите её в личном кабинете, чтобы не потерять доступ к VPN.", daysLeft)
+		w.enqueueNotify(ctx, *user.TelegramID, msg)
 	}
 }

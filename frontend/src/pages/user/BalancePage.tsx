@@ -2,16 +2,16 @@ import { useQuery } from '@tanstack/react-query'
 import { balanceApi } from '@/api/profile'
 import { Card, StatCard } from '@/components/ui/Card'
 import { PageSpinner } from '@/components/ui/Spinner'
-import { Alert } from '@/components/ui/Alert'
+import { Icon } from '@/components/ui/Icons'
 import { formatDateTime, formatYAD } from '@/utils/formatters'
 import type { YADTxType } from '@/api/types'
 
 const txTypeLabel: Record<YADTxType, string> = {
-  referral_reward: 'Referral Reward',
-  bonus: 'Bonus',
-  spent: 'Spent',
-  promo: 'Promo Code',
-  trial: 'Trial',
+  referral_reward: 'Реферальное вознаграждение',
+  bonus: 'Бонус',
+  spent: 'Списание',
+  promo: 'Промокод',
+  trial: 'Пробный период',
 }
 
 export function BalancePage() {
@@ -28,57 +28,59 @@ export function BalancePage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">YAD Balance</h1>
+      <div>
+        <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100">Баланс ЯДА</h1>
+        <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">Внутренняя валюта платформы</p>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
-          label="Current Balance"
+          label="Текущий баланс"
           value={formatYAD(balance?.yad_balance ?? 0)}
-          sub={`≈ ${(balance?.yad_ruble_value ?? 0).toFixed(2)} ₽`}
-          icon="💎"
+          icon={<Icon name="skull" size={28} />}
+          accent
         />
         <StatCard
-          label="Exchange Rate"
-          value="1 YAD = 2.50 ₽"
-          sub="Fixed rate"
-          icon="💱"
+          label="Курс обмена"
+          value="1 ЯД = 2.50 ₽"
+          sub="Фиксированный"
+          icon={<Icon name="refresh" size={28} />}
         />
         <StatCard
-          label="Value"
+          label="В рублях"
           value={`${(balance?.yad_ruble_value ?? 0).toFixed(2)} ₽`}
-          sub="Total ruble value"
-          icon="💰"
+          sub="Эквивалент"
+          icon={<Icon name="gem" size={28} />}
         />
       </div>
 
-      <Card title="Transaction History">
+      <Card title="История транзакций">
         {histLoading ? (
           <PageSpinner />
         ) : !history?.transactions?.length ? (
-          <Alert variant="info" message="No transactions yet" />
+          <div className="py-8 text-center">
+            <Icon name="coins" size={28} className="mx-auto mb-2 text-gray-300 dark:text-slate-700" />
+            <p className="text-sm text-gray-400 dark:text-slate-600">Транзакций пока нет</p>
+          </div>
         ) : (
           <div className="space-y-1">
             {history.transactions.map((tx) => (
               <div
                 key={tx.id}
-                className="flex items-center justify-between rounded-lg px-4 py-3 hover:bg-gray-50"
+                className="flex items-center justify-between rounded-lg px-4 py-3 hover:bg-gray-50 dark:hover:bg-surface-800 transition-colors"
               >
                 <div>
-                  <p className="text-sm font-medium text-gray-800">
+                  <p className="text-sm font-medium text-gray-800 dark:text-slate-200">
                     {txTypeLabel[tx.tx_type] ?? tx.tx_type}
                   </p>
-                  {tx.note && <p className="text-xs text-gray-400">{tx.note}</p>}
-                  <p className="text-xs text-gray-400">{formatDateTime(tx.created_at)}</p>
+                  {tx.note && <p className="text-xs text-gray-400 dark:text-slate-600">{tx.note}</p>}
+                  <p className="text-xs text-gray-400 dark:text-slate-600">{formatDateTime(tx.created_at)}</p>
                 </div>
                 <div className="text-right">
-                  <p
-                    className={`font-semibold ${
-                      tx.delta > 0 ? 'text-green-600' : 'text-red-600'
-                    }`}
-                  >
-                    {tx.delta > 0 ? '+' : ''}{tx.delta} YAD
+                  <p className={`font-bold ${tx.delta > 0 ? 'text-primary-500' : 'text-red-500'}`}>
+                    {tx.delta > 0 ? '+' : ''}{tx.delta} ЯД
                   </p>
-                  <p className="text-xs text-gray-400">Balance: {tx.balance} YAD</p>
+                  <p className="text-xs text-gray-400">Баланс: {tx.balance} ЯД</p>
                 </div>
               </div>
             ))}

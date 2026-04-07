@@ -33,7 +33,21 @@ export const useAuthStore = create<AuthState>()(
         set({ token: null, user: null })
       },
 
-      isAuthenticated: () => Boolean(get().token),
+      isAuthenticated: () => {
+        const token = get().token
+        if (!token) return false
+        try {
+          const payload = JSON.parse(atob(token.split('.')[1]))
+          if (payload.exp && payload.exp * 1000 < Date.now()) {
+            set({ token: null, user: null })
+            localStorage.removeItem('auth_token')
+            return false
+          }
+          return true
+        } catch {
+          return false
+        }
+      },
 
       isAdmin: () => Boolean(get().user?.is_admin),
     }),

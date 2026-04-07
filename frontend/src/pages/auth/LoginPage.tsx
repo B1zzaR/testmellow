@@ -4,6 +4,7 @@ import { useLogin } from '@/hooks/useAuth'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
+import { SnakeLogo } from '@/components/ui/Icons'
 
 export function LoginPage() {
   const [username, setUsername] = useState('')
@@ -16,25 +17,35 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 dark:bg-slate-950">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-slate-100">VPN Platform</h1>
-          <p className="mt-2 text-sm text-gray-500 dark:text-slate-400">Sign in to your account</p>
+    <div className="relative flex min-h-screen items-center justify-center bg-gray-50 px-4 dark:bg-[#07070d]">
+      {/* Subtle radial glow */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+        <div className="absolute left-1/2 top-0 h-[400px] w-[600px] -translate-x-1/2 rounded-full bg-primary-500/5 blur-3xl" />
+      </div>
+
+      <div className="relative w-full max-w-sm">
+        {/* Brand block */}
+        <div className="mb-8 flex flex-col items-center text-center">
+          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-primary-900/60 bg-primary-500/10">
+            <SnakeLogo size={36} />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-slate-100">Добро пожаловать</h1>
+          <p className="mt-1.5 text-sm text-gray-500 dark:text-slate-500">Войдите в свой VPN-аккаунт</p>
         </div>
 
-        <div className="rounded-xl border border-gray-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        {/* Card */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-card dark:border-surface-600 dark:bg-surface-900 dark:shadow-card">
           <form onSubmit={handleSubmit} className="space-y-5" noValidate>
             <Input
-              label="Login"
-              placeholder="your_login"
+              label="Логин"
+              placeholder="ваш_логин"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
               autoComplete="username"
             />
             <Input
-              label="Password"
+              label="Пароль"
               type="password"
               placeholder="••••••••"
               value={password}
@@ -44,21 +55,25 @@ export function LoginPage() {
             />
 
             {login.isError && (
-              <Alert variant="error" message={login.error?.message ?? 'Login failed'} />
+              <Alert variant="error" message={login.error?.message ?? 'Ошибка входа'} />
             )}
 
             <Button type="submit" className="w-full" loading={login.isPending} size="lg">
-              Sign In
+              Войти
             </Button>
           </form>
 
-          <p className="mt-6 text-center text-sm text-gray-500 dark:text-slate-400">
-            Don't have an account?{' '}
-            <Link to="/register" className="font-medium text-primary-600 hover:text-primary-700">
-              Register
+          <p className="mt-6 text-center text-sm text-gray-500 dark:text-slate-500">
+            Нет аккаунта?{' '}
+            <Link to="/register" className="font-medium text-primary-500 hover:text-primary-400 transition-colors">
+              Зарегистрироваться
             </Link>
           </p>
         </div>
+
+        <p className="mt-6 text-center text-xs text-gray-400 dark:text-slate-600">
+          Безопасно · Быстро · Надёжно
+        </p>
       </div>
     </div>
   )

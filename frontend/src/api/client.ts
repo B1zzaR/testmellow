@@ -32,10 +32,19 @@ apiClient.interceptors.response.use(
         window.location.href = '/login'
       }
     }
-    const message =
+    const raw =
       error.response?.data?.error ??
       error.message ??
-      'An unexpected error occurred'
+      'Произошла непредвиденная ошибка'
+    // Translate technical gin-validator errors and network errors
+    let message = raw
+    if (/Field validation for|Key:.*Error:/.test(raw)) {
+      message = 'Проверьте правильность заполнения формы'
+    } else if (/Network Error|ERR_NETWORK|Failed to fetch/.test(raw)) {
+      message = 'Ошибка сети — проверьте подключение к интернету'
+    } else if (/timeout/.test(raw)) {
+      message = 'Превышено время ожидания — попробуйте позже'
+    }
     return Promise.reject(new Error(message))
   },
 )

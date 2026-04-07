@@ -48,7 +48,7 @@ func main() {
 
 	authSvc := service.NewAuthService(userRepo, antiEngine, log, cfg.App.AdminLogin)
 	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log)
-	ecoSvc := service.NewEconomyService(userRepo, antiEngine, log)
+	ecoSvc := service.NewEconomyService(userRepo, remnaClient, antiEngine, log)
 	trialSvc := service.NewTrialService(userRepo, remnaClient, log)
 
 	jwtMgr := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTLHours)
@@ -57,7 +57,7 @@ func main() {
 		Token:   cfg.Telegram.Token,
 		AdminID: cfg.Telegram.AdminID,
 	}
-	b, err := bot.New(botCfg, userRepo, authSvc, subSvc, ecoSvc, trialSvc, jwtMgr, log)
+	b, err := bot.New(botCfg, userRepo, authSvc, subSvc, ecoSvc, trialSvc, remnaClient, jwtMgr, rdb, log)
 	if err != nil {
 		log.Fatal("init bot", zap.Error(err))
 	}

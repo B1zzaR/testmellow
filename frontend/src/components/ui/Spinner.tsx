@@ -1,7 +1,9 @@
 export function Spinner({ className = '' }: { className?: string }) {
   return (
     <div
-      className={`inline-block h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-primary-600 ${className}`}
+      className={`inline-block animate-spin rounded-full border-2 border-surface-600 border-t-primary-500 ${
+        className || 'h-6 w-6'
+      }`}
       role="status"
       aria-label="Loading"
     />

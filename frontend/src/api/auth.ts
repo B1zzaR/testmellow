@@ -11,4 +11,9 @@ export const authApi = {
     const res = await apiClient.post<AuthResponse>('/api/auth/register', data)
     return res.data
   },
+
+  refresh: async (refreshToken: string): Promise<AuthResponse> => {
+    const res = await apiClient.post<AuthResponse>('/api/auth/refresh', { refresh_token: refreshToken })
+    return res.data
+  },
 }

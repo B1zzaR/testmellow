@@ -58,24 +58,26 @@ const (
 // ─── User ─────────────────────────────────────────────────────────────────────
 
 type User struct {
-	ID                uuid.UUID  `db:"id" json:"id"`
-	TelegramID        *int64     `db:"telegram_id" json:"telegram_id"`
-	Username          *string    `db:"username" json:"username"`
-	Email             *string    `db:"email" json:"email"`
-	PasswordHash      *string    `db:"password_hash" json:"-"`
-	YADBalance        int64      `db:"yad_balance" json:"yad_balance"`
-	ReferrerID        *uuid.UUID `db:"referrer_id" json:"referrer_id"`
-	ReferralCode      string     `db:"referral_code" json:"referral_code"`
-	LTV               int64      `db:"ltv" json:"ltv"`
-	RiskScore         int        `db:"risk_score" json:"-"`
-	IsAdmin           bool       `db:"is_admin" json:"is_admin"`
-	IsBanned          bool       `db:"is_banned" json:"is_banned"`
-	RemnaUserUUID     *string    `db:"remna_user_uuid" json:"-"`
-	DeviceFingerprint *string    `db:"device_fingerprint" json:"-"`
-	LastKnownIP       *string    `db:"last_known_ip" json:"-"`
-	TrialUsed         bool       `db:"trial_used" json:"trial_used"`
-	CreatedAt         time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt         time.Time  `db:"updated_at" json:"updated_at"`
+	ID                    uuid.UUID  `db:"id" json:"id"`
+	TelegramID            *int64     `db:"telegram_id" json:"telegram_id"`
+	Username              *string    `db:"username" json:"username"`
+	Email                 *string    `db:"email" json:"email"`
+	PasswordHash          *string    `db:"password_hash" json:"-"`
+	YADBalance            int64      `db:"yad_balance" json:"yad_balance"`
+	ReferrerID            *uuid.UUID `db:"referrer_id" json:"referrer_id"`
+	ReferralCode          string     `db:"referral_code" json:"referral_code"`
+	LTV                   int64      `db:"ltv" json:"ltv"`
+	RiskScore             int        `db:"risk_score" json:"-"`
+	IsAdmin               bool       `db:"is_admin" json:"is_admin"`
+	IsBanned              bool       `db:"is_banned" json:"is_banned"`
+	RemnaUserUUID         *string    `db:"remna_user_uuid" json:"-"`
+	DeviceFingerprint     *string    `db:"device_fingerprint" json:"-"`
+	LastKnownIP           *string    `db:"last_known_ip" json:"-"`
+	TrialUsed             bool       `db:"trial_used" json:"trial_used"`
+	ActiveDiscountCode    *string    `db:"active_discount_code" json:"active_discount_code,omitempty"`
+	ActiveDiscountPercent int        `db:"active_discount_percent" json:"active_discount_percent"`
+	CreatedAt             time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt             time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 // ─── Subscription ─────────────────────────────────────────────────────────────
@@ -110,6 +112,32 @@ func PlanDurationDays(plan SubscriptionPlan) int {
 		return 30
 	case PlanThreeMonth:
 		return 90
+	}
+	return 0
+}
+
+// PlanYADBonus returns the ЯД bonus credited when a plan is purchased with rubles via payment.
+func PlanYADBonus(plan SubscriptionPlan) int64 {
+	switch plan {
+	case PlanWeek:
+		return 10
+	case PlanMonth:
+		return 25
+	case PlanThreeMonth:
+		return 75
+	}
+	return 0
+}
+
+// PlanYADPrice returns the ЯД price for purchasing a plan directly using ЯД balance.
+func PlanYADPrice(plan SubscriptionPlan) int64 {
+	switch plan {
+	case PlanWeek:
+		return 30
+	case PlanMonth:
+		return 75
+	case PlanThreeMonth:
+		return 210
 	}
 	return 0
 }
@@ -189,15 +217,22 @@ type YADTransaction struct {
 
 // ─── PromoCode ────────────────────────────────────────────────────────────────
 
+const (
+	PromoTypeYAD      = "yad"
+	PromoTypeDiscount = "discount"
+)
+
 type PromoCode struct {
-	ID          uuid.UUID  `db:"id" json:"id"`
-	Code        string     `db:"code" json:"code"`
-	YADAmount   int64      `db:"yad_amount" json:"yad_amount"`
-	MaxUses     int        `db:"max_uses" json:"max_uses"`
-	UsedCount   int        `db:"used_count" json:"used_count"`
-	ExpiresAt   *time.Time `db:"expires_at" json:"expires_at"`
-	CreatedByID uuid.UUID  `db:"created_by_id" json:"created_by_id"`
-	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
+	ID              uuid.UUID  `db:"id" json:"id"`
+	Code            string     `db:"code" json:"code"`
+	PromoType       string     `db:"promo_type" json:"promo_type"`
+	YADAmount       int64      `db:"yad_amount" json:"yad_amount"`
+	DiscountPercent int        `db:"discount_percent" json:"discount_percent"`
+	MaxUses         int        `db:"max_uses" json:"max_uses"`
+	UsedCount       int        `db:"used_count" json:"used_count"`
+	ExpiresAt       *time.Time `db:"expires_at" json:"expires_at"`
+	CreatedByID     uuid.UUID  `db:"created_by_id" json:"created_by_id"`
+	CreatedAt       time.Time  `db:"created_at" json:"created_at"`
 }
 
 type PromoCodeUse struct {
@@ -246,4 +281,34 @@ type ShopOrder struct {
 	Quantity  int       `db:"quantity" json:"quantity"`
 	TotalYAD  int64     `db:"total_yad" json:"total_yad"`
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
+}
+
+// ─── Admin Audit Log ──────────────────────────────────────────────────────────
+
+type AdminAuditLog struct {
+	ID            uuid.UUID  `db:"id"          json:"id"`
+	AdminID       uuid.UUID  `db:"admin_id"    json:"admin_id"`
+	Action        string     `db:"action"      json:"action"`
+	TargetType    *string    `db:"target_type" json:"target_type,omitempty"`
+	TargetID      *uuid.UUID `db:"target_id"   json:"target_id,omitempty"`
+	Details       *string    `db:"details"     json:"details,omitempty"`
+	AdminUsername *string    `db:"-"           json:"admin_username,omitempty"`
+	AdminEmail    *string    `db:"-"           json:"admin_email,omitempty"`
+	CreatedAt     time.Time  `db:"created_at"  json:"created_at"`
+}
+
+// ─── Analytics helpers ────────────────────────────────────────────────────────
+
+type RevenueStat struct {
+	Date         time.Time `json:"date"`
+	TotalKopecks int64     `json:"total_kopecks"`
+	Count        int64     `json:"count"`
+}
+
+type TopReferrer struct {
+	UserID         uuid.UUID `json:"user_id"`
+	Username       *string   `json:"username"`
+	Email          *string   `json:"email"`
+	ReferralCount  int64     `json:"referral_count"`
+	TotalRewardYAD int64     `json:"total_reward_yad"`
 }

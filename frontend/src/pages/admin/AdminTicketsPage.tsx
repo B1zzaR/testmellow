@@ -28,11 +28,11 @@ export function AdminTicketsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Support Tickets</h1>
+      <h1 className="text-2xl font-bold text-slate-100">Тикеты поддержки</h1>
 
       <div className="flex flex-wrap gap-3">
         <Input
-          placeholder="Search by subject or ID…"
+          placeholder="Поиск по теме или ID…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-xs"
@@ -44,11 +44,11 @@ export function AdminTicketsPage() {
               onClick={() => setStatusFilter(s)}
               className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                 statusFilter === s
-                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  ? 'border-primary-500 bg-primary-500/10 text-primary-400'
+                  : 'border-surface-600 text-slate-400 hover:bg-surface-700 hover:text-slate-300'
               }`}
             >
-              {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+              {s === '' ? 'Все' : s === 'open' ? 'Открытые' : s === 'answered' ? 'Отвечено' : 'Закрытые'}
             </button>
           ))}
         </div>
@@ -57,12 +57,12 @@ export function AdminTicketsPage() {
       <Table<Ticket>
         keyExtractor={(t) => t.id}
         data={tickets}
-        emptyMessage="No tickets found"
+        emptyMessage="Тикеты не найдены"
         onRowClick={(t) => navigate(`/admin/tickets/${t.id}`)}
         columns={[
           {
             key: 'subject',
-            header: 'Subject',
+            header: 'Тема',
             render: (t) => <span className="font-medium">{t.subject}</span>,
           },
           {
@@ -72,12 +72,12 @@ export function AdminTicketsPage() {
           },
           {
             key: 'created_at',
-            header: 'Created',
+            header: 'Создан',
             render: (t) => formatDateTime(t.created_at),
           },
           {
             key: 'updated_at',
-            header: 'Last Update',
+            header: 'Последнее обновление',
             render: (t) => formatDateTime(t.updated_at),
           },
         ]}

@@ -53,7 +53,7 @@ func (e *Engine) CheckLoginRateLimit(ctx context.Context, identifier string) err
 		return nil // fail open on Redis error, log separately
 	}
 	if count > MaxLoginAttempts {
-		return fmt.Errorf("too many login attempts — locked for 15 minutes")
+		return fmt.Errorf("слишком много попыток входа — попробуйте через 15 минут")
 	}
 	return nil
 }
@@ -72,7 +72,7 @@ func (e *Engine) CheckAPIRateLimit(ctx context.Context, userID, action string, l
 		return nil
 	}
 	if count > limit {
-		return fmt.Errorf("rate limit exceeded for action %s", action)
+		return fmt.Errorf("превышен лимит запросов")
 	}
 	return nil
 }
@@ -92,7 +92,7 @@ func (e *Engine) CheckIPRateLimit(ctx context.Context, ip, action string, limit 
 		return nil
 	}
 	if count > limit {
-		return fmt.Errorf("rate limit exceeded from IP %s", ip)
+		return fmt.Errorf("превышен лимит запросов с вашего адреса")
 	}
 	return nil
 }
@@ -102,7 +102,7 @@ func (e *Engine) CheckIPRateLimit(ctx context.Context, ip, action string, limit 
 // CheckSelfReferral returns error if userID == referrerID
 func (e *Engine) CheckSelfReferral(userID, referrerID uuid.UUID) error {
 	if userID == referrerID {
-		return fmt.Errorf("self-referral is not allowed")
+		return fmt.Errorf("нельзя использовать собственный реферальный код")
 	}
 	return nil
 }
@@ -118,7 +118,7 @@ func (e *Engine) CheckDailyReferralLimit(ctx context.Context, referrerID uuid.UU
 	if count > MaxDailyReferrals {
 		// Remove the count we just added
 		e.rdb.Decr(ctx, key)
-		return fmt.Errorf("daily referral limit reached")
+		return fmt.Errorf("превышен дневной лимит приглашений")
 	}
 	return nil
 }
@@ -133,7 +133,7 @@ func (e *Engine) CheckAndAddDailyYADCredit(ctx context.Context, userID uuid.UUID
 		return nil // fail open
 	}
 	if current+amount > MaxDailyYADCredit {
-		return fmt.Errorf("daily YAD credit limit exceeded")
+		return fmt.Errorf("превышен дневной лимит начисления ЯД")
 	}
 	return redisrepo.AddDailyYADCredit(ctx, e.rdb, userID.String(), amount)
 }

@@ -32,12 +32,12 @@ export function AdminUsersPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Users</h1>
-        <span className="text-sm text-gray-500">{(data?.users ?? []).length} total</span>
+        <h1 className="text-2xl font-bold text-slate-100">Пользователи</h1>
+        <span className="text-sm text-slate-500">{(data?.users ?? []).length} total</span>
       </div>
 
       <Input
-        placeholder="Search by email, username or ID…"
+        placeholder="Поиск по email, логину или ID…"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="max-w-md"
@@ -48,11 +48,11 @@ export function AdminUsersPage() {
         data={users}
         loading={false}
         onRowClick={(u) => navigate(`/admin/users/${u.id}`)}
-        emptyMessage="No users found"
+        emptyMessage="Пользователи не найдены"
         columns={[
           {
             key: 'email',
-            header: 'Email / Username',
+            header: 'Email / Логин',
             render: (u) => (
               <div>
                 <p className="font-medium">{u.email ?? '—'}</p>
@@ -62,7 +62,7 @@ export function AdminUsersPage() {
           },
           {
             key: 'yad_balance',
-            header: 'YAD Balance',
+            header: 'Баланс ЯД',
             render: (u) => formatYAD(u.yad_balance),
           },
           {
@@ -72,7 +72,7 @@ export function AdminUsersPage() {
           },
           {
             key: 'risk_score',
-            header: 'Risk',
+            header: 'Риск',
             render: (u) => (
               <span
                 className={`font-semibold ${
@@ -89,18 +89,18 @@ export function AdminUsersPage() {
           },
           {
             key: 'status',
-            header: 'Status',
+            header: 'Статус',
             render: (u) => (
               <div className="flex flex-wrap gap-1">
-                {u.is_admin && <Badge label="Admin" variant="purple" />}
-                {u.is_banned && <Badge label="Banned" variant="red" />}
-                {!u.is_banned && !u.is_admin && <Badge label="Active" variant="green" />}
+                {u.is_admin && <Badge label="Админ" variant="purple" />}
+                {u.is_banned && <Badge label="Заблокирован" variant="red" />}
+                {!u.is_banned && !u.is_admin && <Badge label="Активен" variant="green" />}
               </div>
             ),
           },
           {
             key: 'created_at',
-            header: 'Joined',
+            header: 'Зарегистрирован',
             render: (u) => formatDate(u.created_at),
           },
         ]}

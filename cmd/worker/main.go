@@ -44,7 +44,7 @@ func main() {
 	platClient := platega.NewClient(cfg.Platega, log)
 	antiEngine := anticheat.NewEngine(rdb, log)
 
-	w := worker.NewWorker(rdb, userRepo, remnaClient, platClient, antiEngine, log)
+	w := worker.NewWorker(rdb, userRepo, remnaClient, platClient, antiEngine, cfg.Telegram.Token, log)
 
 	log.Info("worker starting")
 	w.Run(ctx)

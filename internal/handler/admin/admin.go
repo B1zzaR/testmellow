@@ -2,6 +2,7 @@
 package admin
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -11,18 +12,44 @@ import (
 
 	"github.com/vpnplatform/internal/anticheat"
 	"github.com/vpnplatform/internal/domain"
+	"github.com/vpnplatform/internal/integration/platega"
+	"github.com/vpnplatform/internal/integration/remnawave"
 	"github.com/vpnplatform/internal/repository/postgres"
 )
 
 type Handler struct {
-	repo *postgres.UserRepo
-	anti *anticheat.Engine
-	log  *zap.Logger
+	repo    *postgres.UserRepo
+	anti    *anticheat.Engine
+	platega *platega.Client
+	remna   *remnawave.Client
+	log     *zap.Logger
 }
 
-func NewHandler(repo *postgres.UserRepo, anti *anticheat.Engine, log *zap.Logger) *Handler {
-	return &Handler{repo: repo, anti: anti, log: log}
+func NewHandler(repo *postgres.UserRepo, anti *anticheat.Engine, platClient *platega.Client, remnaClient *remnawave.Client, log *zap.Logger) *Handler {
+	return &Handler{repo: repo, anti: anti, platega: platClient, remna: remnaClient, log: log}
 }
+
+// ─── Audit log helper ────────────────────────────────────────────────────────
+
+func (h *Handler) audit(c *gin.Context, action string, targetType *string, targetID *uuid.UUID, details *string) {
+	adminIDVal, _ := c.Get("user_id")
+	adminID, _ := adminIDVal.(uuid.UUID)
+	entry := &domain.AdminAuditLog{
+		ID:         uuid.New(),
+		AdminID:    adminID,
+		Action:     action,
+		TargetType: targetType,
+		TargetID:   targetID,
+		Details:    details,
+		CreatedAt:  time.Now(),
+	}
+	if err := h.repo.CreateAuditLog(c.Request.Context(), entry); err != nil {
+		h.log.Warn("audit log write failed", zap.Error(err), zap.String("action", action))
+	}
+}
+
+func strPtr(s string) *string       { return &s }
+func uidPtr(u uuid.UUID) *uuid.UUID { return &u }
 
 // ─── Users ───────────────────────────────────────────────────────────────────
 
@@ -62,6 +89,7 @@ func (h *Handler) BanUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ban user"})
 		return
 	}
+	h.audit(c, "user.ban", strPtr("user"), uidPtr(id), nil)
 	h.log.Info("user banned by admin", zap.String("user_id", id.String()))
 	c.JSON(http.StatusOK, gin.H{"message": "user banned"})
 }
@@ -77,6 +105,7 @@ func (h *Handler) UnbanUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unban user"})
 		return
 	}
+	h.audit(c, "user.unban", strPtr("user"), uidPtr(id), nil)
 	c.JSON(http.StatusOK, gin.H{"message": "user unbanned"})
 }
 
@@ -100,6 +129,7 @@ func (h *Handler) SetRiskScore(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update risk score"})
 		return
 	}
+	h.audit(c, "user.risk_score", strPtr("user"), uidPtr(id), strPtr(fmt.Sprintf("%d", req.Score)))
 	c.JSON(http.StatusOK, gin.H{"message": "risk score updated"})
 }
 
@@ -128,10 +158,12 @@ func (h *Handler) ListPromoCodes(c *gin.Context) {
 }
 
 type createPromoRequest struct {
-	Code      string  `json:"code" binding:"required,min=4,max=32"`
-	YADAmount int64   `json:"yad_amount" binding:"required,min=1"`
-	MaxUses   int     `json:"max_uses" binding:"required,min=1"`
-	ExpiresAt *string `json:"expires_at"` // RFC3339 or null
+	Code            string  `json:"code" binding:"required,min=4,max=32"`
+	PromoType       string  `json:"promo_type"`       // "yad" or "discount"
+	YADAmount       int64   `json:"yad_amount"`       // required when promo_type=yad
+	DiscountPercent int     `json:"discount_percent"` // required when promo_type=discount
+	MaxUses         int     `json:"max_uses" binding:"required,min=1"`
+	ExpiresAt       *string `json:"expires_at"` // RFC3339 or null
 }
 
 // POST /admin/promocodes
@@ -146,14 +178,34 @@ func (h *Handler) CreatePromoCode(c *gin.Context) {
 		return
 	}
 
+	// Default to yad type
+	promoType := req.PromoType
+	if promoType == "" {
+		promoType = domain.PromoTypeYAD
+	}
+	if promoType != domain.PromoTypeYAD && promoType != domain.PromoTypeDiscount {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "promo_type must be 'yad' or 'discount'"})
+		return
+	}
+	if promoType == domain.PromoTypeYAD && req.YADAmount < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "yad_amount must be >= 1 for yad promo"})
+		return
+	}
+	if promoType == domain.PromoTypeDiscount && (req.DiscountPercent < 1 || req.DiscountPercent > 100) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "discount_percent must be 1–100 for discount promo"})
+		return
+	}
+
 	promo := &domain.PromoCode{
-		ID:          uuid.New(),
-		Code:        req.Code,
-		YADAmount:   req.YADAmount,
-		MaxUses:     req.MaxUses,
-		UsedCount:   0,
-		CreatedByID: adminID,
-		CreatedAt:   time.Now(),
+		ID:              uuid.New(),
+		Code:            req.Code,
+		PromoType:       promoType,
+		YADAmount:       req.YADAmount,
+		DiscountPercent: req.DiscountPercent,
+		MaxUses:         req.MaxUses,
+		UsedCount:       0,
+		CreatedByID:     adminID,
+		CreatedAt:       time.Now(),
 	}
 
 	if req.ExpiresAt != nil {

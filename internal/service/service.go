@@ -47,10 +47,10 @@ type RegisterInput struct {
 func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domain.User, error) {
 	username := strings.TrimSpace(input.Username)
 	if len(username) < 3 || len(username) > 64 {
-		return nil, errors.New("username must be 3-64 characters")
+		return nil, errors.New("имя пользователя должно содержать от 3 до 64 символов")
 	}
 	if len(input.Password) < 8 {
-		return nil, errors.New("password must be at least 8 characters")
+		return nil, errors.New("пароль должен содержать не менее 8 символов")
 	}
 
 	// Rate limit registration by IP
@@ -63,7 +63,7 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 		return nil, err
 	}
 	if existing != nil {
-		return nil, errors.New("username already registered")
+		return nil, errors.New("это имя пользователя уже занято")
 	}
 
 	// Check for IP abuse
@@ -161,13 +161,13 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User
 		return nil, err
 	}
 	if user == nil || user.PasswordHash == nil {
-		return nil, errors.New("invalid credentials")
+		return nil, errors.New("неверный логин или пароль")
 	}
 	if !password.Verify(*user.PasswordHash, input.Password) {
-		return nil, errors.New("invalid credentials")
+		return nil, errors.New("неверный логин или пароль")
 	}
 	if user.IsBanned {
-		return nil, errors.New("account is banned")
+		return nil, errors.New("ваш аккаунт заблокирован")
 	}
 
 	s.anti.ResetLoginAttempts(ctx, input.IP+":"+username)
@@ -211,7 +211,7 @@ func NewSubscriptionService(
 func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.UUID, plan domain.SubscriptionPlan, returnURL string) (string, *domain.Payment, error) {
 	priceKopecks := domain.PlanPriceKopecks(plan)
 	if priceKopecks == 0 {
-		return "", nil, errors.New("invalid subscription plan")
+		return "", nil, errors.New("неверный тариф подписки")
 	}
 
 	// If the user already has a non-expired PENDING payment for this plan,
@@ -228,10 +228,62 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 
 	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil || user == nil {
-		return "", nil, errors.New("user not found")
+		return "", nil, errors.New("пользователь не найден")
 	}
 
-	// Convert kopecks to rubles for Platega
+	// Apply active discount promo if present
+	discountCode, discountPercent, _ := s.repo.GetActiveDiscount(ctx, userID)
+	if discountPercent > 0 {
+		reduction := priceKopecks * int64(discountPercent) / 100
+		priceKopecks -= reduction
+	}
+
+	// ── Free activation (100% discount) ───────────────────────────────────
+	// When a promo brings the price to zero we skip Platega entirely and
+	// directly create a CONFIRMED payment + enqueue subscription activation.
+	if priceKopecks <= 0 {
+		freePaymentID := uuid.New()
+		freePayment := &domain.Payment{
+			ID:             freePaymentID,
+			UserID:         userID,
+			AmountKopecks:  0,
+			Currency:       "RUB",
+			Status:         domain.PaymentStatusConfirmed,
+			Plan:           plan,
+			PaymentMethod:  0, // no payment gateway for free promos
+			PlategaPayload: userID.String(),
+			RedirectURL:    returnURL,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		}
+		if err := s.repo.CreatePayment(ctx, freePayment); err != nil {
+			return "", nil, fmt.Errorf("store free payment: %w", err)
+		}
+		if discountCode != "" {
+			_ = s.repo.ClearActiveDiscount(ctx, userID)
+		}
+		job := worker.PaymentProcessJob{
+			TransactionID: freePaymentID.String(),
+			UserID:        userID.String(),
+			AmountKopecks: 0,
+			Plan:          string(plan),
+			Status:        string(domain.PaymentStatusConfirmed),
+		}
+		if err := worker.Enqueue(ctx, s.rdb, worker.QueuePaymentProcess, job); err != nil {
+			s.log.Error("enqueue free subscription activation", zap.Error(err))
+		}
+		s.log.Info("free subscription activated via promo",
+			zap.String("user_id", userID.String()),
+			zap.String("plan", string(plan)),
+			zap.String("payment_id", freePaymentID.String()),
+		)
+		return returnURL, freePayment, nil
+	}
+
+	// Convert kopecks to rubles for Platega (minimum 1 ruble = 100 kopecks)
+	if priceKopecks < 100 {
+		priceKopecks = 100
+	}
 	amountRubles := float64(priceKopecks) / 100.0
 
 	platResp, err := s.platega.CreatePayment(ctx, platega.CreatePaymentRequest{
@@ -270,6 +322,11 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 
 	if err := s.repo.CreatePayment(ctx, payment); err != nil {
 		return "", nil, fmt.Errorf("store payment: %w", err)
+	}
+
+	// Clear the discount once the payment has been created
+	if discountPercent > 0 && discountCode != "" {
+		_ = s.repo.ClearActiveDiscount(ctx, userID)
 	}
 
 	s.log.Info("payment initiated",
@@ -372,19 +429,20 @@ func (s *SubscriptionService) CheckPaymentStatus(ctx context.Context, userID, pa
 // ─── YAD / Economy Service ────────────────────────────────────────────────────
 
 type EconomyService struct {
-	repo *postgres.UserRepo
-	anti *anticheat.Engine
-	log  *zap.Logger
+	repo  *postgres.UserRepo
+	remna *remnawave.Client
+	anti  *anticheat.Engine
+	log   *zap.Logger
 }
 
-func NewEconomyService(repo *postgres.UserRepo, anti *anticheat.Engine, log *zap.Logger) *EconomyService {
-	return &EconomyService{repo: repo, anti: anti, log: log}
+func NewEconomyService(repo *postgres.UserRepo, remna *remnawave.Client, anti *anticheat.Engine, log *zap.Logger) *EconomyService {
+	return &EconomyService{repo: repo, remna: remna, anti: anti, log: log}
 }
 
 // CreditYAD safely credits YAD to a user, enforcing daily limits.
 func (s *EconomyService) CreditYAD(ctx context.Context, userID uuid.UUID, amount int64, txType domain.YADTxType, refID *uuid.UUID, note string) error {
 	if amount <= 0 {
-		return errors.New("YAD amount must be positive")
+		return errors.New("сумма ЯД должна быть положительной")
 	}
 
 	// Daily cap check
@@ -407,7 +465,7 @@ func (s *EconomyService) CreditYAD(ctx context.Context, userID uuid.UUID, amount
 // DebitYAD deducts YAD from a user (for shop purchases).
 func (s *EconomyService) DebitYAD(ctx context.Context, userID uuid.UUID, amount int64, txType domain.YADTxType, refID *uuid.UUID, note string) error {
 	if amount <= 0 {
-		return errors.New("debit amount must be positive")
+		return errors.New("сумма списания должна быть положительной")
 	}
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
@@ -428,13 +486,13 @@ func (s *EconomyService) UsePromoCode(ctx context.Context, userID uuid.UUID, cod
 		return nil, err
 	}
 	if promo == nil {
-		return nil, errors.New("promo code not found")
+		return nil, errors.New("промокод не найден")
 	}
 	if promo.ExpiresAt != nil && promo.ExpiresAt.Before(time.Now()) {
-		return nil, errors.New("promo code expired")
+		return nil, errors.New("срок действия промокода истёк")
 	}
 	if promo.UsedCount >= promo.MaxUses {
-		return nil, errors.New("promo code exhausted")
+		return nil, errors.New("промокод уже недоступен")
 	}
 
 	used, err := s.repo.HasUserUsedPromo(ctx, promo.ID, userID)
@@ -442,9 +500,41 @@ func (s *EconomyService) UsePromoCode(ctx context.Context, userID uuid.UUID, cod
 		return nil, err
 	}
 	if used {
-		return nil, errors.New("promo code already used")
+		return nil, errors.New("вы уже использовали этот промокод")
 	}
 
+	// ── Discount promo: store on user, mark as used, no YAD credited ──────────
+	if promo.PromoType == domain.PromoTypeDiscount {
+		_, existingPercent, err := s.repo.GetActiveDiscount(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if existingPercent > 0 {
+			return nil, errors.New("у вас уже есть активная скидка, используйте её перед применением нового промокода")
+		}
+		tx, err := s.repo.BeginTx(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback(ctx)
+		if err := s.repo.UsePromoCode(ctx, tx, promo.ID, userID); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		if err := s.repo.SetActiveDiscount(ctx, userID, promo.Code, promo.DiscountPercent); err != nil {
+			return nil, err
+		}
+		s.log.Info("discount promo applied",
+			zap.String("user_id", userID.String()),
+			zap.String("code", code),
+			zap.Int("percent", promo.DiscountPercent),
+		)
+		return promo, nil
+	}
+
+	// ── YAD promo: credit balance ──────────────────────────────────────────────
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
 		return nil, err
@@ -474,7 +564,7 @@ func (s *EconomyService) UsePromoCode(ctx context.Context, userID uuid.UUID, cod
 // BuyShopItem purchases a shop item deducting YAD from the user's balance.
 func (s *EconomyService) BuyShopItem(ctx context.Context, userID, itemID uuid.UUID, quantity int) (*domain.ShopOrder, error) {
 	if quantity <= 0 {
-		return nil, errors.New("quantity must be positive")
+		return nil, errors.New("количество должно быть не менее 1")
 	}
 
 	item, err := s.repo.GetShopItemByID(ctx, itemID)
@@ -482,20 +572,20 @@ func (s *EconomyService) BuyShopItem(ctx context.Context, userID, itemID uuid.UU
 		return nil, err
 	}
 	if item == nil || !item.IsActive {
-		return nil, errors.New("item not found")
+		return nil, errors.New("товар не найден")
 	}
 	if item.Stock != -1 && item.Stock < quantity {
-		return nil, errors.New("insufficient stock")
+		return nil, errors.New("товар закончился")
 	}
 
 	totalYAD := item.PriceYAD * int64(quantity)
 
 	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil || user == nil {
-		return nil, errors.New("user not found")
+		return nil, errors.New("пользователь не найден")
 	}
 	if user.YADBalance < totalYAD {
-		return nil, errors.New("insufficient YAD balance")
+		return nil, errors.New("недостаточно ЯД на балансе")
 	}
 
 	tx, err := s.repo.BeginTx(ctx)
@@ -529,6 +619,102 @@ func (s *EconomyService) BuyShopItem(ctx context.Context, userID, itemID uuid.UU
 	return order, nil
 }
 
+// BuySubscriptionWithYAD purchases a subscription plan by deducting ЯД from the user's balance.
+func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid.UUID, plan domain.SubscriptionPlan) (*domain.Subscription, error) {
+	yadPrice := domain.PlanYADPrice(plan)
+	if yadPrice == 0 {
+		return nil, errors.New("неизвестный тариф")
+	}
+	durationDays := domain.PlanDurationDays(plan)
+
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("пользователь не найден")
+	}
+	if user.YADBalance < yadPrice {
+		return nil, errors.New("недостаточно ЯД на балансе")
+	}
+
+	now := time.Now()
+
+	// Extend existing active subscription or create new
+	activeSub, err := s.repo.GetActiveSubscription(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	var newExpiry time.Time
+	if activeSub != nil && activeSub.ExpiresAt.After(now) {
+		newExpiry = activeSub.ExpiresAt.Add(time.Duration(durationDays) * 24 * time.Hour)
+	} else {
+		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
+	}
+
+	// Create or update Remnawave user
+	var remnaUUID string
+	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
+		remnaUser, err := s.remna.CreateUser(ctx, userID.String(), newExpiry)
+		if err != nil {
+			return nil, fmt.Errorf("create remnawave user: %w", err)
+		}
+		remnaUUID = remnaUser.UUID
+		_ = s.repo.UpdateRemnaUUID(ctx, userID, remnaUUID)
+	} else {
+		remnaUUID = *user.RemnaUserUUID
+		if err := s.remna.UpdateExpiry(ctx, remnaUUID, newExpiry); err != nil {
+			return nil, fmt.Errorf("update remnawave expiry: %w", err)
+		}
+		_ = s.remna.EnableUser(ctx, remnaUUID)
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Deduct ЯД
+	subID := uuid.New()
+	ref := subID
+	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref, "Подписка за ЯД: "+string(plan)); err != nil {
+		return nil, err
+	}
+
+	var sub *domain.Subscription
+	if activeSub != nil {
+		if err := s.repo.ExtendSubscription(ctx, tx, activeSub.ID, newExpiry); err != nil {
+			return nil, err
+		}
+		activeSub.ExpiresAt = newExpiry
+		sub = activeSub
+	} else {
+		sub = &domain.Subscription{
+			ID:           subID,
+			UserID:       userID,
+			Plan:         plan,
+			Status:       domain.SubStatusActive,
+			StartsAt:     now,
+			ExpiresAt:    newExpiry,
+			RemnaSubUUID: &remnaUUID,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if err := s.repo.CreateSubscription(ctx, tx, sub); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	s.log.Info("subscription purchased with ЯД",
+		zap.String("user_id", userID.String()),
+		zap.String("plan", string(plan)),
+		zap.Int64("yad_spent", yadPrice),
+	)
+	return sub, nil
+}
+
 // ─── Trial Service ────────────────────────────────────────────────────────────
 
 type TrialService struct {
@@ -545,10 +731,10 @@ func NewTrialService(repo *postgres.UserRepo, remna *remnawave.Client, log *zap.
 func (s *TrialService) ActivateTrial(ctx context.Context, userID uuid.UUID) (*domain.Subscription, error) {
 	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil || user == nil {
-		return nil, errors.New("user not found")
+		return nil, errors.New("пользователь не найден")
 	}
 	if user.TrialUsed {
-		return nil, errors.New("trial already used")
+		return nil, errors.New("пробный период уже был использован")
 	}
 
 	now := time.Now()

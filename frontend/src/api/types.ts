@@ -11,6 +11,7 @@ export interface User {
   id: string
   email: string | null
   username: string | null
+  telegram_id: number | null
   yad_balance: number
   referral_code: string
   ltv_kopecks: number
@@ -58,6 +59,11 @@ export interface Referral {
   created_at: string
 }
 
+export interface TrafficStats {
+  used_bytes: number
+  limit_bytes: number
+}
+
 export interface YADTransaction {
   id: string
   user_id: string
@@ -69,10 +75,14 @@ export interface YADTransaction {
   created_at: string
 }
 
+export type PromoType = 'yad' | 'discount'
+
 export interface PromoCode {
   id: string
   code: string
+  promo_type: PromoType
   yad_amount: number
+  discount_percent: number
   max_uses: number
   used_count: number
   expires_at: string | null
@@ -133,6 +143,7 @@ export interface RegisterRequest {
 
 export interface AuthResponse {
   token: string
+  refresh_token?: string
   user_id: string
   referral_code?: string
 }
@@ -164,7 +175,9 @@ export interface ReferralsResponse {
 
 export interface CreatePromoRequest {
   code: string
+  promo_type: PromoType
   yad_amount: number
+  discount_percent: number
   max_uses: number
   expires_at?: string
 }
@@ -192,4 +205,63 @@ export interface SetRiskRequest {
 
 export interface ApiError {
   error: string
+}
+
+// ─── Admin extended types ─────────────────────────────────────────────────────
+
+export interface AdminAuditLog {
+  id: string
+  admin_id: string
+  action: string
+  target_type?: string
+  target_id?: string
+  details?: string
+  admin_username?: string
+  admin_email?: string
+  created_at: string
+}
+
+export interface RevenueStat {
+  date: string
+  total_kopecks: number
+  count: number
+}
+
+export interface TopReferrer {
+  user_id: string
+  username: string | null
+  email: string | null
+  referral_count: number
+  total_reward_yad: number
+}
+
+export interface RevenueAnalytics {
+  revenue_by_day: RevenueStat[]
+  top_referrers: TopReferrer[]
+  period_days: number
+}
+
+export interface AdjustYADRequest {
+  delta: number
+  note: string
+}
+
+export interface AdminAdjustYADRequest {
+  user_id: string
+  delta: number
+  note: string
+}
+
+export interface SetSubscriptionStatusRequest {
+  status: SubscriptionStatus
+}
+
+export interface ExtendSubscriptionRequest {
+  days: number
+}
+
+export interface CheckPaymentStatusResponse {
+  payment_id: string
+  platega_status: string
+  db_status: string
 }

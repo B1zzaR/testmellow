@@ -1,17 +1,26 @@
 import { Outlet } from 'react-router-dom'
-import { Sidebar } from './Sidebar'
+import { BottomNav, Sidebar } from './Sidebar'
 import { Navbar } from './Navbar'
 
 export function AppLayout() {
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-slate-950">
-      <Sidebar />
-      <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-[#07070d]">
+      {/* Sidebar — hidden on mobile, static on ≥lg */}
+      <div className="hidden lg:flex lg:w-64 lg:shrink-0">
+        <Sidebar />
+      </div>
+
+      {/* Main */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Navbar />
-        <main className="flex-1 overflow-y-auto p-6 text-gray-900 dark:text-slate-100">
+        {/* pb-16 on mobile to clear the bottom nav bar */}
+        <main className="flex-1 overflow-y-auto p-4 pb-20 text-gray-900 dark:text-slate-100 scrollbar-thin md:p-6 lg:pb-6">
           <Outlet />
         </main>
       </div>
+
+      {/* Mobile bottom nav */}
+      <BottomNav />
     </div>
   )
 }

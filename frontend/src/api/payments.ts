@@ -16,4 +16,11 @@ export const paymentsApi = {
     const res = await apiClient.post<Payment>(`/api/payments/${id}/check`)
     return res.data
   },
+
+  listHistory: async (page = 1, perPage = 10): Promise<{ payments: Payment[]; total: number }> => {
+    const res = await apiClient.get<{ payments: Payment[]; total: number }>(
+      `/api/payments/history?page=${page}&per_page=${perPage}`,
+    )
+    return res.data
+  },
 }

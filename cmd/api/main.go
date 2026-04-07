@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -64,7 +65,7 @@ func main() {
 
 	authSvc := service.NewAuthService(userRepo, antiEngine, log, cfg.App.AdminLogin)
 	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log)
-	ecoSvc := service.NewEconomyService(userRepo, antiEngine, log)
+	ecoSvc := service.NewEconomyService(userRepo, remnaClient, antiEngine, log)
 	trialSvc := service.NewTrialService(userRepo, remnaClient, log)
 
 	// ── JWT ───────────────────────────────────────────────────────────────
@@ -72,17 +73,17 @@ func main() {
 
 	// ── Handlers ──────────────────────────────────────────────────────────
 	authH := httpHandler.NewAuthHandler(authSvc, jwtMgr, log)
-	profileH := httpHandler.NewProfileHandler(userRepo, remnaClient, log)
+	profileH := httpHandler.NewProfileHandler(userRepo, remnaClient, rdb, cfg.Telegram.BotUsername, log)
 	balanceH := httpHandler.NewBalanceHandler(userRepo, log)
 	subH := httpHandler.NewSubscriptionHandler(subSvc, log)
-	paymentH := httpHandler.NewPaymentHandler(subSvc, log)
+	paymentH := httpHandler.NewPaymentHandler(subSvc, userRepo, log)
 	referralH := httpHandler.NewReferralHandler(userRepo, log)
-	promoH := httpHandler.NewPromoHandler(ecoSvc, log)
+	promoH := httpHandler.NewPromoHandler(ecoSvc, userRepo, log)
 	trialH := httpHandler.NewTrialHandler(trialSvc, log)
 	ticketH := httpHandler.NewTicketHandler(userRepo, log)
 	shopH := httpHandler.NewShopHandler(userRepo, ecoSvc, log)
 	webhookH := webhookHandler.NewPlategalHandler(platClient, userRepo, rdb, log)
-	adminH := adminHandler.NewHandler(userRepo, antiEngine, log)
+	adminH := adminHandler.NewHandler(userRepo, antiEngine, platClient, remnaClient, log)
 
 	// ── Gin Router ────────────────────────────────────────────────────────
 	if cfg.App.Env == "production" {
@@ -95,6 +96,7 @@ func main() {
 		middleware.RequestID(),
 		middleware.Logger(log),
 		middleware.SecurityHeaders(),
+		middleware.CORS(strings.Split(cfg.App.AllowedOrigins, ",")),
 	)
 
 	// Suppress browser noise
@@ -111,8 +113,9 @@ func main() {
 	// Public auth endpoints
 	auth := r.Group("/api/auth")
 	{
-		auth.POST("/register", authH.Register)
-		auth.POST("/login", authH.Login)
+		auth.POST("/register", middleware.IPRateLimit(rdb, "register", 5, time.Hour), authH.Register)
+		auth.POST("/login", middleware.IPRateLimit(rdb, "login", 10, 15*time.Minute), authH.Login)
+		auth.POST("/refresh", authH.Refresh)
 	}
 
 	// Protected user endpoints
@@ -120,6 +123,10 @@ func main() {
 	{
 		api.GET("/profile", profileH.Get)
 		api.GET("/profile/connection", profileH.GetConnection)
+		api.GET("/profile/traffic", profileH.GetTraffic)
+		api.POST("/profile/password", profileH.ChangePassword)
+		api.PUT("/profile/telegram", profileH.UpdateTelegram)
+		api.POST("/profile/telegram/link-code", profileH.GenerateLinkCode)
 		api.GET("/balance", balanceH.Get)
 		api.GET("/balance/history", balanceH.History)
 
@@ -129,12 +136,14 @@ func main() {
 		api.POST("/subscriptions/renew", subH.Renew)
 
 		api.GET("/payments/pending", paymentH.ListPending)
+		api.GET("/payments/history", paymentH.ListHistory)
 		api.GET("/payments/:id", paymentH.GetByID)
 		api.POST("/payments/:id/check", paymentH.Check)
 
 		api.GET("/referrals", referralH.List)
 
-		api.POST("/promo/use", promoH.Use)
+		api.POST("/promo/use", middleware.IPRateLimit(rdb, "promo", 10, time.Hour), promoH.Use)
+		api.GET("/promo/discount/active", promoH.ActiveDiscount)
 		api.POST("/trial/activate", trialH.Activate)
 
 		api.GET("/tickets", ticketH.List)
@@ -144,10 +153,15 @@ func main() {
 
 		api.GET("/shop", shopH.List)
 		api.POST("/shop/buy", shopH.Buy)
+		api.POST("/shop/buy-subscription", shopH.BuySubscription)
 	}
 
 	// Admin endpoints (JWT required + is_admin flag)
-	adm := r.Group("/admin", middleware.Auth(jwtMgr), middleware.AdminOnly())
+	adm := r.Group("/api/admin",
+		middleware.Auth(jwtMgr),
+		middleware.AdminOnly(),
+		middleware.AdminRateLimit(rdb, 300, time.Minute),
+	)
 	{
 		adm.GET("/users", adminH.ListUsers)
 		adm.GET("/users/:id", adminH.GetUser)
@@ -167,6 +181,36 @@ func main() {
 		adm.POST("/tickets/:id/close", adminH.CloseTicket)
 
 		adm.POST("/shop/items", adminH.CreateShopItem)
+
+		// Payments
+		adm.GET("/payments", adminH.ListPayments)
+		adm.GET("/payments/:id", adminH.GetPayment)
+		adm.POST("/payments/:id/check", adminH.CheckPaymentStatus)
+
+		// Subscriptions
+		adm.POST("/subscriptions/assign", adminH.AssignSubscription)
+		adm.GET("/subscriptions", adminH.ListSubscriptions)
+		adm.PATCH("/subscriptions/:id/status", adminH.SetSubscriptionStatus)
+		adm.POST("/subscriptions/:id/extend", adminH.ExtendSubscription)
+
+		// YAD economy
+		adm.GET("/yad", adminH.ListYADTransactions)
+		adm.POST("/yad/adjust", adminH.AdjustYAD)
+
+		// Referrals
+		adm.GET("/referrals", adminH.ListReferrals)
+
+		// User sub-resources
+		adm.GET("/users/:id/subscriptions", adminH.GetUserSubscriptions)
+		adm.GET("/users/:id/payments", adminH.GetUserPayments)
+		adm.GET("/users/:id/yad", adminH.GetUserYAD)
+		adm.POST("/users/:id/adjust-yad", adminH.AdjustUserYAD)
+
+		// Analytics
+		adm.GET("/analytics/revenue", adminH.RevenueAnalytics)
+
+		// Audit logs
+		adm.GET("/audit-logs", adminH.ListAuditLogs)
 	}
 
 	// ── HTTP Server ───────────────────────────────────────────────────────

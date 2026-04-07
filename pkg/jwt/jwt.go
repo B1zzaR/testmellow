@@ -15,14 +15,16 @@ type Claims struct {
 }
 
 type Manager struct {
-	secret        []byte
-	accessTTL     time.Duration
+	secret     []byte
+	accessTTL  time.Duration
+	refreshTTL time.Duration
 }
 
 func NewManager(secret string, accessTTLHours int) *Manager {
 	return &Manager{
-		secret:    []byte(secret),
-		accessTTL: time.Duration(accessTTLHours) * time.Hour,
+		secret:     []byte(secret),
+		accessTTL:  time.Duration(accessTTLHours) * time.Hour,
+		refreshTTL: 30 * 24 * time.Hour,
 	}
 }
 
@@ -34,6 +36,22 @@ func (m *Manager) Generate(userID uuid.UUID, isAdmin bool) (string, error) {
 			ExpiresAt: gojwt.NewNumericDate(time.Now().Add(m.accessTTL)),
 			IssuedAt:  gojwt.NewNumericDate(time.Now()),
 			ID:        uuid.New().String(),
+		},
+	}
+	token := gojwt.NewWithClaims(gojwt.SigningMethodHS256, claims)
+	return token.SignedString(m.secret)
+}
+
+// GenerateRefresh generates a long-lived refresh token (30 days).
+func (m *Manager) GenerateRefresh(userID uuid.UUID, isAdmin bool) (string, error) {
+	claims := &Claims{
+		UserID:  userID,
+		IsAdmin: isAdmin,
+		RegisteredClaims: gojwt.RegisteredClaims{
+			ExpiresAt: gojwt.NewNumericDate(time.Now().Add(m.refreshTTL)),
+			IssuedAt:  gojwt.NewNumericDate(time.Now()),
+			ID:        uuid.New().String(),
+			Subject:   "refresh",
 		},
 	}
 	token := gojwt.NewWithClaims(gojwt.SigningMethodHS256, claims)
@@ -53,6 +71,18 @@ func (m *Manager) Parse(tokenStr string) (*Claims, error) {
 	claims, ok := token.Claims.(*Claims)
 	if !ok || !token.Valid {
 		return nil, errors.New("invalid token")
+	}
+	return claims, nil
+}
+
+// ParseRefresh validates a refresh token and returns its claims.
+func (m *Manager) ParseRefresh(tokenStr string) (*Claims, error) {
+	claims, err := m.Parse(tokenStr)
+	if err != nil {
+		return nil, err
+	}
+	if claims.Subject != "refresh" {
+		return nil, errors.New("not a refresh token")
 	}
 	return claims, nil
 }

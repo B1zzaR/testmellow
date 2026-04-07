@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -246,6 +248,37 @@ func (r *UserRepo) GetLTV(ctx context.Context, userID uuid.UUID) (int64, error) 
 	return ltv, err
 }
 
+// GetPaymentHistory returns paginated payments for a user and the total count.
+func (r *UserRepo) GetPaymentHistory(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.Payment, int, error) {
+	var total int
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE user_id = $1`, userID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT id, user_id, amount_kopecks, currency, status, plan, payment_method,
+		       redirect_url, expires_at, created_at, updated_at
+		FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+		userID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var payments []*domain.Payment
+	for rows.Next() {
+		p := &domain.Payment{}
+		if err := rows.Scan(
+			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.PaymentMethod,
+			&p.RedirectURL, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		payments = append(payments, p)
+	}
+	return payments, total, rows.Err()
+}
+
 // GetExpiredSubscriptionsUserIDs lists user IDs with active/trial subs that have just expired
 func (r *UserRepo) GetExpiredSubscriptionUserIDs(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := r.db.Query(ctx, `
@@ -305,6 +338,14 @@ func (r *UserRepo) UpdateBanStatus(ctx context.Context, userID uuid.UUID, banned
 func (r *UserRepo) SetAdmin(ctx context.Context, userID uuid.UUID, isAdmin bool) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE users SET is_admin=$1, updated_at=NOW() WHERE id=$2`, isAdmin, userID)
+	return err
+}
+
+// SetTelegramID sets or clears the Telegram ID for a user.
+// Pass nil to unlink.
+func (r *UserRepo) SetTelegramID(ctx context.Context, userID uuid.UUID, tgID *int64) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET telegram_id=$1, updated_at=NOW() WHERE id=$2`, tgID, userID)
 	return err
 }
 
@@ -564,6 +605,30 @@ func (r *UserRepo) ListSubscriptions(ctx context.Context, userID uuid.UUID) ([]*
 	return subs, rows.Err()
 }
 
+// GetSubscriptionsExpiringIn returns active subscriptions expiring within the given duration.
+func (r *UserRepo) GetSubscriptionsExpiringIn(ctx context.Context, within time.Duration) ([]*domain.Subscription, error) {
+	deadline := time.Now().Add(within)
+	rows, err := r.db.Query(ctx, `
+		SELECT id, user_id, plan, status, starts_at, expires_at, remna_sub_uuid, paid_kopecks, payment_id, created_at, updated_at
+		FROM subscriptions
+		WHERE status = 'active' AND expires_at > NOW() AND expires_at <= $1
+		ORDER BY expires_at ASC`, deadline)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var subs []*domain.Subscription
+	for rows.Next() {
+		s := &domain.Subscription{}
+		if err := rows.Scan(&s.ID, &s.UserID, &s.Plan, &s.Status, &s.StartsAt, &s.ExpiresAt,
+			&s.RemnaSubUUID, &s.PaidKopecks, &s.PaymentID, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		subs = append(subs, s)
+	}
+	return subs, rows.Err()
+}
+
 func (r *UserRepo) ExtendSubscription(ctx context.Context, tx pgx.Tx, subID uuid.UUID, newExpiry time.Time) error {
 	if tx != nil {
 		_, err := tx.Exec(ctx,
@@ -587,13 +652,15 @@ func (r *UserRepo) UpdateSubscriptionRemna(ctx context.Context, subID uuid.UUID,
 // ─── Payment helpers ──────────────────────────────────────────────────────────
 
 func (r *UserRepo) CreatePayment(ctx context.Context, p *domain.Payment) error {
+	h := sha256.Sum256([]byte(p.ID.String() + string(p.Status)))
+	idempotency := hex.EncodeToString(h[:])
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO payments (id, user_id, amount_kopecks, currency, status, plan,
 		                      payment_method, platega_payload, redirect_url, idempotency,
 		                      expires_at, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		p.ID, p.UserID, p.AmountKopecks, p.Currency, p.Status, p.Plan,
-		p.PaymentMethod, p.PlategaPayload, p.RedirectURL, p.Idempotency,
+		p.PaymentMethod, p.PlategaPayload, p.RedirectURL, idempotency,
 		p.ExpiresAt, p.CreatedAt, p.UpdatedAt,
 	)
 	return err
@@ -764,9 +831,9 @@ func (r *UserRepo) MarkWebhookProcessed(ctx context.Context, source, externalID,
 func (r *UserRepo) GetPromoByCode(ctx context.Context, code string) (*domain.PromoCode, error) {
 	p := &domain.PromoCode{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, code, yad_amount, max_uses, used_count, expires_at, created_by_id, created_at
+		SELECT id, code, promo_type, yad_amount, discount_percent, max_uses, used_count, expires_at, created_by_id, created_at
 		FROM promocodes WHERE code=$1`, code).Scan(
-		&p.ID, &p.Code, &p.YADAmount, &p.MaxUses, &p.UsedCount, &p.ExpiresAt, &p.CreatedByID, &p.CreatedAt,
+		&p.ID, &p.Code, &p.PromoType, &p.YADAmount, &p.DiscountPercent, &p.MaxUses, &p.UsedCount, &p.ExpiresAt, &p.CreatedByID, &p.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -800,16 +867,16 @@ func (r *UserRepo) HasUserUsedPromo(ctx context.Context, promoID, userID uuid.UU
 
 func (r *UserRepo) CreatePromoCode(ctx context.Context, p *domain.PromoCode) error {
 	_, err := r.db.Exec(ctx, `
-		INSERT INTO promocodes (id, code, yad_amount, max_uses, used_count, expires_at, created_by_id, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		p.ID, p.Code, p.YADAmount, p.MaxUses, p.UsedCount, p.ExpiresAt, p.CreatedByID, p.CreatedAt,
+		INSERT INTO promocodes (id, code, promo_type, yad_amount, discount_percent, max_uses, used_count, expires_at, created_by_id, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		p.ID, p.Code, p.PromoType, p.YADAmount, p.DiscountPercent, p.MaxUses, p.UsedCount, p.ExpiresAt, p.CreatedByID, p.CreatedAt,
 	)
 	return err
 }
 
 func (r *UserRepo) ListPromoCodes(ctx context.Context) ([]*domain.PromoCode, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, code, yad_amount, max_uses, used_count, expires_at, created_by_id, created_at
+		SELECT id, code, promo_type, yad_amount, discount_percent, max_uses, used_count, expires_at, created_by_id, created_at
 		FROM promocodes ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -818,13 +885,48 @@ func (r *UserRepo) ListPromoCodes(ctx context.Context) ([]*domain.PromoCode, err
 	var list []*domain.PromoCode
 	for rows.Next() {
 		p := &domain.PromoCode{}
-		if err := rows.Scan(&p.ID, &p.Code, &p.YADAmount, &p.MaxUses, &p.UsedCount,
+		if err := rows.Scan(&p.ID, &p.Code, &p.PromoType, &p.YADAmount, &p.DiscountPercent, &p.MaxUses, &p.UsedCount,
 			&p.ExpiresAt, &p.CreatedByID, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, p)
 	}
 	return list, rows.Err()
+}
+
+// SetActiveDiscount stores a pending discount promo on the user record.
+func (r *UserRepo) SetActiveDiscount(ctx context.Context, userID uuid.UUID, code string, percent int) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET active_discount_code=$1, active_discount_percent=$2, updated_at=NOW() WHERE id=$3`,
+		code, percent, userID)
+	return err
+}
+
+// GetActiveDiscount returns the user's pending discount code and percent.
+func (r *UserRepo) GetActiveDiscount(ctx context.Context, userID uuid.UUID) (string, int, error) {
+	var code *string
+	var percent int
+	err := r.db.QueryRow(ctx,
+		`SELECT active_discount_code, active_discount_percent FROM users WHERE id=$1`, userID).
+		Scan(&code, &percent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, nil
+	}
+	if err != nil {
+		return "", 0, err
+	}
+	if code == nil {
+		return "", 0, nil
+	}
+	return *code, percent, nil
+}
+
+// ClearActiveDiscount removes the user's pending discount after it has been applied.
+func (r *UserRepo) ClearActiveDiscount(ctx context.Context, userID uuid.UUID) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET active_discount_code=NULL, active_discount_percent=0, updated_at=NOW() WHERE id=$1`,
+		userID)
+	return err
 }
 
 // ─── Tickets ──────────────────────────────────────────────────────────────────
@@ -982,6 +1084,8 @@ func (r *UserRepo) GetAnalytics(ctx context.Context) (map[string]interface{}, er
 
 	var totalUsers, bannedUsers, totalSubs, activeSubs int64
 	var totalRevenue, totalYADCirculation int64
+	var pendingRewards int64
+	var openTickets, highRiskUsers int64
 
 	_ = r.db.QueryRow(ctx, `SELECT COUNT(*), COUNT(*) FILTER (WHERE is_banned) FROM users`).
 		Scan(&totalUsers, &bannedUsers)
@@ -991,6 +1095,12 @@ func (r *UserRepo) GetAnalytics(ctx context.Context) (map[string]interface{}, er
 		Scan(&totalRevenue)
 	_ = r.db.QueryRow(ctx, `SELECT COALESCE(SUM(yad_balance),0) FROM users`).
 		Scan(&totalYADCirculation)
+	_ = r.db.QueryRow(ctx, `SELECT COALESCE(SUM(deferred_yad),0) FROM referral_rewards WHERE status IN ('pending','immediate')`).
+		Scan(&pendingRewards)
+	_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM tickets WHERE status='open'`).
+		Scan(&openTickets)
+	_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE risk_score >= 70`).
+		Scan(&highRiskUsers)
 
 	result["total_users"] = totalUsers
 	result["banned_users"] = bannedUsers
@@ -998,5 +1108,151 @@ func (r *UserRepo) GetAnalytics(ctx context.Context) (map[string]interface{}, er
 	result["active_subscriptions"] = activeSubs
 	result["total_revenue_kopecks"] = totalRevenue
 	result["yad_in_circulation"] = totalYADCirculation
+	result["pending_rewards"] = pendingRewards
+	result["open_tickets"] = openTickets
+	result["high_risk_users"] = highRiskUsers
 	return result, nil
+}
+
+// ─── Account Merge ────────────────────────────────────────────────────────────
+
+// MergeResult summarises what was transferred from the source (bot) account.
+type MergeResult struct {
+	TransferredYAD      int64
+	TransferredSubs     int64
+	TransferredPayments int64
+}
+
+// MergeAccounts merges the src (bot) account into the dst (website) account inside a
+// serializable transaction. All child records are re-assigned, balances are added,
+// and the src user is deleted at the end.
+//
+// Safe to call when only one side has referral/subscriptions; handles all FK constraints.
+func (r *UserRepo) MergeAccounts(ctx context.Context, dstID, srcID uuid.UUID) (*MergeResult, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return nil, fmt.Errorf("begin merge tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// ── Snapshot what we are transferring ──────────────────────────────────
+	res := &MergeResult{}
+	if err := tx.QueryRow(ctx, `SELECT yad_balance FROM users WHERE id=$1`, srcID).Scan(&res.TransferredYAD); err != nil {
+		return nil, fmt.Errorf("snapshot yad: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM subscriptions WHERE user_id=$1`, srcID).Scan(&res.TransferredSubs); err != nil {
+		return nil, fmt.Errorf("snapshot subs: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE user_id=$1`, srcID).Scan(&res.TransferredPayments); err != nil {
+		return nil, fmt.Errorf("snapshot payments: %w", err)
+	}
+
+	// Detach src.telegram_id before assigning it to dst to avoid UNIQUE conflict
+	// on users(telegram_id) while both rows still exist in this transaction.
+	var srcTelegramID *int64
+	if err := tx.QueryRow(ctx, `SELECT telegram_id FROM users WHERE id=$1`, srcID).Scan(&srcTelegramID); err != nil {
+		return nil, fmt.Errorf("snapshot src telegram_id: %w", err)
+	}
+	if srcTelegramID != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET telegram_id=NULL, updated_at=NOW() WHERE id=$1`, srcID); err != nil {
+			return nil, fmt.Errorf("detach src telegram_id: %w", err)
+		}
+	}
+
+	// ── 1. Merge scalar fields on dst ──────────────────────────────────────
+	_, err = tx.Exec(ctx, `
+		UPDATE users SET
+			yad_balance           = yad_balance + (SELECT yad_balance FROM users WHERE id=$2),
+			ltv                   = ltv         + (SELECT ltv         FROM users WHERE id=$2),
+			trial_used            = trial_used  OR (SELECT trial_used FROM users WHERE id=$2),
+			telegram_id           = COALESCE($3, telegram_id),
+			remna_user_uuid       = COALESCE(remna_user_uuid,       (SELECT remna_user_uuid       FROM users WHERE id=$2)),
+			active_discount_code  = COALESCE(active_discount_code,  (SELECT active_discount_code  FROM users WHERE id=$2)),
+			active_discount_percent = CASE
+				WHEN active_discount_percent > 0 THEN active_discount_percent
+				ELSE (SELECT active_discount_percent FROM users WHERE id=$2)
+			END,
+			updated_at = NOW()
+		WHERE id=$1`, dstID, srcID, srcTelegramID)
+	if err != nil {
+		return nil, fmt.Errorf("merge user fields: %w", err)
+	}
+
+	// ── 1b. Point all src subscriptions to dst's remna_user_uuid so that
+	//        VPN renewals use the correct (surviving) Remnawave account.
+	_, err = tx.Exec(ctx, `
+		UPDATE subscriptions
+		SET    remna_sub_uuid = (SELECT remna_user_uuid FROM users WHERE id=$1),
+		       updated_at     = NOW()
+		WHERE  user_id = $2
+		  AND  (SELECT remna_user_uuid FROM users WHERE id=$1) IS NOT NULL`,
+		dstID, srcID)
+	if err != nil {
+		return nil, fmt.Errorf("repoint src subs remna_uuid: %w", err)
+	}
+
+	// ── 2. Re-assign simple user_id / sender_id FKs ────────────────────────
+	for _, q := range []string{
+		`UPDATE subscriptions    SET user_id   = $1 WHERE user_id   = $2`,
+		`UPDATE payments         SET user_id   = $1 WHERE user_id   = $2`,
+		`UPDATE yad_transactions SET user_id   = $1 WHERE user_id   = $2`,
+		`UPDATE tickets          SET user_id   = $1 WHERE user_id   = $2`,
+		`UPDATE ticket_messages  SET sender_id = $1 WHERE sender_id = $2`,
+		`UPDATE shop_orders      SET user_id   = $1 WHERE user_id   = $2`,
+		`UPDATE referral_rewards SET referrer_id = $1 WHERE referrer_id = $2`,
+		`UPDATE referrals        SET referrer_id = $1 WHERE referrer_id = $2`,
+	} {
+		if _, err := tx.Exec(ctx, q, dstID, srcID); err != nil {
+			return nil, fmt.Errorf("re-assign (%s): %w", q[:40], err)
+		}
+	}
+
+	// ── 3. Deduplicate and re-assign promocode_uses ────────────────────────
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM promocode_uses
+		WHERE user_id=$2
+		  AND promo_code_id IN (SELECT promo_code_id FROM promocode_uses WHERE user_id=$1)`,
+		dstID, srcID); err != nil {
+		return nil, fmt.Errorf("dedup promocode_uses: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE promocode_uses SET user_id=$1 WHERE user_id=$2`, dstID, srcID); err != nil {
+		return nil, fmt.Errorf("merge promocode_uses: %w", err)
+	}
+
+	// ── 4. Handle the referral where src was the REFEREE ──────────────────
+	// (rewards where src.referrer gets paid were already moved in step 2)
+	var srcReferralID uuid.UUID
+	scanErr := tx.QueryRow(ctx, `SELECT id FROM referrals WHERE referee_id=$1`, srcID).Scan(&srcReferralID)
+	if scanErr == nil {
+		var dstHasReferral bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM referrals WHERE referee_id=$1)`, dstID).Scan(&dstHasReferral); err != nil {
+			return nil, fmt.Errorf("check dst referral: %w", err)
+		}
+		if !dstHasReferral {
+			// Transfer: dst becomes the referee
+			if _, err := tx.Exec(ctx, `UPDATE referrals SET referee_id=$1 WHERE id=$2`, dstID, srcReferralID); err != nil {
+				return nil, fmt.Errorf("transfer referee: %w", err)
+			}
+		} else {
+			// dst already has a referral — delete src's referral chain
+			if _, err := tx.Exec(ctx, `DELETE FROM referral_rewards WHERE referral_id=$1`, srcReferralID); err != nil {
+				return nil, fmt.Errorf("delete src referral_rewards: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `DELETE FROM referrals WHERE id=$1`, srcReferralID); err != nil {
+				return nil, fmt.Errorf("delete src referral: %w", err)
+			}
+		}
+	} else if !errors.Is(scanErr, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("fetch src referral: %w", scanErr)
+	}
+
+	// ── 5. Delete src user (admin_audit_logs has ON DELETE SET NULL) ───────
+	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id=$1`, srcID); err != nil {
+		return nil, fmt.Errorf("delete src user: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit merge: %w", err)
+	}
+	return res, nil
 }

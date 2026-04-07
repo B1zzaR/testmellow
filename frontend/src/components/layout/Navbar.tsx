@@ -1,50 +1,70 @@
 import { useProfile } from '@/hooks/useProfile'
-import { useLogout } from '@/hooks/useAuth'
 import { useAuthStore } from '@/store/authStore'
 import { useThemeStore } from '@/store/themeStore'
-import { Link } from 'react-router-dom'
+import { Icon, SnakeLogo } from '@/components/ui/Icons'
+import { useInstallPrompt } from '@/hooks/useInstallPrompt'
 
 export function Navbar() {
   const { data: profile } = useProfile()
-  const logout = useLogout()
   const isAdmin = useAuthStore((s) => s.isAdmin())
   const mode = useThemeStore((s) => s.mode)
   const toggleMode = useThemeStore((s) => s.toggleMode)
+  const { canInstall, install } = useInstallPrompt()
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-6 dark:border-slate-700 dark:bg-slate-900">
-      <div />
-      <div className="flex items-center gap-4">
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 dark:border-surface-700 dark:bg-surface-900 lg:h-16 lg:px-5">
+      {/* Mobile: logo mark only */}
+      <div className="flex items-center gap-2 lg:hidden">
+        <SnakeLogo size={28} />
+        <span className="text-sm font-bold tracking-wide text-gray-900 dark:text-slate-100">MelloWPN</span>
+      </div>
+
+      <div className="hidden lg:block" />
+
+      {/* Right: meta info */}
+      <div className="flex items-center gap-2">
+        {/* Install PWA button — Chrome/Android only, hidden when already installed */}
+        {canInstall && (
+          <button
+            onClick={install}
+            className="flex items-center gap-1.5 rounded-lg border border-primary-700/50 bg-primary-500/10 px-3 py-1.5 text-xs font-semibold text-primary-400 transition-colors hover:bg-primary-500/20"
+            title="Установить приложение на устройство"
+          >
+            <Icon name="download" size={14} />
+            <span className="hidden sm:block">Установить</span>
+          </button>
+        )}
+
+        {/* Theme toggle */}
         <button
           onClick={toggleMode}
-          className="rounded-md border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 dark:text-slate-500 dark:hover:bg-surface-700"
+          aria-label="Переключить тему"
         >
-          {mode === 'dark' ? 'Light' : 'Dark'}
+          <Icon name={mode === 'dark' ? 'sun' : 'moon'} size={18} />
         </button>
+
+        {/* Admin badge */}
         {isAdmin && (
-          <Link
-            to="/admin"
-            className="rounded-md bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:hover:bg-amber-900/60"
-          >
-            Admin Panel
-          </Link>
+          <span className="hidden rounded-md bg-yellow-500/10 px-2.5 py-1 text-sm font-semibold text-yellow-500 sm:block">
+            Админ
+          </span>
         )}
+
+        {/* YAD balance */}
         {profile && (
-          <span className="text-sm text-gray-600 dark:text-slate-300">
+          <div className="flex items-center gap-1.5 rounded-lg border border-primary-900/40 bg-primary-500/5 px-3 py-1.5">
+            <Icon name="skull" size={16} className="text-primary-500" />
+            <span className="text-sm font-semibold text-primary-400">{profile.yad_balance} ЯД</span>
+          </div>
+        )}
+
+        {/* User email — desktop only */}
+        {profile && (
+          <span className="hidden max-w-[160px] truncate text-sm text-gray-500 dark:text-slate-500 lg:block">
             {profile.email ?? profile.username ?? 'User'}
           </span>
         )}
-        {profile && (
-          <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 dark:bg-primary-900/40 dark:text-primary-300">
-            {profile.yad_balance} YAD
-          </span>
-        )}
-        <button
-          onClick={logout}
-          className="rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-        >
-          Logout
-        </button>
       </div>
     </header>
   )

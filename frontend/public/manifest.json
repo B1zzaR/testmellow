@@ -1,0 +1,21 @@
+{
+  "name": "MelloWPN",
+  "short_name": "MelloVPN",
+  "description": "Быстрый, безопасный и приватный VPN",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#090b11",
+  "theme_color": "#22c55e",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["utilities", "productivity"]
+}

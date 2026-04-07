@@ -14,7 +14,7 @@ export function formatRubles(kopecks: number): string {
  * Format YAD balance with unit suffix.
  */
 export function formatYAD(yad: number): string {
-  return `${yad.toLocaleString('ru-RU')} YAD`
+  return `${yad.toLocaleString('ru-RU')} ЯД`
 }
 
 /**
@@ -47,11 +47,11 @@ export function formatDateTime(iso: string): string {
 export function planLabel(plan: string): string {
   switch (plan) {
     case '1week':
-      return '1 Week'
+      return '1 неделя'
     case '1month':
-      return '1 Month'
+      return '1 месяц'
     case '3months':
-      return '3 Months'
+      return '3 месяца'
     default:
       return plan
   }

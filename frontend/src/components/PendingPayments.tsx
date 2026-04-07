@@ -17,7 +17,7 @@ function useCountdown(expiresAt: string | null): string {
     const update = () => {
       const diff = new Date(expiresAt).getTime() - Date.now()
       if (diff <= 0) {
-        setRemaining('Expired')
+        setRemaining('Истёк')
         return
       }
       const m = Math.floor(diff / 60000)
@@ -37,13 +37,13 @@ function useCountdown(expiresAt: string | null): string {
 
 function StatusBadge({ status }: { status: Payment['status'] }) {
   const config: Record<Payment['status'], { label: string; cls: string }> = {
-    PENDING: { label: 'Pending', cls: 'bg-yellow-100 text-yellow-800' },
-    CONFIRMED: { label: 'Paid', cls: 'bg-green-100 text-green-800' },
-    CANCELED: { label: 'Cancelled', cls: 'bg-red-100 text-red-800' },
-    CHARGEBACKED: { label: 'Chargeback', cls: 'bg-orange-100 text-orange-800' },
-    EXPIRED: { label: 'Expired', cls: 'bg-gray-100 text-gray-500' },
+    PENDING:      { label: 'Ожидает',    cls: 'bg-yellow-500/15 text-yellow-400 ring-1 ring-yellow-500/30' },
+    CONFIRMED:    { label: 'Оплачено',    cls: 'bg-primary-500/15 text-primary-400 ring-1 ring-primary-500/30' },
+    CANCELED:     { label: 'Отменён',  cls: 'bg-red-500/15 text-red-400 ring-1 ring-red-500/30' },
+    CHARGEBACKED: { label: 'Возврат', cls: 'bg-orange-500/15 text-orange-400 ring-1 ring-orange-500/30' },
+    EXPIRED:      { label: 'Истёк',    cls: 'bg-surface-600/60 text-slate-500 ring-1 ring-surface-600' },
   }
-  const { label, cls } = config[status] ?? { label: status, cls: 'bg-gray-100 text-gray-500' }
+  const { label, cls } = config[status] ?? { label: status, cls: 'bg-surface-600/60 text-slate-500' }
   return (
     <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${cls}`}>
       {label}
@@ -97,31 +97,31 @@ function PaymentRow({ payment, onChecked, onRemove }: PaymentRowProps) {
     <div
       className={`flex flex-col gap-3 rounded-xl border p-4 transition-all sm:flex-row sm:items-center sm:justify-between ${
         payment.status === 'CONFIRMED'
-          ? 'border-green-300 bg-green-50'
+          ? 'border-primary-900/40 bg-primary-500/5'
           : payment.status === 'CANCELED' || payment.status === 'EXPIRED'
-            ? 'border-gray-200 bg-gray-50 opacity-60'
-            : 'border-gray-200 bg-white'
+            ? 'border-surface-700 bg-surface-900 opacity-60'
+            : 'border-surface-700 bg-surface-900'
       }`}
     >
       {/* Left: info */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-gray-900">{planLabel(payment.plan)}</span>
+          <span className="font-semibold text-slate-100">{planLabel(payment.plan)}</span>
           <StatusBadge status={payment.status} />
         </div>
-        <span className="text-sm text-gray-600">{formatRubles(payment.amount_kopecks)}</span>
+        <span className="text-sm text-slate-400">{formatRubles(payment.amount_kopecks)}</span>
         {payment.expires_at && !isTerminal && (
           <span
             className={`text-xs ${
-              countdown === 'Expired' ? 'text-red-500' : 'text-gray-400'
+              countdown === 'Истёк' ? 'text-red-500' : 'text-gray-400'
             }`}
           >
-            {countdown === 'Expired' ? 'Link expired' : `Expires in ${countdown}`}
+            {countdown === 'Истёк' ? 'Ссылка устарела' : `Истекает через ${countdown}`}
           </span>
         )}
         {payment.status === 'CONFIRMED' && (
-          <span className="text-xs font-medium text-green-600">
-            ✓ Payment confirmed — activating subscription…
+          <span className="text-xs font-medium text-primary-400">
+          ✓ Оплата подтверждена — подписка активируется…
           </span>
         )}
       </div>
@@ -133,9 +133,9 @@ function PaymentRow({ payment, onChecked, onRemove }: PaymentRowProps) {
             href={payment.redirect_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 rounded-lg border border-primary-500 px-3 py-1.5 text-xs font-medium text-primary-600 hover:bg-primary-50"
+            className="inline-flex items-center gap-1 rounded-lg border border-primary-500/60 px-3 py-1.5 text-xs font-medium text-primary-400 hover:bg-primary-500/10 transition-colors"
           >
-            Pay now ↗
+            Оплатить ↗
           </a>
         )}
         {!isTerminal && (
@@ -146,7 +146,7 @@ function PaymentRow({ payment, onChecked, onRemove }: PaymentRowProps) {
             disabled={checkMutation.isPending}
             onClick={() => checkMutation.mutate()}
           >
-            Check status
+            Проверить статус
           </Button>
         )}
       </div>
@@ -204,7 +204,7 @@ export function PendingPayments({ onPaymentConfirmed }: PendingPaymentsProps) {
   if (localPayments.length === 0) return null
 
   return (
-    <Card title="Active Payments">
+    <Card title="Активные платежи" className="border-yellow-900/30">
       <div className="space-y-3">
         {localPayments.map((payment) => (
           <PaymentRow

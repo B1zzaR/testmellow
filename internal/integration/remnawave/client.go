@@ -24,11 +24,13 @@ type InboundRef struct {
 }
 
 type UserResponse struct {
-	UUID         string    `json:"uuid"`
-	Username     string    `json:"username"`
-	Status       string    `json:"status"`
-	ExpireAt     time.Time `json:"expireAt"`
-	SubscribeURL string    `json:"subscriptionUrl"`
+	UUID              string    `json:"uuid"`
+	Username          string    `json:"username"`
+	Status            string    `json:"status"`
+	ExpireAt          time.Time `json:"expireAt"`
+	SubscribeURL      string    `json:"subscriptionUrl"`
+	UsedTrafficBytes  int64     `json:"usedTraffic"`
+	TrafficLimitBytes int64     `json:"trafficLimitBytes"`
 }
 
 type UpdateUserRequest struct {

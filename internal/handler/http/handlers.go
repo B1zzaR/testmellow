@@ -1,12 +1,16 @@
-// Package httphandler implements all HTTP API handlers.
 package httphandler
 
 import (
+	"crypto/rand"
+	"fmt"
+	"math/big"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/vpnplatform/internal/domain"
@@ -15,6 +19,7 @@ import (
 	"github.com/vpnplatform/internal/repository/postgres"
 	"github.com/vpnplatform/internal/service"
 	jwtpkg "github.com/vpnplatform/pkg/jwt"
+	"github.com/vpnplatform/pkg/password"
 )
 
 // ─── Auth Handler ─────────────────────────────────────────────────────────────
@@ -58,12 +63,19 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	token, err := h.jwtMgr.Generate(user.ID, user.IsAdmin)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "token generation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+
+	refreshToken, err := h.jwtMgr.GenerateRefresh(user.ID, user.IsAdmin)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"token":         token,
+		"refresh_token": refreshToken,
 		"user_id":       user.ID,
 		"referral_code": user.ReferralCode,
 	})
@@ -89,32 +101,76 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 	if err != nil {
 		// Generic message to prevent user enumeration
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "неверный логин или пароль"})
 		return
 	}
 
 	token, err := h.jwtMgr.Generate(user.ID, user.IsAdmin)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "token generation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+
+	refreshToken, err := h.jwtMgr.GenerateRefresh(user.ID, user.IsAdmin)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"token":   token,
-		"user_id": user.ID,
+		"token":         token,
+		"refresh_token": refreshToken,
+		"user_id":       user.ID,
+	})
+}
+
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+// POST /api/auth/refresh
+func (h *AuthHandler) Refresh(c *gin.Context) {
+	var req refreshRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	claims, err := h.jwtMgr.ParseRefresh(req.RefreshToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
+		return
+	}
+
+	token, err := h.jwtMgr.Generate(claims.UserID, claims.IsAdmin)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+	newRefresh, err := h.jwtMgr.GenerateRefresh(claims.UserID, claims.IsAdmin)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"token":         token,
+		"refresh_token": newRefresh,
 	})
 }
 
 // ─── Profile Handler ──────────────────────────────────────────────────────────
 
 type ProfileHandler struct {
-	repo  *postgres.UserRepo
-	remna *remnawave.Client
-	log   *zap.Logger
+	repo        *postgres.UserRepo
+	remna       *remnawave.Client
+	rdb         *redis.Client
+	botUsername string
+	log         *zap.Logger
 }
 
-func NewProfileHandler(repo *postgres.UserRepo, remna *remnawave.Client, log *zap.Logger) *ProfileHandler {
-	return &ProfileHandler{repo: repo, remna: remna, log: log}
+func NewProfileHandler(repo *postgres.UserRepo, remna *remnawave.Client, rdb *redis.Client, botUsername string, log *zap.Logger) *ProfileHandler {
+	return &ProfileHandler{repo: repo, remna: remna, rdb: rdb, botUsername: botUsername, log: log}
 }
 
 // GET /api/profile
@@ -122,7 +178,7 @@ func (h *ProfileHandler) Get(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	user, err := h.repo.GetByID(c.Request.Context(), userID)
 	if err != nil || user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
 		return
 	}
 
@@ -130,6 +186,7 @@ func (h *ProfileHandler) Get(c *gin.Context) {
 		"id":            user.ID,
 		"email":         user.Email,
 		"username":      user.Username,
+		"telegram_id":   user.TelegramID,
 		"yad_balance":   user.YADBalance,
 		"referral_code": user.ReferralCode,
 		"ltv_kopecks":   user.LTV,
@@ -148,7 +205,7 @@ func (h *ProfileHandler) GetConnection(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	user, err := h.repo.GetByID(ctx, userID)
 	if err != nil || user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
 		return
 	}
 
@@ -162,7 +219,7 @@ func (h *ProfileHandler) GetConnection(c *gin.Context) {
 	if remnaUUID == "" {
 		subs, subErr := h.repo.GetActiveSubscription(ctx, userID)
 		if subErr != nil || subs == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "no active subscription"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "активная подписка не найдена"})
 			return
 		}
 
@@ -183,7 +240,7 @@ func (h *ProfileHandler) GetConnection(c *gin.Context) {
 			remnaUser, createErr := h.remna.CreateUser(ctx, userID.String(), subs.ExpiresAt)
 			if createErr != nil || remnaUser == nil || remnaUser.UUID == "" {
 				h.log.Warn("remnawave lazy repair: create user failed", zap.Error(createErr))
-				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "could not provision vpn account"})
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "не удалось настроить VPN-аккаунт, попробуйте позже"})
 				return
 			}
 			remnaUUID = remnaUser.UUID
@@ -196,10 +253,233 @@ func (h *ProfileHandler) GetConnection(c *gin.Context) {
 	remnaUser, err := h.remna.GetUser(ctx, remnaUUID)
 	if err != nil {
 		h.log.Warn("remnawave get user", zap.Error(err))
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "could not fetch connection info"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "не удалось загрузить данные подключения"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"subscribe_url": remnaUser.SubscribeURL})
+}
+
+type changePasswordRequest struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
+}
+
+// POST /api/profile/password
+func (h *ProfileHandler) ChangePassword(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+
+	var req changePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	user, err := h.repo.GetByID(c.Request.Context(), userID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
+		return
+	}
+	if user.PasswordHash == nil || !password.Verify(*user.PasswordHash, req.OldPassword) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "текущий пароль неверен"})
+		return
+	}
+
+	hash, err := password.Hash(req.NewPassword)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+	if err := h.repo.SetPassword(c.Request.Context(), userID, hash); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось сменить пароль"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "password updated"})
+}
+
+type updateTelegramRequest struct {
+	TelegramID *int64 `json:"telegram_id"`
+}
+
+// PUT /api/profile/telegram
+func (h *ProfileHandler) UpdateTelegram(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+
+	var req updateTelegramRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.TelegramID != nil && *req.TelegramID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный Telegram ID"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Unlink case — simple
+	if req.TelegramID == nil {
+		if err := h.repo.SetTelegramID(ctx, userID, nil); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось отвязать Telegram"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Telegram отвязан", "merged": false})
+		return
+	}
+
+	// Check whether another account already owns this Telegram ID
+	existing, err := h.repo.GetByTelegramID(ctx, *req.TelegramID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+
+	if existing == nil {
+		// No conflict — just set the telegram_id
+		if err := h.repo.SetTelegramID(ctx, userID, req.TelegramID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось привязать Telegram"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Telegram успешно привязан", "merged": false})
+		return
+	}
+
+	if existing.ID == userID {
+		// Already linked to this account
+		c.JSON(http.StatusOK, gin.H{"message": "Telegram уже привязан к этому аккаунту", "merged": false})
+		return
+	}
+
+	// Snapshot src Remnawave UUID before the merge destroys the src user row
+	srcRemnaUUID := ""
+	if existing.RemnaUserUUID != nil {
+		srcRemnaUUID = *existing.RemnaUserUUID
+	}
+
+	// Another account found — merge src (bot account) into dst (this account)
+	mergeResult, err := h.repo.MergeAccounts(ctx, userID, existing.ID)
+	if err != nil {
+		h.log.Error("account merge failed",
+			zap.String("dst", userID.String()),
+			zap.String("src", existing.ID.String()),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось связать аккаунты"})
+		return
+	}
+
+	// ── Post-merge Remnawave reconciliation ────────────────────────────────
+	// Both accounts may have had active VPN access. Extend dst's expiry to the
+	// best remaining active subscription, then disable the orphaned src VPN user.
+	dstUser, _ := h.repo.GetByID(ctx, userID)
+	if dstUser != nil && dstUser.RemnaUserUUID != nil && *dstUser.RemnaUserUUID != "" {
+		dstRemnaUUID := *dstUser.RemnaUserUUID
+
+		// Extend Remnawave expiry to match the longest active sub (now all owned by dst)
+		if bestSub, subErr := h.repo.GetActiveSubscription(ctx, userID); subErr == nil && bestSub != nil {
+			if extErr := h.remna.UpdateExpiry(ctx, dstRemnaUUID, bestSub.ExpiresAt); extErr != nil {
+				h.log.Warn("merge: update remnawave expiry failed", zap.Error(extErr))
+			} else {
+				h.log.Info("merge: remnawave expiry extended",
+					zap.String("remna_uuid", dstRemnaUUID),
+					zap.Time("expires_at", bestSub.ExpiresAt),
+				)
+			}
+			// Make sure dst is enabled
+			_ = h.remna.EnableUser(ctx, dstRemnaUUID)
+		}
+
+		// Disable the src's Remnawave user if it was different (orphaned)
+		if srcRemnaUUID != "" && srcRemnaUUID != dstRemnaUUID {
+			if disErr := h.remna.DisableUser(ctx, srcRemnaUUID); disErr != nil {
+				h.log.Warn("merge: disable src remnawave user failed",
+					zap.String("src_remna_uuid", srcRemnaUUID),
+					zap.Error(disErr),
+				)
+			}
+		}
+	} else if srcRemnaUUID != "" && dstUser != nil {
+		// dst had no Remnawave account but src did — the COALESCE in MergeAccounts
+		// already copied the src remna_uuid to dst; just make sure it is enabled.
+		_ = h.remna.EnableUser(ctx, srcRemnaUUID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":              "Аккаунты объединены",
+		"merged":               true,
+		"transferred_yad":      mergeResult.TransferredYAD,
+		"transferred_subs":     mergeResult.TransferredSubs,
+		"transferred_payments": mergeResult.TransferredPayments,
+	})
+}
+
+// GET /api/profile/traffic
+// Returns traffic usage stats for the authenticated user from Remnawave.
+func (h *ProfileHandler) GetTraffic(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := middleware.CurrentUserID(c)
+	user, err := h.repo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
+		return
+	}
+	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
+		c.JSON(http.StatusOK, gin.H{"used_bytes": 0, "limit_bytes": 0})
+		return
+	}
+	remnaUser, err := h.remna.GetUser(ctx, *user.RemnaUserUUID)
+	if err != nil {
+		h.log.Warn("remnawave get user for traffic", zap.Error(err))
+		c.JSON(http.StatusOK, gin.H{"used_bytes": 0, "limit_bytes": 0})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"used_bytes":  remnaUser.UsedTrafficBytes,
+		"limit_bytes": remnaUser.TrafficLimitBytes,
+	})
+}
+
+// linkCodeChars — unambiguous alphanumeric characters for link codes.
+const linkCodeChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+func generateLinkCode() (string, error) {
+	code := make([]byte, 6)
+	for i := range code {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(linkCodeChars))))
+		if err != nil {
+			return "", err
+		}
+		code[i] = linkCodeChars[n.Int64()]
+	}
+	return string(code), nil
+}
+
+// POST /api/profile/telegram/link-code
+// Generates a short-lived one-time code the user can send to the Telegram bot
+// to link their web account without knowing their numeric Telegram ID.
+func (h *ProfileHandler) GenerateLinkCode(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := middleware.CurrentUserID(c)
+
+	code, err := generateLinkCode()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+
+	key := fmt.Sprintf("tg:link:%s", code)
+	if err := h.rdb.Set(ctx, key, userID.String(), 5*time.Minute).Err(); err != nil {
+		h.log.Error("generate link code: redis set", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":         code,
+		"bot_username": h.botUsername,
+		"expires_in":   300,
+	})
 }
 
 // ─── Balance Handler ──────────────────────────────────────────────────────────
@@ -218,7 +498,7 @@ func (h *BalanceHandler) Get(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	user, err := h.repo.GetByID(c.Request.Context(), userID)
 	if err != nil || user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
 		return
 	}
 
@@ -236,7 +516,7 @@ func (h *BalanceHandler) History(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	txs, err := h.repo.GetYADTransactions(c.Request.Context(), userID, 50)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load history"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить историю"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"transactions": txs})
@@ -258,7 +538,7 @@ func (h *SubscriptionHandler) List(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	subs, err := h.svc.GetUserSubscriptions(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load subscriptions"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить подписки"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"subscriptions": subs})
@@ -269,13 +549,13 @@ func (h *SubscriptionHandler) GetByID(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	subID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid subscription id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный идентификатор подписки"})
 		return
 	}
 
 	subs, err := h.svc.GetUserSubscriptions(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load subscriptions"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить подписки"})
 		return
 	}
 	for _, s := range subs {
@@ -284,7 +564,7 @@ func (h *SubscriptionHandler) GetByID(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+	c.JSON(http.StatusNotFound, gin.H{"error": "подписка не найдена"})
 }
 
 type buySubscriptionRequest struct {
@@ -346,12 +626,13 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 // ─── Payment Handler ─────────────────────────────────────────────────────────
 
 type PaymentHandler struct {
-	svc *service.SubscriptionService
-	log *zap.Logger
+	svc  *service.SubscriptionService
+	repo *postgres.UserRepo
+	log  *zap.Logger
 }
 
-func NewPaymentHandler(svc *service.SubscriptionService, log *zap.Logger) *PaymentHandler {
-	return &PaymentHandler{svc: svc, log: log}
+func NewPaymentHandler(svc *service.SubscriptionService, repo *postgres.UserRepo, log *zap.Logger) *PaymentHandler {
+	return &PaymentHandler{svc: svc, repo: repo, log: log}
 }
 
 // GET /api/payments/pending
@@ -359,7 +640,7 @@ func (h *PaymentHandler) ListPending(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	payments, err := h.svc.GetPendingPayments(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load payments"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить платежи"})
 		return
 	}
 	if payments == nil {
@@ -373,7 +654,7 @@ func (h *PaymentHandler) GetByID(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	paymentID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный идентификатор платежа"})
 		return
 	}
 	payment, err := h.svc.GetPaymentByID(c.Request.Context(), userID, paymentID)
@@ -389,7 +670,7 @@ func (h *PaymentHandler) Check(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	paymentID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный идентификатор платежа"})
 		return
 	}
 	payment, err := h.svc.CheckPaymentStatus(c.Request.Context(), userID, paymentID)
@@ -398,6 +679,29 @@ func (h *PaymentHandler) Check(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, payment)
+}
+
+// GET /api/payments/history?page=1&per_page=10
+func (h *PaymentHandler) ListHistory(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "10"))
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 100 {
+		perPage = 10
+	}
+	offset := (page - 1) * perPage
+	payments, total, err := h.repo.GetPaymentHistory(c.Request.Context(), userID, perPage, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить историю платежей"})
+		return
+	}
+	if payments == nil {
+		payments = []*domain.Payment{}
+	}
+	c.JSON(http.StatusOK, gin.H{"payments": payments, "total": total})
 }
 
 // ─── Referral Handler ────────────────────────────────────────────────────────
@@ -416,7 +720,7 @@ func (h *ReferralHandler) List(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	refs, err := h.repo.GetReferralsByReferrer(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load referrals"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить рефералы"})
 		return
 	}
 
@@ -436,12 +740,13 @@ func (h *ReferralHandler) List(c *gin.Context) {
 // ─── Promo Handler ────────────────────────────────────────────────────────────
 
 type PromoHandler struct {
-	eco *service.EconomyService
-	log *zap.Logger
+	eco  *service.EconomyService
+	repo *postgres.UserRepo
+	log  *zap.Logger
 }
 
-func NewPromoHandler(eco *service.EconomyService, log *zap.Logger) *PromoHandler {
-	return &PromoHandler{eco: eco, log: log}
+func NewPromoHandler(eco *service.EconomyService, repo *postgres.UserRepo, log *zap.Logger) *PromoHandler {
+	return &PromoHandler{eco: eco, repo: repo, log: log}
 }
 
 type usePromoRequest struct {
@@ -464,8 +769,24 @@ func (h *PromoHandler) Use(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":    "Promo code applied",
-		"yad_earned": promo.YADAmount,
+		"message":          "Promo code applied",
+		"promo_type":       promo.PromoType,
+		"yad_earned":       promo.YADAmount,
+		"discount_percent": promo.DiscountPercent,
+	})
+}
+
+// GET /api/promo/discount/active
+func (h *PromoHandler) ActiveDiscount(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	code, percent, err := h.repo.GetActiveDiscount(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось получить информацию о скидке"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"active_discount_code":    code,
+		"active_discount_percent": percent,
 	})
 }
 
@@ -530,7 +851,7 @@ func (h *TicketHandler) Create(c *gin.Context) {
 		UpdatedAt: now,
 	}
 	if err := h.repo.CreateTicket(c.Request.Context(), ticket); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create ticket"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось создать обращение"})
 		return
 	}
 
@@ -543,7 +864,7 @@ func (h *TicketHandler) Create(c *gin.Context) {
 		CreatedAt: now,
 	}
 	if err := h.repo.AddTicketMessage(c.Request.Context(), msg); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add message"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось отправить сообщение"})
 		return
 	}
 
@@ -555,7 +876,7 @@ func (h *TicketHandler) List(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	tickets, err := h.repo.ListTickets(c.Request.Context(), &userID, "", 20, 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tickets"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить обращения"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"tickets": tickets})
@@ -566,24 +887,24 @@ func (h *TicketHandler) GetWithMessages(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	ticketID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ticket id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный идентификатор обращения"})
 		return
 	}
 
 	ticket, err := h.repo.GetTicketByID(c.Request.Context(), ticketID)
 	if err != nil || ticket == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "ticket not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "обращение не найдено"})
 		return
 	}
 	// Access control: user can only see their own tickets
 	if ticket.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "доступ запрещён"})
 		return
 	}
 
 	msgs, err := h.repo.GetTicketMessages(c.Request.Context(), ticketID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load messages"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить сообщения"})
 		return
 	}
 
@@ -599,7 +920,7 @@ func (h *TicketHandler) Reply(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	ticketID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ticket id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный идентификатор обращения"})
 		return
 	}
 
@@ -611,15 +932,15 @@ func (h *TicketHandler) Reply(c *gin.Context) {
 
 	ticket, err := h.repo.GetTicketByID(c.Request.Context(), ticketID)
 	if err != nil || ticket == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "ticket not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "обращение не найдено"})
 		return
 	}
 	if ticket.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "доступ запрещён"})
 		return
 	}
 	if ticket.Status == domain.TicketClosed {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ticket is closed"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "обращение закрыто"})
 		return
 	}
 
@@ -632,7 +953,7 @@ func (h *TicketHandler) Reply(c *gin.Context) {
 		CreatedAt: time.Now(),
 	}
 	if err := h.repo.AddTicketMessage(c.Request.Context(), msg); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add message"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось отправить сообщение"})
 		return
 	}
 
@@ -691,5 +1012,37 @@ func (h *ShopHandler) Buy(c *gin.Context) {
 		"order_id":  order.ID,
 		"total_yad": order.TotalYAD,
 		"message":   "Purchase successful",
+	})
+}
+
+type buySubscriptionWithYADRequest struct {
+	Plan string `json:"plan" binding:"required"`
+}
+
+// POST /api/shop/buy-subscription
+func (h *ShopHandler) BuySubscription(c *gin.Context) {
+	var req buySubscriptionWithYADRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	plan := domain.SubscriptionPlan(req.Plan)
+	if domain.PlanYADPrice(plan) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid plan"})
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	sub, err := h.eco.BuySubscriptionWithYAD(c.Request.Context(), userID, plan)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Subscription activated",
+		"expires_at": sub.ExpiresAt,
+		"plan":       sub.Plan,
 	})
 }

@@ -16,10 +16,11 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Port        string
-	Env         string
-	WebhookPath string // e.g. /webhooks/platega
-	AdminLogin  string // login (username) that is auto-granted admin on register/login
+	Port           string
+	Env            string
+	WebhookPath    string // e.g. /webhooks/platega
+	AdminLogin     string // login (username) that is auto-granted admin on register/login
+	AllowedOrigins string // comma-separated allowed CORS origins
 }
 
 type DBConfig struct {
@@ -54,17 +55,19 @@ type RemnaConfig struct {
 }
 
 type TelegramConfig struct {
-	Token   string
-	AdminID int64
+	Token       string
+	AdminID     int64
+	BotUsername string // e.g. "mellowpn_bot" (without @)
 }
 
 func Load() *Config {
 	return &Config{
 		App: AppConfig{
-			Port:        env("APP_PORT", "8080"),
-			Env:         env("APP_ENV", "production"),
-			WebhookPath: env("PLATEGA_WEBHOOK_PATH", "/webhooks/platega"),
-			AdminLogin:  env("ADMIN_LOGIN", ""),
+			Port:           env("APP_PORT", "8080"),
+			Env:            env("APP_ENV", "production"),
+			WebhookPath:    env("PLATEGA_WEBHOOK_PATH", "/webhooks/platega"),
+			AdminLogin:     env("ADMIN_LOGIN", ""),
+			AllowedOrigins: env("ALLOWED_ORIGINS", "*"),
 		},
 		DB: DBConfig{
 			DSN:          env("DATABASE_DSN", "postgres://vpn:vpn@postgres:5432/vpnplatform?sslmode=disable"),
@@ -93,8 +96,9 @@ func Load() *Config {
 			SquadUUID: env("REMNA_SQUAD_UUID", ""),
 		},
 		Telegram: TelegramConfig{
-			Token:   env("TELEGRAM_TOKEN", ""),
-			AdminID: int64(envInt("TELEGRAM_ADMIN_ID", 0)),
+			Token:       env("TELEGRAM_TOKEN", ""),
+			AdminID:     int64(envInt("TELEGRAM_ADMIN_ID", 0)),
+			BotUsername: env("TELEGRAM_BOT_USERNAME", ""),
 		},
 	}
 }

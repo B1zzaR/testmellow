@@ -1,65 +1,169 @@
 import { NavLink } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
+import { useLogout } from '@/hooks/useAuth'
+import { Icon, SnakeLogo } from '@/components/ui/Icons'
+
+type IconName = Parameters<typeof Icon>[0]['name']
 
 interface NavItem {
   to: string
   label: string
-  icon: string
+  icon: IconName
+  end?: boolean
 }
 
 const navItems: NavItem[] = [
-  { to: '/dashboard', label: 'Dashboard', icon: '⊞' },
-  { to: '/subscriptions', label: 'Subscriptions', icon: '🛡' },
-  { to: '/referrals', label: 'Referrals', icon: '👥' },
-  { to: '/balance', label: 'YAD Balance', icon: '💎' },
-  { to: '/shop', label: 'Shop', icon: '🛒' },
-  { to: '/tickets', label: 'Support', icon: '💬' },
-  { to: '/promo', label: 'Promo Code', icon: '🎁' },
+  { to: '/dashboard',        label: 'Обзор',           icon: 'dashboard',  end: true },
+  { to: '/subscriptions',    label: 'Подписки',        icon: 'shield'               },
+  { to: '/referrals',        label: 'Рефералы',        icon: 'users'                },
+  { to: '/shop',             label: 'Магазин',         icon: 'shop'                 },
+  { to: '/tickets',          label: 'Поддержка',       icon: 'message'              },
+  { to: '/promo',            label: 'Промокод',        icon: 'tag'                  },
+  { to: '/payments/history', label: 'Платежи',         icon: 'coins'                },
+  { to: '/settings',         label: 'Настройки',       icon: 'sliders'              },
 ]
 
-export function Sidebar() {
+// Bottom nav shows first 5 items (most important)
+const bottomNavItems = navItems.slice(0, 5)
+
+interface SidebarProps {
+  onClose?: () => void
+}
+
+export function Sidebar({ onClose }: SidebarProps) {
   const isAdmin = useAuthStore((s) => s.isAdmin())
+  const logout = useLogout()
+
+  const handleLogout = () => {
+    logout()
+    onClose?.()
+  }
 
   return (
-    <aside className="flex w-60 flex-col border-r border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-      <div className="flex h-16 items-center border-b border-gray-200 px-6 dark:border-slate-700">
-        <span className="text-xl font-bold text-primary-600">VPN Platform</span>
+    <aside className="flex h-full w-64 flex-col bg-white dark:bg-surface-900 border-r border-gray-200 dark:border-surface-700">
+      {/* Brand */}
+      <div className="flex h-[72px] items-center gap-3 border-b border-gray-200 dark:border-surface-700 px-5">
+        <SnakeLogo size={36} />
+        <div>
+          <p className="text-base font-bold tracking-wide text-gray-900 dark:text-slate-100">MelloWPN</p>
+          <p className="text-[11px] font-medium uppercase tracking-widest text-primary-500">Безопасно · Быстро · Надёжно</p>
+        </div>
       </div>
-      <nav className="flex-1 space-y-1 px-3 py-4">
+
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-3 py-4 scrollbar-thin space-y-0.5">
+        <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-600">
+          Навигация
+        </p>
         {navItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
+            end={item.end}
+            onClick={onClose}
             className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+              [
+                'group flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-all',
                 isActive
-                  ? 'bg-primary-50 text-primary-700'
-                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100'
-              }`
+                  ? 'bg-primary-500/10 text-primary-500 dark:text-primary-400'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-surface-700 dark:hover:text-slate-100',
+              ].join(' ')
             }
           >
-            <span className="text-base">{item.icon}</span>
-            {item.label}
+            {({ isActive }) => (
+              <>
+                <Icon
+                  name={item.icon}
+                  size={18}
+                  className={isActive ? 'text-primary-500' : 'text-gray-400 dark:text-slate-600 group-hover:text-gray-600 dark:group-hover:text-slate-300'}
+                />
+                {item.label}
+                {isActive && (
+                  <span className="ml-auto h-2 w-2 rounded-full bg-primary-500" />
+                )}
+              </>
+            )}
           </NavLink>
         ))}
+
+        {/* Admin section */}
+        {isAdmin && (
+          <>
+            <p className="mb-2 mt-5 px-3 text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-600">
+              Администрирование
+            </p>
+            <NavLink
+              to="/admin"
+              onClick={onClose}
+              className={({ isActive }) =>
+                [
+                  'group flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-all',
+                  isActive
+                    ? 'bg-yellow-500/10 text-yellow-500'
+                    : 'text-gray-600 hover:bg-gray-100 dark:text-slate-400 dark:hover:bg-surface-700 dark:hover:text-slate-100',
+                ].join(' ')
+              }
+            >
+              <Icon name="settings" size={18} className="text-yellow-500/60 group-hover:text-yellow-500 transition-colors" />
+              Панель администратора
+            </NavLink>
+          </>
+        )}
       </nav>
-      {isAdmin && (
-        <div className="border-t border-amber-100 px-3 py-3 dark:border-amber-900/40">
-          <NavLink
-            to="/admin"
-            className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-amber-50 text-amber-700'
-                  : 'text-amber-600 hover:bg-amber-50 hover:text-amber-800'
-              }`
-            }
-          >
-            <span className="text-base">⚙️</span>
-            Admin Panel
-          </NavLink>
-        </div>
-      )}
+
+      {/* Logout */}
+      <div className="border-t border-gray-200 dark:border-surface-700 px-3 py-3">
+        <button
+          onClick={handleLogout}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-500 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+        >
+          <Icon name="logout" size={18} />
+          Выйти
+        </button>
+      </div>
     </aside>
+  )
+}
+
+/** Mobile bottom navigation bar — rendered separately in AppLayout */
+export function BottomNav() {
+  return (
+    <nav
+      className={[
+        'fixed bottom-0 inset-x-0 z-30 lg:hidden',
+        'flex items-stretch border-t border-gray-200 bg-white',
+        'dark:border-surface-700 dark:bg-surface-900',
+        // Safe area for iPhone home indicator
+        'pb-[env(safe-area-inset-bottom)]',
+      ].join(' ')}
+    >
+      {bottomNavItems.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          className={({ isActive }) =>
+            [
+              'flex flex-1 flex-col items-center justify-center gap-0.5 py-2',
+              'min-h-[56px] select-none text-[10px] font-medium transition-colors',
+              isActive
+                ? 'text-primary-500'
+                : 'text-gray-400 dark:text-slate-600',
+            ].join(' ')
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Icon
+                name={item.icon}
+                size={20}
+                className={isActive ? 'text-primary-500' : 'text-gray-400 dark:text-slate-500'}
+              />
+              <span className="whitespace-nowrap">{item.label}</span>
+            </>
+          )}
+        </NavLink>
+      ))}
+    </nav>
   )
 }

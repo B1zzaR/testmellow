@@ -1,0 +1,34 @@
+# Auto-HTTPS with Let's Encrypt
+{$DOMAIN} {
+    # Proxy API requests to backend
+    reverse_proxy /api/* backend:8080 {
+        header_uri X-Forwarded-Proto https
+        header_uri X-Real-IP {http.request.remote}
+    }
+    
+    # Proxy webhook requests to backend
+    reverse_proxy /webhooks/* backend:8080 {
+        header_uri X-Forwarded-Proto https
+        header_uri X-Real-IP {http.request.remote}
+    }
+    
+    # Proxy everything else to frontend (SPA)
+    reverse_proxy /* frontend:80 {
+        header_uri X-Forwarded-Proto https
+        header_uri X-Real-IP {http.request.remote}
+        
+        # Preserve the Host header
+        header_up Host {http.request.host}
+    }
+    
+    # Security headers
+    header X-Frame-Options "SAMEORIGIN"
+    header X-Content-Type-Options "nosniff"
+    header X-XSS-Protection "1; mode=block"
+    header Referrer-Policy "strict-origin-when-cross-origin"
+}
+
+# Redirect www to non-www
+www.{$DOMAIN} {
+    redir https://{$DOMAIN}{uri}
+}
