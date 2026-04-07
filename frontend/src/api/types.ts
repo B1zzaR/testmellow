@@ -12,6 +12,10 @@ export interface User {
   email: string | null
   username: string | null
   telegram_id: number | null
+  telegram_username: string | null
+  telegram_first_name: string | null
+  telegram_last_name: string | null
+  telegram_photo_url: string | null
   yad_balance: number
   referral_code: string
   ltv_kopecks: number

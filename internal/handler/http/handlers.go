@@ -183,18 +183,22 @@ func (h *ProfileHandler) Get(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"id":            user.ID,
-		"email":         user.Email,
-		"username":      user.Username,
-		"telegram_id":   user.TelegramID,
-		"yad_balance":   user.YADBalance,
-		"referral_code": user.ReferralCode,
-		"ltv_kopecks":   user.LTV,
-		"trial_used":    user.TrialUsed,
-		"is_admin":      user.IsAdmin,
-		"is_banned":     user.IsBanned,
-		"risk_score":    user.RiskScore,
-		"created_at":    user.CreatedAt,
+		"id":                   user.ID,
+		"email":                user.Email,
+		"username":             user.Username,
+		"telegram_id":          user.TelegramID,
+		"telegram_username":    user.TelegramUsername,
+		"telegram_first_name":  user.TelegramFirstName,
+		"telegram_last_name":   user.TelegramLastName,
+		"telegram_photo_url":   user.TelegramPhotoURL,
+		"yad_balance":          user.YADBalance,
+		"referral_code":        user.ReferralCode,
+		"ltv_kopecks":          user.LTV,
+		"trial_used":           user.TrialUsed,
+		"is_admin":             user.IsAdmin,
+		"is_banned":            user.IsBanned,
+		"risk_score":           user.RiskScore,
+		"created_at":           user.CreatedAt,
 	})
 }
 
