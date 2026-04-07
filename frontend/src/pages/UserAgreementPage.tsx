@@ -78,7 +78,7 @@ export function UserAgreementPage() {
         </Section>
 
         <div className="mt-6 rounded-xl border border-gray-200 dark:border-surface-700 bg-white dark:bg-surface-800 px-5 py-4 text-sm text-gray-600 dark:text-slate-300">
-          Начиная использование сервиса (в том числе, запуская бота и/или вводя команду /start), Пользователь подтверждает, что ознакомлен с настоящим Соглашением и безусловно принимает его условия, даже если фактически не прочитал его.
+          Начиная использование Сервиса (включая регистрацию, оплату подписки, использование функционала платформы, а также взаимодействие с Telegram-ботом, в том числе ввод команды /start), Пользователь подтверждает, что ознакомлен с настоящим Соглашением и принимает его условия; факт использования Сервиса рассматривается как согласие с условиями Соглашения.
         </div>
 
         <div className="mt-4 rounded-xl border border-gray-200 dark:border-surface-700 bg-white dark:bg-surface-800 px-5 py-4 text-sm text-gray-500 dark:text-slate-400">
