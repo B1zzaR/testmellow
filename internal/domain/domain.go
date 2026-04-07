@@ -60,6 +60,10 @@ const (
 type User struct {
 	ID                    uuid.UUID  `db:"id" json:"id"`
 	TelegramID            *int64     `db:"telegram_id" json:"telegram_id"`
+	TelegramUsername      *string    `db:"telegram_username" json:"telegram_username"`
+	TelegramFirstName     *string    `db:"telegram_first_name" json:"telegram_first_name"`
+	TelegramLastName      *string    `db:"telegram_last_name" json:"telegram_last_name"`
+	TelegramPhotoURL      *string    `db:"telegram_photo_url" json:"telegram_photo_url"`
 	Username              *string    `db:"username" json:"username"`
 	Email                 *string    `db:"email" json:"email"`
 	PasswordHash          *string    `db:"password_hash" json:"-"`
