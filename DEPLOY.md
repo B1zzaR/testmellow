@@ -66,9 +66,9 @@ openssl rand -hex 32
 ### 3️⃣ Открыть firewall
 
 ```bash
-sudo ufw allow 22/tcp    # SSH (если используется)
-sudo ufw allow 80/tcp    # HTTP (Let's Encrypt validation)
-sudo ufw allow 443/tcp   # HTTPS (основной трафик)
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
 sudo ufw enable
 ```
 
