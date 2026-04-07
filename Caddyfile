@@ -2,20 +2,20 @@
 {$DOMAIN} {
     # Proxy API requests to backend
     reverse_proxy /api/* backend:8080 {
-        header X-Forwarded-Proto https
-        header X-Real-IP {http.request.remote}
+        header_up X-Forwarded-Proto https
+        header_up X-Real-IP {http.request.remote}
     }
     
     # Proxy webhook requests to backend
     reverse_proxy /webhooks/* backend:8080 {
-        header X-Forwarded-Proto https
-        header X-Real-IP {http.request.remote}
+        header_up X-Forwarded-Proto https
+        header_up X-Real-IP {http.request.remote}
     }
     
     # Proxy everything else to frontend (SPA)
     reverse_proxy /* frontend:80 {
-        header X-Forwarded-Proto https
-        header X-Real-IP {http.request.remote}
+        header_up X-Forwarded-Proto https
+        header_up X-Real-IP {http.request.remote}
         
         # Preserve the Host header
         header_up Host {http.request.host}
