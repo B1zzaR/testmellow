@@ -421,13 +421,13 @@ func (h *ReferralHandler) List(c *gin.Context) {
 	}
 
 	user, _ := h.repo.GetByID(c.Request.Context(), userID)
-	referralLink := ""
+	referralCode := ""
 	if user != nil {
-		referralLink = "https://t.me/YourBotUsername?start=" + user.ReferralCode
+		referralCode = user.ReferralCode
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"referral_link":  referralLink,
+		"referral_code":  referralCode,
 		"referral_count": len(refs),
 		"referrals":      refs,
 	})

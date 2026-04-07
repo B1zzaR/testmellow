@@ -95,7 +95,7 @@ export function ReferralsPage() {
 
       {referrals.length === 0 && (
         <div className="rounded-xl border border-dashed border-gray-300 px-6 py-10 text-center">
-          <p className="text-sm text-gray-400">No referrals yet. Start sharing your link!</p>
+          <p className="text-sm text-gray-400">No referrals yet. Share your code to invite friends!</p>
         </div>
       )}
     </div>

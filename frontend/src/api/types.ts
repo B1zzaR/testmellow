@@ -157,7 +157,7 @@ export interface BalanceResponse {
 }
 
 export interface ReferralsResponse {
-  referral_link: string
+  referral_code: string
   referral_count: number
   referrals: Referral[]
 }
