@@ -54,8 +54,9 @@ func main() {
 	jwtMgr := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTLHours)
 
 	botCfg := bot.BotConfig{
-		Token:   cfg.Telegram.Token,
-		AdminID: cfg.Telegram.AdminID,
+		Token:      cfg.Telegram.Token,
+		AdminID:    cfg.Telegram.AdminID,
+		WebAppURL:  cfg.Telegram.WebAppURL,
 	}
 	b, err := bot.New(botCfg, userRepo, authSvc, subSvc, ecoSvc, trialSvc, remnaClient, jwtMgr, rdb, log)
 	if err != nil {

@@ -125,6 +125,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?required}
       TELEGRAM_ADMIN_ID: ${TELEGRAM_ADMIN_ID}
+      WEBAPP_URL: ${WEBAPP_URL:-https://mellowpn.space}
       PLATEGA_MERCHANT_ID: ${PLATEGA_MERCHANT_ID}
       PLATEGA_SECRET: ${PLATEGA_SECRET}
       PLATEGA_BASE_URL: https://app.platega.io
