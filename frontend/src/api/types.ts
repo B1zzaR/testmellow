@@ -9,7 +9,6 @@ export type RewardSplitStatus = 'pending' | 'immediate' | 'deferred' | 'paid' | 
 
 export interface User {
   id: string
-  email: string | null
   username: string | null
   telegram_id: number | null
   telegram_username: string | null

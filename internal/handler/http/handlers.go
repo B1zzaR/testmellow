@@ -184,7 +184,6 @@ func (h *ProfileHandler) Get(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":                   user.ID,
-		"email":                user.Email,
 		"username":             user.Username,
 		"telegram_id":          user.TelegramID,
 		"telegram_username":    user.TelegramUsername,
