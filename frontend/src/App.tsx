@@ -39,7 +39,7 @@ export default function App() {
         setAuth(token, {
           id: profile.id,
           is_admin: profile.is_admin,
-          email: profile.email,
+          email: profile.email ?? null,
         })
       })
       .catch(() => {

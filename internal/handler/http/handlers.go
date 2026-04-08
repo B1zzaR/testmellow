@@ -1049,3 +1049,67 @@ func (h *ShopHandler) BuySubscription(c *gin.Context) {
 		"plan":       sub.Plan,
 	})
 }
+
+// ─── Device Handler ───────────────────────────────────────────────────────────
+
+type DeviceHandler struct {
+	svc *service.DeviceService
+	log *zap.Logger
+}
+
+func NewDeviceHandler(svc *service.DeviceService, log *zap.Logger) *DeviceHandler {
+	return &DeviceHandler{svc: svc, log: log}
+}
+
+// GET /api/devices
+func (h *DeviceHandler) List(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	devices, err := h.svc.ListDevices(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера"})
+		return
+	}
+
+	type deviceResponse struct {
+		ID         uuid.UUID `json:"id"`
+		DeviceName string    `json:"device_name"`
+		LastActive string    `json:"last_active"`
+		IsActive   bool      `json:"is_active"`
+		IsInactive bool      `json:"is_inactive"`
+	}
+
+	result := make([]deviceResponse, 0, len(devices))
+	for _, d := range devices {
+		result = append(result, deviceResponse{
+			ID:         d.ID,
+			DeviceName: d.DeviceName,
+			LastActive: d.LastActive.Format(time.RFC3339),
+			IsActive:   d.IsActive,
+			IsInactive: d.IsInactive(),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"devices": result,
+		"count":   len(result),
+		"limit":   domain.DeviceMaxPerUser,
+	})
+}
+
+// POST /api/devices/:id/disconnect
+func (h *DeviceHandler) Disconnect(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+
+	deviceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "некорректный ID устройства"})
+		return
+	}
+
+	if err := h.svc.DisconnectDevice(c.Request.Context(), userID, deviceID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Устройство отключено"})
+}

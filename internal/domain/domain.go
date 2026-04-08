@@ -301,6 +301,24 @@ type AdminAuditLog struct {
 	CreatedAt     time.Time  `db:"created_at"  json:"created_at"`
 }
 
+// ─── Device ───────────────────────────────────────────────────────────────────
+
+const DeviceMaxPerUser = 4
+const DeviceInactiveDays = 3
+
+type Device struct {
+	ID         uuid.UUID `db:"id"          json:"id"`
+	UserID     uuid.UUID `db:"user_id"      json:"user_id"`
+	DeviceName string    `db:"device_name" json:"device_name"`
+	LastActive time.Time `db:"last_active" json:"last_active"`
+	CreatedAt  time.Time `db:"created_at"  json:"created_at"`
+	IsActive   bool      `db:"is_active"   json:"is_active"`
+}
+
+func (d *Device) IsInactive() bool {
+	return time.Since(d.LastActive) > DeviceInactiveDays*24*time.Hour
+}
+
 // ─── Analytics helpers ────────────────────────────────────────────────────────
 
 type RevenueStat struct {

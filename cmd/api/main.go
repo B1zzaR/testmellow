@@ -61,12 +61,14 @@ func main() {
 
 	// ── Repositories & services ───────────────────────────────────────────
 	userRepo := dbpkg.NewUserRepo(db)
+	deviceRepo := dbpkg.NewDeviceRepo(db)
 	antiEngine := anticheat.NewEngine(rdb, log)
 
 	authSvc := service.NewAuthService(userRepo, antiEngine, log, cfg.App.AdminLogin)
 	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log)
 	ecoSvc := service.NewEconomyService(userRepo, remnaClient, antiEngine, log)
 	trialSvc := service.NewTrialService(userRepo, remnaClient, log)
+	deviceSvc := service.NewDeviceService(deviceRepo, userRepo, log)
 
 	// ── JWT ───────────────────────────────────────────────────────────────
 	jwtMgr := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTLHours)
@@ -80,6 +82,7 @@ func main() {
 	referralH := httpHandler.NewReferralHandler(userRepo, log)
 	promoH := httpHandler.NewPromoHandler(ecoSvc, userRepo, log)
 	trialH := httpHandler.NewTrialHandler(trialSvc, log)
+	deviceH := httpHandler.NewDeviceHandler(deviceSvc, log)
 	ticketH := httpHandler.NewTicketHandler(userRepo, log)
 	shopH := httpHandler.NewShopHandler(userRepo, ecoSvc, log)
 	webhookH := webhookHandler.NewPlategalHandler(platClient, userRepo, rdb, log)
@@ -154,6 +157,9 @@ func main() {
 		api.GET("/shop", shopH.List)
 		api.POST("/shop/buy", shopH.Buy)
 		api.POST("/shop/buy-subscription", shopH.BuySubscription)
+
+		api.GET("/devices", deviceH.List)
+		api.POST("/devices/:id/disconnect", deviceH.Disconnect)
 	}
 
 	// Admin endpoints (JWT required + is_admin flag)

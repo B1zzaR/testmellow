@@ -793,3 +793,93 @@ func generateReferralCode() (string, error) {
 	}
 	return strings.ToUpper(hex.EncodeToString(b)), nil
 }
+
+// ─── Device Service ───────────────────────────────────────────────────────────
+
+type DeviceService struct {
+	devices *postgres.DeviceRepo
+	users   *postgres.UserRepo
+	log     *zap.Logger
+}
+
+func NewDeviceService(devices *postgres.DeviceRepo, users *postgres.UserRepo, log *zap.Logger) *DeviceService {
+	return &DeviceService{devices: devices, users: users, log: log}
+}
+
+// ListDevices returns all active devices for the requesting user.
+func (s *DeviceService) ListDevices(ctx context.Context, userID uuid.UUID) ([]*domain.Device, error) {
+	return s.devices.ListByUser(ctx, userID)
+}
+
+// RegisterDevice adds a new device for the user, enforcing the 4-device limit.
+// If deviceID already exists the record is touched (last_active updated).
+// Returns the upserted device.
+func (s *DeviceService) RegisterDevice(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, deviceName string) (*domain.Device, error) {
+	// Check if device already tracked for this user
+	existing, err := s.devices.GetByID(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil && existing.UserID == userID {
+		// Device known — just refresh activity
+		if err := s.devices.Touch(ctx, deviceID); err != nil {
+			return nil, err
+		}
+		existing.IsActive = true
+		existing.LastActive = time.Now().UTC()
+		return existing, nil
+	}
+
+	// New device — enforce limit
+	count, err := s.devices.CountActive(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if count >= domain.DeviceMaxPerUser {
+		return nil, fmt.Errorf("достигнут лимит устройств (%d)", domain.DeviceMaxPerUser)
+	}
+
+	now := time.Now().UTC()
+	d := &domain.Device{
+		ID:         deviceID,
+		UserID:     userID,
+		DeviceName: deviceName,
+		LastActive: now,
+		CreatedAt:  now,
+		IsActive:   true,
+	}
+	if err := s.devices.Upsert(ctx, d); err != nil {
+		return nil, err
+	}
+	s.log.Info("device registered", zap.String("user_id", userID.String()), zap.String("device_id", deviceID.String()))
+	return d, nil
+}
+
+// DisconnectDevice deactivates a device. Only allowed when device is inactive.
+// Validates that the device belongs to the requesting user.
+func (s *DeviceService) DisconnectDevice(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) error {
+	device, err := s.devices.GetByID(ctx, deviceID)
+	if err != nil {
+		return err
+	}
+	if device == nil {
+		return errors.New("устройство не найдено")
+	}
+	if device.UserID != userID {
+		return errors.New("доступ запрещён")
+	}
+	if !device.IsActive {
+		return errors.New("устройство уже отключено")
+	}
+	if !device.IsInactive() {
+		return errors.New("нельзя отключить активное устройство — оно было в сети менее 3 дней назад")
+	}
+	if err := s.devices.Disconnect(ctx, deviceID); err != nil {
+		return err
+	}
+	s.log.Info("device disconnected",
+		zap.String("user_id", userID.String()),
+		zap.String("device_id", deviceID.String()),
+	)
+	return nil
+}

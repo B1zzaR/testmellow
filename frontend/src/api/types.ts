@@ -10,6 +10,7 @@ export type RewardSplitStatus = 'pending' | 'immediate' | 'deferred' | 'paid' | 
 export interface User {
   id: string
   username: string | null
+  email?: string | null
   telegram_id: number | null
   telegram_username: string | null
   telegram_first_name: string | null
@@ -119,6 +120,20 @@ export interface ShopItem {
   stock: number
   is_active: boolean
   created_at: string
+}
+
+export interface Device {
+  id: string
+  device_name: string
+  last_active: string
+  is_active: boolean
+  is_inactive: boolean
+}
+
+export interface DeviceListResponse {
+  devices: Device[]
+  count: number
+  limit: number
 }
 
 export interface Analytics {

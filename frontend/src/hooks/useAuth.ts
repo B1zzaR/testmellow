@@ -20,7 +20,7 @@ export function useLogin() {
         setAuth(data.token, {
           id: data.user_id,
           is_admin: profile.is_admin,
-          email: profile.email,
+          email: profile.email ?? null,
         })
         queryClient.invalidateQueries({ queryKey: ['profile'] })
         navigate(profile.is_admin ? '/admin' : '/dashboard')
@@ -45,7 +45,7 @@ export function useRegister() {
         setAuth(data.token, {
           id: data.user_id,
           is_admin: profile.is_admin,
-          email: profile.email,
+          email: profile.email ?? null,
         })
       } catch {
         setAuth(data.token, { id: data.user_id, is_admin: false, email: null })

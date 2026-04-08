@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { SnakeLogo, Icon } from '@/components/ui/Icons'
 import { useAuthStore } from '@/store/authStore'
+import { SnakeBackground } from '@/components/SnakeBackground'
 
 // ─── Landing Navbar ──────────────────────────────────────────────────────────
 
@@ -129,8 +130,15 @@ function LandingNav() {
 // ─── Hero Section ─────────────────────────────────────────────────────────────
 
 function HeroSection() {
+  const navigate = useNavigate()
+
+  const handleStart = () => navigate('/register')
+
   return (
     <section className="relative flex min-h-screen items-center overflow-hidden bg-surface-950 pt-16">
+      {/* Snake animation background — sits below all other content */}
+      <SnakeBackground />
+
       {/* Subtle background glow */}
       <div className="pointer-events-none absolute inset-0" aria-hidden="true">
         <div
@@ -160,12 +168,12 @@ function HeroSection() {
 
         {/* CTAs */}
         <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Link
-            to="/register"
+          <button
+            onClick={handleStart}
             className="inline-flex items-center gap-2 rounded-xl bg-primary-500 px-8 py-3.5 text-base font-bold text-white shadow-glow-sm transition-all hover:bg-primary-400 hover:shadow-glow-md active:scale-95"
           >
             Начать
-          </Link>
+          </button>
           <a
             href="#pricing"
             className="inline-flex items-center gap-2 rounded-xl border border-surface-600 bg-surface-800 px-8 py-3.5 text-base font-semibold text-slate-300 transition-all hover:border-primary-500/40 hover:bg-surface-700 hover:text-slate-100"
@@ -187,6 +195,17 @@ function HeroSection() {
           <span className="text-xs tracking-widest">ЛИСТАТЬ</span>
           <Icon name="chevron-down" size={16} />
         </a>
+      </div>
+
+      {/* Live monitoring badge — bottom-left corner, purely decorative */}
+      <div className="pointer-events-none absolute bottom-7 left-6 z-10 flex items-center gap-2.5 rounded-full border border-emerald-900/50 bg-surface-950/80 px-3.5 py-2 backdrop-blur-sm">
+        <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+        </span>
+        <span className="text-xs font-medium tracking-wide text-slate-400">
+          Блокируем угрозы. Защищаем твои данные.
+        </span>
       </div>
     </section>
   )
