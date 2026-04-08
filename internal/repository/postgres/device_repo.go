@@ -19,12 +19,12 @@ func NewDeviceRepo(db *pgxpool.Pool) *DeviceRepo {
 	return &DeviceRepo{db: db}
 }
 
-// ListByUser returns all active devices for a user, ordered by last_active desc.
+// ListByUser returns all devices for a user (both active and inactive), ordered by last_active desc.
 func (r *DeviceRepo) ListByUser(ctx context.Context, userID uuid.UUID) ([]*domain.Device, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, user_id, device_name, last_active, created_at, is_active
 		FROM devices
-		WHERE user_id = $1 AND is_active = true
+		WHERE user_id = $1
 		ORDER BY last_active DESC`,
 		userID,
 	)

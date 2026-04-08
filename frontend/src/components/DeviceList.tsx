@@ -17,6 +17,7 @@ export function DeviceList({ data }: DeviceListProps) {
   const queryClient = useQueryClient()
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+  const [showInactive, setShowInactive] = useState(false)
 
   const disconnectMutation = useMutation({
     mutationFn: (id: string) => devicesApi.disconnect(id),
@@ -31,6 +32,8 @@ export function DeviceList({ data }: DeviceListProps) {
     },
   })
 
+  const activeDevices = devices.filter(d => d.is_active)
+  const inactiveDevices = devices.filter(d => !d.is_active)
   const atLimit = count >= limit
 
   return (
@@ -51,15 +54,46 @@ export function DeviceList({ data }: DeviceListProps) {
       {devices.length === 0 ? (
         <p className="text-sm text-gray-400 dark:text-slate-500">Нет подключённых устройств</p>
       ) : (
-        <div className="space-y-2">
-          {devices.map((device) => (
-            <DeviceRow
-              key={device.id}
-              device={device}
-              onDisconnect={() => disconnectMutation.mutate(device.id)}
-              loading={disconnectMutation.isPending && disconnectMutation.variables === device.id}
-            />
-          ))}
+        <div className="space-y-4">
+          {/* Active devices */}
+          {activeDevices.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-600">Активные ({activeDevices.length})</p>
+              {activeDevices.map((device) => (
+                <DeviceRow
+                  key={device.id}
+                  device={device}
+                  onDisconnect={() => disconnectMutation.mutate(device.id)}
+                  loading={disconnectMutation.isPending && disconnectMutation.variables === device.id}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Inactive devices */}
+          {inactiveDevices.length > 0 && (
+            <div className="space-y-2">
+              <button
+                onClick={() => setShowInactive(!showInactive)}
+                className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-600 hover:text-gray-600 dark:hover:text-slate-500 transition-colors flex items-center gap-1"
+              >
+                <Icon name={showInactive ? 'chevron-down' : 'chevron-right'} size={12} />
+                Неактивные ({inactiveDevices.length})
+              </button>
+              {showInactive && (
+                <div className="space-y-2">
+                  {inactiveDevices.map((device) => (
+                    <DeviceRow
+                      key={device.id}
+                      device={device}
+                      onDisconnect={() => disconnectMutation.mutate(device.id)}
+                      loading={disconnectMutation.isPending && disconnectMutation.variables === device.id}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </Card>

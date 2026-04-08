@@ -159,6 +159,7 @@ func main() {
 		api.POST("/shop/buy-subscription", shopH.BuySubscription)
 
 		api.GET("/devices", deviceH.List)
+		api.POST("/devices/register", deviceH.Register)
 		api.POST("/devices/:id/disconnect", deviceH.Disconnect)
 	}
 

@@ -1079,6 +1079,7 @@ func (h *DeviceHandler) List(c *gin.Context) {
 	}
 
 	result := make([]deviceResponse, 0, len(devices))
+	activeCount := 0
 	for _, d := range devices {
 		result = append(result, deviceResponse{
 			ID:         d.ID,
@@ -1087,12 +1088,52 @@ func (h *DeviceHandler) List(c *gin.Context) {
 			IsActive:   d.IsActive,
 			IsInactive: d.IsInactive(),
 		})
+		if d.IsActive {
+			activeCount++
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"devices": result,
-		"count":   len(result),
+		"count":   activeCount,
 		"limit":   domain.DeviceMaxPerUser,
+	})
+}
+
+// POST /api/devices/register
+func (h *DeviceHandler) Register(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+
+	var req struct {
+		HWID        string `json:"hwid" binding:"required"`
+		DeviceName  string `json:"device_name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Try to parse HWID as UUID directly
+	deviceID, err := uuid.Parse(req.HWID)
+	if err != nil {
+		// If not a UUID, generate a deterministic UUID from the HWID using v5 namespace
+		// This ensures the same HWID always maps to the same UUID
+		namespace := uuid.MustParse("6ba7b811-9dad-11d1-80b4-00c04fd430c8") // DNS namespace
+		deviceID = uuid.NewSHA1(namespace, []byte(req.HWID))
+	}
+
+	device, err := h.svc.RegisterDevice(c.Request.Context(), userID, deviceID, req.DeviceName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"id":           device.ID,
+		"device_name":  device.DeviceName,
+		"last_active":  device.LastActive.Format(time.RFC3339),
+		"is_active":    device.IsActive,
+		"is_inactive":  device.IsInactive(),
 	})
 }
 
