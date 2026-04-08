@@ -32,6 +32,8 @@ export default function App() {
   // If the cookie is valid the server returns the user profile; otherwise 401 clears state.
   useEffect(() => {
     let canceled = false
+    const setInitialized = useAuthStore.getState().setInitialized
+    
     profileApi
       .getProfile()
       .then((profile) => {
@@ -41,16 +43,18 @@ export default function App() {
           is_admin: profile.is_admin,
           email: profile.email ?? null,
         })
+        setInitialized(true)
       })
       .catch(() => {
         if (canceled) return
         clearAuth()
+        setInitialized(true)
       })
 
     return () => {
       canceled = true
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [setAuth, clearAuth]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <QueryClientProvider client={queryClient}>

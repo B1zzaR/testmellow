@@ -9,8 +9,10 @@ export interface AuthUser {
 
 interface AuthState {
   user: AuthUser | null
+  initialized: boolean
   setAuth: (user: AuthUser) => void
   clearAuth: () => void
+  setInitialized: (value: boolean) => void
   isAuthenticated: () => boolean
   isAdmin: () => boolean
 }
@@ -19,11 +21,14 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       user: null,
+      initialized: false,
 
       // Tokens are in HttpOnly cookies — only persist user metadata.
       setAuth: (user) => set({ user }),
 
       clearAuth: () => set({ user: null }),
+
+      setInitialized: (value) => set({ initialized: value }),
 
       isAuthenticated: () => get().user !== null,
 
