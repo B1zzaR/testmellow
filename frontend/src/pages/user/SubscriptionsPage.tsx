@@ -107,9 +107,10 @@ export function SubscriptionsPage() {
     queryKey: ['active-discount'],
     queryFn: promoApi.getActiveDiscount,
   })
-  const { data: devicesData } = useQuery({
+  const { data: devicesData, isLoading: devicesLoading, isError: devicesError, error: devicesErrorMsg } = useQuery({
     queryKey: ['devices'],
     queryFn: devicesApi.list,
+    retry: 2,
   })
   const queryClient = useQueryClient()
   const discount = discountData?.active_discount_percent ?? 0
@@ -192,7 +193,9 @@ export function SubscriptionsPage() {
       )}
 
       {/* Devices */}
-      {devicesData && <DeviceList data={devicesData} />}
+      {devicesLoading && <PageSpinner />}
+      {devicesError && <Alert variant="error" message={`Ошибка загрузки устройств: ${devicesErrorMsg instanceof Error ? devicesErrorMsg.message : 'Неизвестная ошибка'}`} />}
+      {devicesData && !devicesError && <DeviceList data={devicesData} />}
 
       {/* Plan selector */}
       <Card title="Выбрать тариф">
