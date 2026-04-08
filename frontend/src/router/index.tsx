@@ -1,7 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom'
 import { PrivateRoute } from './PrivateRoute'
 import { AdminRoute } from './AdminRoute'
-import { PublicRoute } from './PublicRoute'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { AdminLayout } from '@/components/layout/AdminLayout'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -40,79 +39,60 @@ import { AdminSubscriptionsPage } from '@/pages/admin/AdminSubscriptionsPage'
 import { AdminReferralsPage } from '@/pages/admin/AdminReferralsPage'
 import { AdminYADPage } from '@/pages/admin/AdminYADPage'
 
-// Public routes (wrapped in PublicRoute to prevent authenticated users from accessing)
-const publicRoutes = [
-  { 
-    path: '/login', 
-    element: <PublicRoute><LoginPage /></PublicRoute> 
-  },
-  { 
-    path: '/register', 
-    element: <PublicRoute><RegisterPage /></PublicRoute> 
-  },
-  { 
-    path: '/', 
-    element: <PublicRoute><LandingPage /></PublicRoute> 
-  },
-  { 
-    path: '/PrivacyPolicy', 
-    element: <PrivacyPolicyPage /> 
-  },
-  { 
-    path: '/UserAgreement', 
-    element: <UserAgreementPage /> 
-  },
-]
-
-// User protected routes
-const userRoutes = [
-  {
-    element: <AppLayout />,
-    children: [
-      { path: '/dashboard', element: <ErrorBoundary><DashboardPage /></ErrorBoundary> },
-      { path: '/subscriptions', element: <ErrorBoundary><SubscriptionsPage /></ErrorBoundary> },
-      { path: '/subscriptions/renew', element: <ErrorBoundary><RenewalPage /></ErrorBoundary> },
-      { path: '/referrals', element: <ErrorBoundary><ReferralsPage /></ErrorBoundary> },
-      { path: '/shop', element: <ErrorBoundary><ShopPage /></ErrorBoundary> },
-      { path: '/tickets', element: <ErrorBoundary><TicketsPage /></ErrorBoundary> },
-      { path: '/tickets/:id', element: <ErrorBoundary><TicketDetailPage /></ErrorBoundary> },
-      { path: '/promo', element: <ErrorBoundary><PromoPage /></ErrorBoundary> },
-      { path: '/balance', element: <ErrorBoundary><BalancePage /></ErrorBoundary> },
-      { path: '/settings', element: <ErrorBoundary><SettingsPage /></ErrorBoundary> },
-      { path: '/settings/password', element: <ErrorBoundary><ChangePasswordPage /></ErrorBoundary> },
-      { path: '/payments/history', element: <ErrorBoundary><PaymentHistoryPage /></ErrorBoundary> },
-    ],
-  },
-]
-
-// Admin routes
-const adminRoutes = [
-  {
-    element: <AdminLayout />,
-    children: [
-      { path: '/admin', element: <ErrorBoundary><AdminDashboardPage /></ErrorBoundary> },
-      { path: '/admin/users', element: <ErrorBoundary><AdminUsersPage /></ErrorBoundary> },
-      { path: '/admin/users/:id', element: <ErrorBoundary><AdminUserDetailPage /></ErrorBoundary> },
-      { path: '/admin/promo', element: <ErrorBoundary><AdminPromoPage /></ErrorBoundary> },
-      { path: '/admin/tickets', element: <ErrorBoundary><AdminTicketsPage /></ErrorBoundary> },
-      { path: '/admin/tickets/:id', element: <ErrorBoundary><AdminTicketDetailPage /></ErrorBoundary> },
-      { path: '/admin/payments', element: <ErrorBoundary><AdminPaymentsPage /></ErrorBoundary> },
-      { path: '/admin/subscriptions', element: <ErrorBoundary><AdminSubscriptionsPage /></ErrorBoundary> },
-      { path: '/admin/referrals', element: <ErrorBoundary><AdminReferralsPage /></ErrorBoundary> },
-      { path: '/admin/yad', element: <ErrorBoundary><AdminYADPage /></ErrorBoundary> },
-    ],
-  },
-]
-
 export const router = createBrowserRouter([
-  ...publicRoutes,
+  // Public routes
+  { path: '/login', element: <LoginPage /> },
+  { path: '/register', element: <RegisterPage /> },
+  { path: '/', element: <LandingPage /> },
+  { path: '/PrivacyPolicy', element: <PrivacyPolicyPage /> },
+  { path: '/UserAgreement', element: <UserAgreementPage /> },
+
+  // Protected user routes
   {
     element: <PrivateRoute />,
-    children: userRoutes,
+    children: [
+      {
+        element: <AppLayout />,
+        children: [
+          { path: '/dashboard', element: <ErrorBoundary><DashboardPage /></ErrorBoundary> },
+          { path: '/subscriptions', element: <ErrorBoundary><SubscriptionsPage /></ErrorBoundary> },
+          { path: '/subscriptions/renew', element: <ErrorBoundary><RenewalPage /></ErrorBoundary> },
+          { path: '/referrals', element: <ErrorBoundary><ReferralsPage /></ErrorBoundary> },
+          { path: '/shop', element: <ErrorBoundary><ShopPage /></ErrorBoundary> },
+          { path: '/tickets', element: <ErrorBoundary><TicketsPage /></ErrorBoundary> },
+          { path: '/tickets/:id', element: <ErrorBoundary><TicketDetailPage /></ErrorBoundary> },
+          { path: '/promo', element: <ErrorBoundary><PromoPage /></ErrorBoundary> },
+          { path: '/balance', element: <ErrorBoundary><BalancePage /></ErrorBoundary> },
+          { path: '/settings', element: <ErrorBoundary><SettingsPage /></ErrorBoundary> },
+          { path: '/settings/password', element: <ErrorBoundary><ChangePasswordPage /></ErrorBoundary> },
+          { path: '/payments/history', element: <ErrorBoundary><PaymentHistoryPage /></ErrorBoundary> },
+        ],
+      },
+    ],
   },
+
+  // Admin routes
   {
     element: <AdminRoute />,
-    children: adminRoutes,
+    children: [
+      {
+        element: <AdminLayout />,
+        children: [
+          { path: '/admin', element: <ErrorBoundary><AdminDashboardPage /></ErrorBoundary> },
+          { path: '/admin/users', element: <ErrorBoundary><AdminUsersPage /></ErrorBoundary> },
+          { path: '/admin/users/:id', element: <ErrorBoundary><AdminUserDetailPage /></ErrorBoundary> },
+          { path: '/admin/promo', element: <ErrorBoundary><AdminPromoPage /></ErrorBoundary> },
+          { path: '/admin/tickets', element: <ErrorBoundary><AdminTicketsPage /></ErrorBoundary> },
+          { path: '/admin/tickets/:id', element: <ErrorBoundary><AdminTicketDetailPage /></ErrorBoundary> },
+          { path: '/admin/payments', element: <ErrorBoundary><AdminPaymentsPage /></ErrorBoundary> },
+          { path: '/admin/subscriptions', element: <ErrorBoundary><AdminSubscriptionsPage /></ErrorBoundary> },
+          { path: '/admin/referrals', element: <ErrorBoundary><AdminReferralsPage /></ErrorBoundary> },
+          { path: '/admin/yad', element: <ErrorBoundary><AdminYADPage /></ErrorBoundary> },
+        ],
+      },
+    ],
   },
+
+  // Catch-all → 404
   { path: '*', element: <NotFoundPage /> },
 ])
