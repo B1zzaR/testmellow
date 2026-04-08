@@ -1,12 +1,21 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23.8-alpine AS builder
 WORKDIR /app
+# Create a non-root user to run the binary in the final image.
+RUN adduser -D -u 1001 -g '' appuser
+# Install CA certificates and timezone data in the builder so we can copy
+# them to the scratch final image (crypto/tls and time.LoadLocation need them).
+RUN apk add --no-cache ca-certificates tzdata
 COPY go.mod go.sum ./
-RUN go mod download
+RUN go mod download && go mod verify
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /api ./cmd/api
 
 FROM scratch
+COPY --from=builder /etc/passwd         /etc/passwd
+COPY --from=builder /etc/group          /etc/group
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /api /api
+USER appuser
 EXPOSE 8080
 ENTRYPOINT ["/api"]

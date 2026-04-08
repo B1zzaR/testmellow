@@ -160,9 +160,8 @@ export interface RegisterRequest {
 }
 
 export interface AuthResponse {
-  token: string
-  refresh_token?: string
   user_id: string
+  is_admin: boolean
   referral_code?: string
 }
 

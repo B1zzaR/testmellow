@@ -19,6 +19,7 @@ import (
 	"github.com/vpnplatform/internal/integration/remnawave"
 	"github.com/vpnplatform/internal/middleware"
 	"github.com/vpnplatform/internal/repository/postgres"
+	redisrepo "github.com/vpnplatform/internal/repository/redis"
 	"github.com/vpnplatform/internal/service"
 	jwtpkg "github.com/vpnplatform/pkg/jwt"
 	"github.com/vpnplatform/pkg/password"
@@ -35,6 +36,24 @@ type AuthHandler struct {
 
 func NewAuthHandler(auth *service.AuthService, jwtMgr *jwtpkg.Manager, rdb *redis.Client, log *zap.Logger) *AuthHandler {
 	return &AuthHandler{auth: auth, jwtMgr: jwtMgr, rdb: rdb, log: log}
+}
+
+// setAuthCookies writes access and refresh tokens as HttpOnly cookies (H-7).
+// The refresh cookie is scoped to /api/auth/refresh to prevent inadvertent
+// transmission. The Secure flag is set in production mode.
+func setAuthCookies(c *gin.Context, token, refresh string) {
+	secure := gin.Mode() == gin.ReleaseMode
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie("access_token", token, int((24 * time.Hour).Seconds()), "/", "", secure, true)
+	c.SetCookie("refresh_token", refresh, int((30 * 24 * time.Hour).Seconds()), "/api/auth/refresh", "", secure, true)
+}
+
+// clearAuthCookies expires both auth cookies (for logout).
+func clearAuthCookies(c *gin.Context) {
+	secure := gin.Mode() == gin.ReleaseMode
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie("access_token", "", -1, "/", "", secure, true)
+	c.SetCookie("refresh_token", "", -1, "/api/auth/refresh", "", secure, true)
 }
 
 var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
@@ -76,16 +95,23 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	refreshToken, err := h.jwtMgr.GenerateRefresh(user.ID, user.IsAdmin)
+	refreshToken, jti, err := h.jwtMgr.GenerateRefresh(user.ID, user.IsAdmin)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
 		return
 	}
 
+	// H-8: register refresh token JTI in allowlist so it can be revoked.
+	if err := redisrepo.RegisterRefreshToken(c.Request.Context(), h.rdb, jti, user.ID.String(), h.jwtMgr.RefreshTTL()); err != nil {
+		h.log.Warn("register refresh token failed", zap.Error(err))
+	}
+
+	// H-7: deliver tokens via HttpOnly cookies, not in response body.
+	setAuthCookies(c, token, refreshToken)
+
 	c.JSON(http.StatusCreated, gin.H{
-		"token":         token,
-		"refresh_token": refreshToken,
 		"user_id":       user.ID,
+		"is_admin":      user.IsAdmin,
 		"referral_code": user.ReferralCode,
 	})
 }
@@ -124,33 +150,55 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	refreshToken, err := h.jwtMgr.GenerateRefresh(user.ID, user.IsAdmin)
+	refreshToken, jti, err := h.jwtMgr.GenerateRefresh(user.ID, user.IsAdmin)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
 		return
 	}
 
+	// H-8: register refresh token JTI in allowlist.
+	if err := redisrepo.RegisterRefreshToken(c.Request.Context(), h.rdb, jti, user.ID.String(), h.jwtMgr.RefreshTTL()); err != nil {
+		h.log.Warn("register refresh token failed", zap.Error(err))
+	}
+
+	// H-7: deliver tokens via HttpOnly cookies.
+	setAuthCookies(c, token, refreshToken)
+
 	c.JSON(http.StatusOK, gin.H{
-		"token":         token,
-		"refresh_token": refreshToken,
-		"user_id":       user.ID,
+		"user_id":  user.ID,
+		"is_admin": user.IsAdmin,
 	})
 }
 
-type refreshRequest struct {
-	RefreshToken string `json:"refresh_token" binding:"required"`
-}
-
 // POST /api/auth/refresh
+// Reads the refresh token from the HttpOnly cookie (H-7) or JSON body (backward compat).
+// Validates the JTI against the revocation allowlist (H-8) and rotates both tokens.
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	var req refreshRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	// Accept token from cookie first, then fall back to JSON body.
+	var refreshTokenStr string
+	if cookie, err := c.Cookie("refresh_token"); err == nil && cookie != "" {
+		refreshTokenStr = cookie
+	} else {
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		_ = c.ShouldBindJSON(&req)
+		refreshTokenStr = req.RefreshToken
+	}
+	if refreshTokenStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
 		return
 	}
 
-	claims, err := h.jwtMgr.ParseRefresh(req.RefreshToken)
+	claims, err := h.jwtMgr.ParseRefresh(refreshTokenStr)
 	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
+		return
+	}
+
+	// H-8: validate JTI against the allowlist and delete it atomically (one-use).
+	jti := claims.ID
+	if _, err := redisrepo.ValidateAndRevokeRefreshToken(c.Request.Context(), h.rdb, jti); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
 		return
 	}
@@ -166,16 +214,21 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
 		return
 	}
-	newRefresh, err := h.jwtMgr.GenerateRefresh(claims.UserID, claims.IsAdmin)
+	newRefresh, newJTI, err := h.jwtMgr.GenerateRefresh(claims.UserID, claims.IsAdmin)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"token":         token,
-		"refresh_token": newRefresh,
-	})
+	// Register the new JTI in the allowlist.
+	if err := redisrepo.RegisterRefreshToken(c.Request.Context(), h.rdb, newJTI, claims.UserID.String(), h.jwtMgr.RefreshTTL()); err != nil {
+		h.log.Warn("register new refresh token failed", zap.Error(err))
+	}
+
+	// H-7: deliver new tokens via HttpOnly cookies.
+	setAuthCookies(c, token, newRefresh)
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
 // ─── Profile Handler ──────────────────────────────────────────────────────────
@@ -215,7 +268,6 @@ func (h *ProfileHandler) Get(c *gin.Context) {
 		"trial_used":          user.TrialUsed,
 		"is_admin":            user.IsAdmin,
 		"is_banned":           user.IsBanned,
-		"risk_score":          user.RiskScore,
 		"created_at":          user.CreatedAt,
 	})
 }
@@ -316,124 +368,41 @@ func (h *ProfileHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	// Invalidate all tokens issued before this moment so an attacker who obtained
+	// the old password (or a leaked token) cannot continue using the session.
+	if vErr := redisrepo.SetPasswordVersion(c.Request.Context(), h.rdb, userID.String(), time.Now()); vErr != nil {
+		h.log.Warn("set password version failed", zap.Error(vErr))
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "password updated"})
 }
 
-type updateTelegramRequest struct {
-	TelegramID *int64 `json:"telegram_id"`
-}
-
 // PUT /api/profile/telegram
+// This endpoint only allows UNLINKING (sending null telegram_id).
+// Linking is performed exclusively via the Telegram bot /link CODE flow (C-1).
 func (h *ProfileHandler) UpdateTelegram(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 
-	var req updateTelegramRequest
+	var req struct {
+		TelegramID *int64 `json:"telegram_id"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if req.TelegramID != nil && *req.TelegramID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный Telegram ID"})
+	// Reject any attempt to set an arbitrary telegram_id via the API.
+	// Telegram linking must go through the verified bot flow.
+	if req.TelegramID != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "привязка Telegram возможна только через бот"})
 		return
 	}
 
-	ctx := c.Request.Context()
-
-	// Unlink case — simple
-	if req.TelegramID == nil {
-		if err := h.repo.SetTelegramID(ctx, userID, nil); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось отвязать Telegram"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "Telegram отвязан", "merged": false})
+	if err := h.repo.SetTelegramID(c.Request.Context(), userID, nil); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось отвязать Telegram"})
 		return
 	}
-
-	// Check whether another account already owns this Telegram ID
-	existing, err := h.repo.GetByTelegramID(ctx, *req.TelegramID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
-		return
-	}
-
-	if existing == nil {
-		// No conflict — just set the telegram_id
-		if err := h.repo.SetTelegramID(ctx, userID, req.TelegramID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось привязать Telegram"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "Telegram успешно привязан", "merged": false})
-		return
-	}
-
-	if existing.ID == userID {
-		// Already linked to this account
-		c.JSON(http.StatusOK, gin.H{"message": "Telegram уже привязан к этому аккаунту", "merged": false})
-		return
-	}
-
-	// Snapshot src Remnawave UUID before the merge destroys the src user row
-	srcRemnaUUID := ""
-	if existing.RemnaUserUUID != nil {
-		srcRemnaUUID = *existing.RemnaUserUUID
-	}
-
-	// Another account found — merge src (bot account) into dst (this account)
-	mergeResult, err := h.repo.MergeAccounts(ctx, userID, existing.ID)
-	if err != nil {
-		h.log.Error("account merge failed",
-			zap.String("dst", userID.String()),
-			zap.String("src", existing.ID.String()),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось связать аккаунты"})
-		return
-	}
-
-	// ── Post-merge Remnawave reconciliation ────────────────────────────────
-	// Both accounts may have had active VPN access. Extend dst's expiry to the
-	// best remaining active subscription, then disable the orphaned src VPN user.
-	dstUser, _ := h.repo.GetByID(ctx, userID)
-	if dstUser != nil && dstUser.RemnaUserUUID != nil && *dstUser.RemnaUserUUID != "" {
-		dstRemnaUUID := *dstUser.RemnaUserUUID
-
-		// Extend Remnawave expiry to match the longest active sub (now all owned by dst)
-		if bestSub, subErr := h.repo.GetActiveSubscription(ctx, userID); subErr == nil && bestSub != nil {
-			if extErr := h.remna.UpdateExpiry(ctx, dstRemnaUUID, bestSub.ExpiresAt); extErr != nil {
-				h.log.Warn("merge: update remnawave expiry failed", zap.Error(extErr))
-			} else {
-				h.log.Info("merge: remnawave expiry extended",
-					zap.String("remna_uuid", dstRemnaUUID),
-					zap.Time("expires_at", bestSub.ExpiresAt),
-				)
-			}
-			// Make sure dst is enabled
-			_ = h.remna.EnableUser(ctx, dstRemnaUUID)
-		}
-
-		// Disable the src's Remnawave user if it was different (orphaned)
-		if srcRemnaUUID != "" && srcRemnaUUID != dstRemnaUUID {
-			if disErr := h.remna.DisableUser(ctx, srcRemnaUUID); disErr != nil {
-				h.log.Warn("merge: disable src remnawave user failed",
-					zap.String("src_remna_uuid", srcRemnaUUID),
-					zap.Error(disErr),
-				)
-			}
-		}
-	} else if srcRemnaUUID != "" && dstUser != nil {
-		// dst had no Remnawave account but src did — the COALESCE in MergeAccounts
-		// already copied the src remna_uuid to dst; just make sure it is enabled.
-		_ = h.remna.EnableUser(ctx, srcRemnaUUID)
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":              "Аккаунты объединены",
-		"merged":               true,
-		"transferred_yad":      mergeResult.TransferredYAD,
-		"transferred_subs":     mergeResult.TransferredSubs,
-		"transferred_payments": mergeResult.TransferredPayments,
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "Telegram отвязан"})
 }
 
 // GET /api/profile/traffic
@@ -480,9 +449,18 @@ func generateLinkCode() (string, error) {
 // POST /api/profile/telegram/link-code
 // Generates a short-lived one-time code the user can send to the Telegram bot
 // to link their web account without knowing their numeric Telegram ID.
+// Rate-limited to 3 requests per 5 minutes per user (M-2).
 func (h *ProfileHandler) GenerateLinkCode(c *gin.Context) {
 	ctx := c.Request.Context()
 	userID := middleware.CurrentUserID(c)
+
+	// M-2: rate-limit to prevent code-farming / bot spamming.
+	rlKey := fmt.Sprintf("rl:link_code:%s", userID.String())
+	count, rlErr := redisrepo.Increment(ctx, h.rdb, rlKey, 5*time.Minute)
+	if rlErr == nil && count > 3 {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "слишком много запросов, повторите позже"})
+		return
+	}
 
 	code, err := generateLinkCode()
 	if err != nil {
@@ -851,7 +829,7 @@ func NewTicketHandler(repo *postgres.UserRepo, log *zap.Logger) *TicketHandler {
 
 type createTicketRequest struct {
 	Subject string `json:"subject" binding:"required,min=3,max=256"`
-	Message string `json:"message" binding:"required,min=1"`
+	Message string `json:"message" binding:"required,min=1,max=4096"`
 }
 
 // POST /api/tickets
@@ -934,7 +912,7 @@ func (h *TicketHandler) GetWithMessages(c *gin.Context) {
 }
 
 type replyTicketRequest struct {
-	Message string `json:"message" binding:"required,min=1"`
+	Message string `json:"message" binding:"required,min=1,max=4096"`
 }
 
 // POST /api/tickets/:id/reply
@@ -1006,7 +984,7 @@ func (h *ShopHandler) List(c *gin.Context) {
 
 type buyItemRequest struct {
 	ItemID   string `json:"item_id" binding:"required"`
-	Quantity int    `json:"quantity" binding:"required,min=1"`
+	Quantity int    `json:"quantity" binding:"required,min=1,max=100"`
 }
 
 // POST /api/shop/buy

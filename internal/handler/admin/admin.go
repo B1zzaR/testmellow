@@ -280,7 +280,7 @@ func (h *Handler) GetTicket(c *gin.Context) {
 }
 
 type adminReplyRequest struct {
-	Message string `json:"message" binding:"required,min=1"`
+	Message string `json:"message" binding:"required,min=1,max=4096"`
 }
 
 // POST /admin/tickets/:id/reply

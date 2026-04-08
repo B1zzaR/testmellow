@@ -63,7 +63,7 @@ func (h *Handler) GetUserYAD(c *gin.Context) {
 }
 
 type adjustYADRequest struct {
-	Delta int64  `json:"delta" binding:"required"`
+	Delta int64  `json:"delta" binding:"required,min=-1000000,max=1000000"`
 	Note  string `json:"note"  binding:"required,min=3,max=255"`
 }
 
@@ -382,7 +382,7 @@ func (h *Handler) ListYADTransactions(c *gin.Context) {
 
 type adminAdjustYADRequest struct {
 	UserID string `json:"user_id" binding:"required"`
-	Delta  int64  `json:"delta"   binding:"required"`
+	Delta  int64  `json:"delta"   binding:"required,min=-1000000,max=1000000"`
 	Note   string `json:"note"    binding:"required,min=3,max=255"`
 }
 

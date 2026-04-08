@@ -12,33 +12,18 @@ export const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
   timeout: 15_000,
-})
-
-// ─── Request interceptor: inject JWT ─────────────────────────────────────────
-apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
+  // H-7: send HttpOnly cookies on every request (tokens no longer in localStorage).
+  withCredentials: true,
 })
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-let _refreshing: Promise<string> | null = null
+let _refreshing: Promise<void> | null = null
 
-async function tryRefresh(): Promise<string> {
+async function tryRefresh(): Promise<void> {
   if (_refreshing) return _refreshing
   _refreshing = (async () => {
-    const refreshToken = localStorage.getItem('refresh_token')
-    if (!refreshToken) throw new Error('no refresh token')
-    const res = await axios.post<{ token: string; refresh_token: string }>(
-      `${BASE_URL}/api/auth/refresh`,
-      { refresh_token: refreshToken },
-    )
-    const { token, refresh_token: newRefresh } = res.data
-    localStorage.setItem('auth_token', token)
-    if (newRefresh) localStorage.setItem('refresh_token', newRefresh)
-    return token
+    // Cookies are sent automatically — no body needed.
+    await axios.post(`${BASE_URL}/api/auth/refresh`, undefined, { withCredentials: true })
   })()
   _refreshing.finally(() => { _refreshing = null })
   return _refreshing
@@ -60,18 +45,15 @@ apiClient.interceptors.response.use(
       }
     }
 
-    // On 401: try refresh token once before giving up
+    // On 401: attempt silent token refresh once before giving up.
     if (error.response?.status === 401 && config && !config._refreshed) {
       config._refreshed = true
       try {
-        const newToken = await tryRefresh()
-        config.headers = { ...(config.headers ?? {}), Authorization: `Bearer ${newToken}` }
+        await tryRefresh()
+        // New cookies are set by the server — just retry the original request.
         return apiClient(config)
       } catch {
-        // Refresh failed — clear session and redirect
-        localStorage.removeItem('auth_token')
-        localStorage.removeItem('refresh_token')
-        localStorage.removeItem('auth_user')
+        // Refresh failed — redirect to login (page reload clears all JS state).
         if (window.location.pathname !== '/login') {
           window.location.href = '/login'
         }
@@ -79,9 +61,6 @@ apiClient.interceptors.response.use(
     }
 
     if (error.response?.status === 401) {
-      localStorage.removeItem('auth_token')
-      localStorage.removeItem('refresh_token')
-      localStorage.removeItem('auth_user')
       if (window.location.pathname !== '/login') {
         window.location.href = '/login'
       }
@@ -98,6 +77,19 @@ apiClient.interceptors.response.use(
     } else if (/Network Error|ERR_NETWORK|Failed to fetch/.test(raw)) {
       message = 'Ошибка сети — проверьте подключение к интернету'
     } else if (/timeout|ECONNABORTED/.test(raw)) {
+      message = 'Превышено время ожидания — попробуйте позже'
+    } else if (error.response?.status === 429) {
+      const retryAfter = error.response.headers['retry-after']
+      message = retryAfter
+        ? `Слишком много запросов — повторите через ${retryAfter} сек.`
+        : 'Слишком много запросов — повторите позже'
+    }
+
+    return Promise.reject(new Error(message))
+  },
+)
+
+export default apiClient
       message = 'Превышено время ожидания — попробуйте позже'
     } else if (error.response?.status === 429) {
       const retryAfter = error.response.headers['retry-after']

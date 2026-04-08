@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-vpn}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      POSTGRES_DB: vpnplatform
+      POSTGRES_DB: ${POSTGRES_DB:-vpnplatform}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -25,8 +25,10 @@ services:
       redis-server
       --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
-      --save 60 1
+      --maxmemory-policy volatile-lru
+      --save 1 1
+      --appendonly yes
+      --appendfsync everysec
     volumes:
       - redisdata:/data
     healthcheck:
@@ -51,7 +53,8 @@ services:
     environment:
       APP_PORT: 8080
       APP_ENV: production
-      DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/vpnplatform?sslmode=disable
+      # Use ${POSTGRES_DB} so the DSN matches what the postgres service creates.
+      DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vpnplatform}?sslmode=prefer
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
@@ -64,11 +67,20 @@ services:
       REMNA_API_KEY: ${REMNA_API_KEY:?required}
       REMNA_SQUAD_UUID: ${REMNA_SQUAD_UUID:-}
       ADMIN_LOGIN: ${ADMIN_LOGIN:-}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+      # NEVER leave ALLOWED_ORIGINS as * in production — always set it explicitly.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS is required}
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
     ports:
       - "127.0.0.1:8080:8080"
+    # Healthcheck against the /health endpoint so Caddy only receives traffic
+    # once the Go process is fully initialised and the DB connection is ready.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - internal
     logging:
@@ -90,7 +102,7 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: production
-      DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/vpnplatform?sslmode=disable
+      DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vpnplatform}?sslmode=prefer
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       PLATEGA_MERCHANT_ID: ${PLATEGA_MERCHANT_ID}
@@ -121,12 +133,14 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: production
-      DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/vpnplatform?sslmode=disable
+      DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vpnplatform}?sslmode=prefer
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?required}
       TELEGRAM_ADMIN_ID: ${TELEGRAM_ADMIN_ID}
-      WEBAPP_URL: ${WEBAPP_URL:-https://mellowpn.space}
+      # WEBAPP_URL must be set explicitly — defaulting to a hardcoded domain
+      # would silently break every other deployment.
+      WEBAPP_URL: ${WEBAPP_URL:?WEBAPP_URL is required}
       PLATEGA_MERCHANT_ID: ${PLATEGA_MERCHANT_ID}
       PLATEGA_SECRET: ${PLATEGA_SECRET}
       PLATEGA_BASE_URL: https://app.platega.io
@@ -174,12 +188,12 @@ services:
       - pgbackups:/backups
     networks:
       - internal
-    # Daily dump at 03:00 UTC, keep last 7 files
+    # Daily dump at 03:00 UTC, keep last 7 files.
     entrypoint: >
       sh -c "
         while true; do
           FILENAME=/backups/vpnplatform_$$(date +%Y%m%d_%H%M%S).sql.gz;
-          pg_dump -h postgres -U $${POSTGRES_USER:-vpn} vpnplatform | gzip > $$FILENAME;
+          pg_dump -h postgres -U $${POSTGRES_USER:-vpn} $${POSTGRES_DB:-vpnplatform} | gzip > $$FILENAME;
           echo \"Backup created: $$FILENAME\";
           ls -tp /backups/*.sql.gz 2>/dev/null | tail -n +8 | xargs -r rm --;
           sleep 86400;
@@ -194,14 +208,17 @@ services:
       - "0.0.0.0:80:80"
       - "0.0.0.0:443:443"
     environment:
-      DOMAIN: ${DOMAIN:-localhost}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
+      DOMAIN: ${DOMAIN:?DOMAIN is required}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
     networks:
       - internal
     logging:
@@ -220,3 +237,4 @@ volumes:
 networks:
   internal:
     driver: bridge
+

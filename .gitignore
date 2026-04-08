@@ -1,0 +1,37 @@
+# ── Secrets ────────────────────────────────────────────────────────────────────
+# NEVER commit .env — it contains database passwords, API keys, and JWT secrets.
+# Use .env.example as the committed template.
+.env
+.env.local
+.env.*.local
+
+# ── Go build artefacts ─────────────────────────────────────────────────────────
+/api
+/bot
+/worker
+*.exe
+*.test
+*.out
+vendor/
+
+# ── Frontend build output ──────────────────────────────────────────────────────
+frontend/dist/
+frontend/node_modules/
+frontend/.env.local
+
+# ── Docker volumes / local data ────────────────────────────────────────────────
+# Named volumes stay inside Docker; bind-mounts go here if added later.
+pgdata/
+redisdata/
+
+# ── Editor / OS noise ──────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Test / coverage ────────────────────────────────────────────────────────────
+coverage.out
+coverage.html

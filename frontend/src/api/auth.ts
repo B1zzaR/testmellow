@@ -12,8 +12,8 @@ export const authApi = {
     return res.data
   },
 
-  refresh: async (refreshToken: string): Promise<AuthResponse> => {
-    const res = await apiClient.post<AuthResponse>('/api/auth/refresh', { refresh_token: refreshToken })
-    return res.data
+  refresh: async (): Promise<void> => {
+    // Cookies are sent automatically via withCredentials — no body needed.
+    await apiClient.post('/api/auth/refresh')
   },
 }

@@ -1,34 +1,82 @@
-# Auto-HTTPS with Let's Encrypt
-mellowpn.space {
-    # Proxy API requests to backend
-    reverse_proxy /api/* backend:8080 {
-        header_up X-Forwarded-Proto https
-        header_up X-Real-IP {http.request.remote}
-    }
-    
-    # Proxy webhook requests to backend
-    reverse_proxy /webhooks/* backend:8080 {
-        header_up X-Forwarded-Proto https
-        header_up X-Real-IP {http.request.remote}
-    }
-    
-    # Proxy everything else to frontend (SPA)
-    reverse_proxy /* frontend:80 {
-        header_up X-Forwarded-Proto https
-        header_up X-Real-IP {http.request.remote}
-        
-        # Preserve the Host header
-        header_up Host {http.request.host}
-    }
-    
-    # Security headers
-    header X-Frame-Options "SAMEORIGIN"
-    header X-Content-Type-Options "nosniff"
-    header X-XSS-Protection "1; mode=block"
-    header Referrer-Policy "strict-origin-when-cross-origin"
+# =============================================================================
+# Caddyfile — VPN Platform
+#
+# Environment variables consumed at startup (set in docker-compose.yml):
+#   DOMAIN       — primary domain, e.g. yourdomain.com
+#   ADMIN_EMAIL  — email for Let's Encrypt notifications
+# =============================================================================
+
+# ── Global options ────────────────────────────────────────────────────────────
+{
+    # Receive Let's Encrypt expiry/rate-limit notifications.
+    email {$ADMIN_EMAIL}
+
+    # Disable the Caddy admin API endpoint (not needed in Docker deployments
+    # and avoids exposing a management interface inside the container).
+    admin off
 }
 
-# Redirect www to non-www
-www.{$DOMAIN} {
-    redir https://{$DOMAIN}{uri}
+# ── Primary site ──────────────────────────────────────────────────────────────
+{$DOMAIN} {
+
+    # ── TLS (Let's Encrypt ACME, auto-renewed) ────────────────────────────
+    tls {$ADMIN_EMAIL}
+
+    # ── Compression ───────────────────────────────────────────────────────
+    # Caddy compresses responses before they leave the container.
+    # nginx (serving the SPA) also compresses internally but only for its
+    # own plain-HTTP listener; Caddy this way covers API responses too.
+    encode zstd gzip
+
+    # ── Structured access log ─────────────────────────────────────────────
+    log {
+        output stdout
+        format json
+        level  INFO
+    }
+
+    # ── Security headers ──────────────────────────────────────────────────
+    # Only add headers that require TLS context (HSTS) or that Caddy must
+    # set globally.  Per-response headers (CSP, X-Frame-Options, etc.) are
+    # managed by the Go middleware and nginx to avoid duplicates.
+    header {
+        # HSTS: tell browsers to always use HTTPS for 2 years.
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        # Strip any Server header leaking backend identity.
+        -Server
+    }
+
+    # ── Routing: API and webhooks → Go backend ────────────────────────────
+    # IMPORTANT: /api/* and /webhooks/* must come before the catch-all SPA
+    # route.  Caddy evaluates matchers in order; the most specific path wins.
+    reverse_proxy /api/* backend:8080 {
+        # Forward the real client IP so Go can apply IP rate limiting.
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Real-IP        {remote_host}
+        header_up X-Forwarded-For  {remote_host}
+        # Remove any upstream-injected hop headers.
+        header_up -X-Powered-By
+    }
+
+    # Payment webhooks come from Platega — route them directly to the backend.
+    # PLATEGA_CALLBACK_URL must be https://DOMAIN/webhooks/platega (no /api/).
+    reverse_proxy /webhooks/* backend:8080 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Real-IP        {remote_host}
+        header_up X-Forwarded-For  {remote_host}
+        header_up -X-Powered-By
+    }
+
+    # ── Routing: everything else → nginx (SPA) ────────────────────────────
+    reverse_proxy /* frontend:80 {
+        header_up X-Forwarded-Proto {scheme}
+        # Preserve the Host header so nginx can log the correct vhost.
+        header_up Host {host}
+    }
 }
+
+# ── www → non-www permanent redirect ─────────────────────────────────────────
+www.{$DOMAIN} {
+    redir https://{$DOMAIN}{uri} permanent
+}
+

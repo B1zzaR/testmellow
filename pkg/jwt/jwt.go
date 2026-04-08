@@ -43,19 +43,28 @@ func (m *Manager) Generate(userID uuid.UUID, isAdmin bool) (string, error) {
 }
 
 // GenerateRefresh generates a long-lived refresh token (30 days).
-func (m *Manager) GenerateRefresh(userID uuid.UUID, isAdmin bool) (string, error) {
+// Returns (tokenString, jti, error). The jti should be stored in the
+// refresh-token allowlist so it can be validated and revoked (H-8).
+func (m *Manager) GenerateRefresh(userID uuid.UUID, isAdmin bool) (tokenStr, jti string, err error) {
+	jti = uuid.New().String()
 	claims := &Claims{
 		UserID:  userID,
 		IsAdmin: isAdmin,
 		RegisteredClaims: gojwt.RegisteredClaims{
 			ExpiresAt: gojwt.NewNumericDate(time.Now().Add(m.refreshTTL)),
 			IssuedAt:  gojwt.NewNumericDate(time.Now()),
-			ID:        uuid.New().String(),
+			ID:        jti,
 			Subject:   "refresh",
 		},
 	}
 	token := gojwt.NewWithClaims(gojwt.SigningMethodHS256, claims)
-	return token.SignedString(m.secret)
+	tokenStr, err = token.SignedString(m.secret)
+	return tokenStr, jti, err
+}
+
+// RefreshTTL returns the refresh token lifetime (for Redis registration).
+func (m *Manager) RefreshTTL() time.Duration {
+	return m.refreshTTL
 }
 
 func (m *Manager) Parse(tokenStr string) (*Claims, error) {

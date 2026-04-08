@@ -13,19 +13,17 @@ export function useLogin() {
   return useMutation({
     mutationFn: authApi.login,
     onSuccess: async (data) => {
-      localStorage.setItem('auth_token', data.token)
-      if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token)
       try {
         const profile = await profileApi.getProfile()
-        setAuth(data.token, {
+        setAuth({
           id: data.user_id,
           is_admin: profile.is_admin,
           email: profile.email ?? null,
-        }, data.refresh_token)
+        })
         queryClient.invalidateQueries({ queryKey: ['profile'] })
         navigate(profile.is_admin ? '/admin' : '/dashboard')
       } catch {
-        setAuth(data.token, { id: data.user_id, is_admin: false, email: null }, data.refresh_token)
+        setAuth({ id: data.user_id, is_admin: data.is_admin ?? false, email: null })
         navigate('/dashboard')
       }
     },
@@ -39,17 +37,15 @@ export function useRegister() {
   return useMutation({
     mutationFn: (data: RegisterRequest) => authApi.register(data),
     onSuccess: async (data) => {
-      localStorage.setItem('auth_token', data.token)
-      if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token)
       try {
         const profile = await profileApi.getProfile()
-        setAuth(data.token, {
+        setAuth({
           id: data.user_id,
           is_admin: profile.is_admin,
           email: profile.email ?? null,
-        }, data.refresh_token)
+        })
       } catch {
-        setAuth(data.token, { id: data.user_id, is_admin: false, email: null }, data.refresh_token)
+        setAuth({ id: data.user_id, is_admin: data.is_admin ?? false, email: null })
       }
       navigate('/dashboard')
     },

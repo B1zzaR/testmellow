@@ -201,17 +201,19 @@ func (w *Worker) requeueOrDead(ctx context.Context, queue, payload string) {
 		return
 	}
 
-	// Exponential backoff: 2^retries seconds (2s, 4s, 8s, 16s, 32s)
+	// Exponential backoff: 2^retries seconds (2s, 4s, 8s, 16s, 32s).
+	// Run in a separate goroutine so the consumer loop is never blocked (M-5).
 	backoff := time.Duration(1<<uint(retries)) * time.Second
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(backoff):
-	}
-
-	if pushErr := w.rdb.LPush(ctx, queue, string(updated)).Err(); pushErr != nil {
-		w.log.Error("re-queue failed", zap.String("queue", queue), zap.Error(pushErr))
-	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if pushErr := w.rdb.LPush(ctx, queue, string(updated)).Err(); pushErr != nil {
+			w.log.Error("re-queue failed", zap.String("queue", queue), zap.Error(pushErr))
+		}
+	}()
 }
 
 // ─── Payment Processing (continued) ──────────────────────────────────────────
@@ -317,8 +319,14 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 		return err
 	}
 
-	userID, _ := uuid.Parse(job.UserID)
-	paymentID, _ := uuid.Parse(job.PaymentID)
+	userID, err := uuid.Parse(job.UserID)
+	if err != nil {
+		return fmt.Errorf("invalid user id %q: %w", job.UserID, err)
+	}
+	paymentID, err := uuid.Parse(job.PaymentID)
+	if err != nil {
+		return fmt.Errorf("invalid payment id %q: %w", job.PaymentID, err)
+	}
 	plan := domain.SubscriptionPlan(job.Plan)
 
 	user, err := w.repo.GetByID(ctx, userID)
@@ -370,12 +378,20 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 
 	pid := paymentID
 	if activeSub != nil {
-		// Extend in place
-		if err := w.repo.ExtendSubscription(ctx, nil, activeSub.ID, newExpiry); err != nil {
+		// Extend in place — wrap in a transaction for consistency.
+		tx, err := w.repo.BeginTx(ctx)
+		if err != nil {
+			return fmt.Errorf("begin extend tx: %w", err)
+		}
+		defer tx.Rollback(ctx)
+		if err := w.repo.ExtendSubscription(ctx, tx, activeSub.ID, newExpiry); err != nil {
 			return err
 		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit extend tx: %w", err)
+		}
 	} else {
-		// Create new subscription record
+		// Create new subscription record — wrap in a transaction for consistency.
 		sub := &domain.Subscription{
 			ID:           uuid.New(),
 			UserID:       userID,
@@ -389,8 +405,16 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
-		if err := w.repo.CreateSubscription(ctx, nil, sub); err != nil {
+		tx, err := w.repo.BeginTx(ctx)
+		if err != nil {
+			return fmt.Errorf("begin create tx: %w", err)
+		}
+		defer tx.Rollback(ctx)
+		if err := w.repo.CreateSubscription(ctx, tx, sub); err != nil {
 			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit create tx: %w", err)
 		}
 	}
 
@@ -447,8 +471,14 @@ func (w *Worker) handleReferralReward(ctx context.Context, payload string) error
 		return err
 	}
 
-	refereeID, _ := uuid.Parse(job.RefereeID)
-	paymentID, _ := uuid.Parse(job.PaymentID)
+	refereeID, err := uuid.Parse(job.RefereeID)
+	if err != nil {
+		return fmt.Errorf("invalid referee id %q: %w", job.RefereeID, err)
+	}
+	paymentID, err := uuid.Parse(job.PaymentID)
+	if err != nil {
+		return fmt.Errorf("invalid payment id %q: %w", job.PaymentID, err)
+	}
 
 	// Find referral
 	referral, err := w.repo.GetReferralByReferee(ctx, refereeID)
@@ -558,16 +588,19 @@ func (w *Worker) handleReferralPayout(ctx context.Context, payload string) error
 		return err
 	}
 
-	rewardID, _ := uuid.Parse(job.RewardID)
+	rewardID, err := uuid.Parse(job.RewardID)
+	if err != nil {
+		return fmt.Errorf("invalid reward id %q: %w", job.RewardID, err)
+	}
 
 	// Use Redis lock to prevent double-payout
 	lockKey := "reward:payout:" + rewardID.String()
-	locked, err := redisrepo.TryLock(ctx, w.rdb, lockKey, 5*time.Minute)
+	lockToken, locked, err := redisrepo.TryLock(ctx, w.rdb, lockKey, 5*time.Minute)
 	if err != nil || !locked {
 		w.log.Warn("payout lock contention, skipping", zap.String("reward_id", rewardID.String()))
 		return nil
 	}
-	defer redisrepo.Unlock(ctx, w.rdb, lockKey)
+	defer redisrepo.Unlock(ctx, w.rdb, lockKey, lockToken)
 
 	// We operate directly on the DB here via a helper –
 	// handled by periodicRewardSweep which queries the rewards table
@@ -711,13 +744,13 @@ func (w *Worker) payoutPendingRewards(ctx context.Context) {
 	for _, rr := range rewards {
 		// Lock per reward
 		lockKey := "reward:payout:imm:" + rr.ID.String()
-		locked, _ := redisrepo.TryLock(ctx, w.rdb, lockKey, 2*time.Minute)
+		lockToken, locked, _ := redisrepo.TryLock(ctx, w.rdb, lockKey, 2*time.Minute)
 		if !locked {
 			continue
 		}
 
 		func() {
-			defer redisrepo.Unlock(ctx, w.rdb, lockKey)
+			defer redisrepo.Unlock(ctx, w.rdb, lockKey, lockToken)
 
 			tx, err := w.repo.BeginTx(ctx)
 			if err != nil {
@@ -755,13 +788,13 @@ func (w *Worker) payoutDeferredRewards(ctx context.Context) {
 	}
 	for _, rr := range rewards {
 		lockKey := "reward:payout:def:" + rr.ID.String()
-		locked, _ := redisrepo.TryLock(ctx, w.rdb, lockKey, 2*time.Minute)
+		lockToken, locked, _ := redisrepo.TryLock(ctx, w.rdb, lockKey, 2*time.Minute)
 		if !locked {
 			continue
 		}
 
 		func() {
-			defer redisrepo.Unlock(ctx, w.rdb, lockKey)
+			defer redisrepo.Unlock(ctx, w.rdb, lockKey, lockToken)
 
 			tx, err := w.repo.BeginTx(ctx)
 			if err != nil {

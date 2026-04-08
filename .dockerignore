@@ -1,0 +1,35 @@
+# ── Secrets (NEVER bake these into images) ────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Go build artefacts ────────────────────────────────────────────────────────
+/api
+/bot
+/worker
+*.exe
+*.test
+*.out
+vendor/
+
+# ── Frontend assets (not needed by Go builds) ─────────────────────────────────
+frontend/dist/
+frontend/node_modules/
+frontend/.env*
+
+# ── Git history (large, not needed inside the image) ──────────────────────────
+.git/
+.gitignore
+
+# ── Editor / OS noise ─────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Docs / CI artefacts ───────────────────────────────────────────────────────
+*.md
+coverage.out
+coverage.html

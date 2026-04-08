@@ -125,17 +125,10 @@ func (e *Engine) CheckDailyReferralLimit(ctx context.Context, referrerID uuid.UU
 
 // ─── YAD Limits ───────────────────────────────────────────────────────────────
 
-// CheckDailyYADCreditLimit returns error if user would exceed daily YAD cap.
-// If allowed, adjusts the Redis daily counter.
+// CheckAndAddDailyYADCredit atomically checks the daily YAD cap and increments
+// if allowed. Uses a Lua script to prevent the TOCTOU race (H-2).
 func (e *Engine) CheckAndAddDailyYADCredit(ctx context.Context, userID uuid.UUID, amount int64) error {
-	current, err := redisrepo.GetDailyYADCredit(ctx, e.rdb, userID.String())
-	if err != nil {
-		return nil // fail open
-	}
-	if current+amount > MaxDailyYADCredit {
-		return fmt.Errorf("превышен дневной лимит начисления ЯД")
-	}
-	return redisrepo.AddDailyYADCredit(ctx, e.rdb, userID.String(), amount)
+	return redisrepo.CheckAndAddDailyYADCreditAtomic(ctx, e.rdb, userID.String(), amount, MaxDailyYADCredit)
 }
 
 // AdjustRewardForRisk reduces the reward amount based on risk score.

@@ -62,6 +62,15 @@ type TelegramConfig struct {
 }
 
 func Load() *Config {
+	// L-1: Fail fast on an absent or placeholder JWT secret.
+	// The docker-compose already enforces this at container start-up via the
+	// :? modifier, but we double-check here so the binary also refuses to boot
+	// if run outside Docker without a proper secret.
+	jwtSecret := env("JWT_SECRET", "")
+	if jwtSecret == "" || jwtSecret == "change-me-in-production" || len(jwtSecret) < 32 {
+		panic("JWT_SECRET env var must be set to a strong random secret (minimum 32 characters)")
+	}
+
 	return &Config{
 		App: AppConfig{
 			Port:           env("APP_PORT", "8080"),
@@ -71,7 +80,7 @@ func Load() *Config {
 			AllowedOrigins: env("ALLOWED_ORIGINS", "*"),
 		},
 		DB: DBConfig{
-			DSN:          env("DATABASE_DSN", "postgres://vpn:vpn@postgres:5432/vpnplatform?sslmode=disable"),
+			DSN:          env("DATABASE_DSN", "postgres://vpn:vpn@postgres:5432/vpnplatform?sslmode=prefer"),
 			MaxOpenConns: envInt("DB_MAX_OPEN_CONNS", 25),
 			MaxIdleConns: envInt("DB_MAX_IDLE_CONNS", 10),
 		},
@@ -81,7 +90,7 @@ func Load() *Config {
 			DB:       envInt("REDIS_DB", 0),
 		},
 		JWT: JWTConfig{
-			Secret:         env("JWT_SECRET", "change-me-in-production"),
+			Secret:         jwtSecret,
 			AccessTTLHours: envInt("JWT_ACCESS_TTL_HOURS", 24),
 			RefreshTTLDays: envInt("JWT_REFRESH_TTL_DAYS", 30),
 		},

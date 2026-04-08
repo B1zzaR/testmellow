@@ -33,7 +33,8 @@ type AuthService struct {
 }
 
 func NewAuthService(repo *postgres.UserRepo, anti *anticheat.Engine, log *zap.Logger, adminLogin string) *AuthService {
-	return &AuthService{repo: repo, anti: anti, log: log, adminLogin: adminLogin}
+	// Normalise once at construction so comparisons are always exact (C-5).
+	return &AuthService{repo: repo, anti: anti, log: log, adminLogin: strings.ToLower(strings.TrimSpace(adminLogin))}
 }
 
 type RegisterInput struct {
@@ -66,13 +67,11 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 		return nil, errors.New("это имя пользователя уже занято")
 	}
 
-	// Check for IP abuse
+	// Check for IP and device-fingerprint abuse (H-5).
 	newUserID := uuid.New()
 	sameIPCount, _ := s.repo.CountUsersFromIP(ctx, input.IP, newUserID)
-
-	// Fingerprint check: count users with same fingerprint
-	// (simplified — full implementation checks device_fingerprint column separately)
-	riskDelta := s.anti.ScopeRegistrationRisk(ctx, input.IP, input.DeviceFingerprint, sameIPCount, 0)
+	sameFPCount, _ := s.repo.CountUsersFromFingerprint(ctx, input.DeviceFingerprint, newUserID)
+	riskDelta := s.anti.ScopeRegistrationRisk(ctx, input.IP, input.DeviceFingerprint, sameIPCount, sameFPCount)
 
 	hash, err := password.Hash(input.Password)
 	if err != nil {
@@ -91,7 +90,7 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 		YADBalance:        0,
 		ReferralCode:      refCode,
 		RiskScore:         riskDelta,
-		IsAdmin:           s.adminLogin != "" && strings.EqualFold(username, s.adminLogin),
+		IsAdmin:           s.adminLogin != "" && strings.ToLower(username) == s.adminLogin,
 		DeviceFingerprint: &input.DeviceFingerprint,
 		LastKnownIP:       &input.IP,
 		CreatedAt:         time.Now(),
@@ -172,8 +171,8 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User
 
 	s.anti.ResetLoginAttempts(ctx, input.IP+":"+username)
 
-	// Auto-promote to admin if this login is configured as admin and isn't yet
-	if s.adminLogin != "" && strings.EqualFold(username, s.adminLogin) && !user.IsAdmin {
+	// Auto-promote to admin if this login is configured as admin and isn't yet (C-5).
+	if s.adminLogin != "" && strings.ToLower(username) == s.adminLogin && !user.IsAdmin {
 		if err := s.repo.SetAdmin(ctx, user.ID, true); err != nil {
 			s.log.Warn("failed to auto-promote admin", zap.Error(err))
 		} else {
@@ -649,21 +648,14 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
 	}
 
-	// Create or update Remnawave user
-	var remnaUUID string
-	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
-		remnaUser, err := s.remna.CreateUser(ctx, userID.String(), newExpiry)
-		if err != nil {
-			return nil, fmt.Errorf("create remnawave user: %w", err)
-		}
-		remnaUUID = remnaUser.UUID
-		_ = s.repo.UpdateRemnaUUID(ctx, userID, remnaUUID)
-	} else {
+	// ── C-4 fix: deduct YAD and record subscription in DB FIRST, then activate
+	// Remnawave. If Remnawave fails after commit, the worker can retry activation;
+	// if the TX fails, Remnawave is never touched so the user keeps their balance.
+
+	subID := uuid.New()
+	remnaUUID := ""
+	if user.RemnaUserUUID != nil {
 		remnaUUID = *user.RemnaUserUUID
-		if err := s.remna.UpdateExpiry(ctx, remnaUUID, newExpiry); err != nil {
-			return nil, fmt.Errorf("update remnawave expiry: %w", err)
-		}
-		_ = s.remna.EnableUser(ctx, remnaUUID)
 	}
 
 	tx, err := s.repo.BeginTx(ctx)
@@ -672,8 +664,7 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 	}
 	defer tx.Rollback(ctx)
 
-	// Deduct ЯД
-	subID := uuid.New()
+	// Deduct ЯД inside the transaction.
 	ref := subID
 	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref, "Подписка за ЯД: "+string(plan)); err != nil {
 		return nil, err
@@ -705,6 +696,26 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+
+	// Activate VPN access AFTER the DB commit so a balance deduction failure
+	// never results in free VPN. If Remnawave fails here, the sub record exists
+	// and a background retry can re-activate without charging the user again.
+	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
+		remnaUser, err := s.remna.CreateUser(ctx, userID.String(), newExpiry)
+		if err != nil {
+			s.log.Error("remnawave create user failed after YAD deduction — manual retry needed",
+				zap.String("user_id", userID.String()), zap.Error(err))
+		} else {
+			_ = s.repo.UpdateRemnaUUID(ctx, userID, remnaUser.UUID)
+		}
+	} else {
+		if err := s.remna.UpdateExpiry(ctx, remnaUUID, newExpiry); err != nil {
+			s.log.Error("remnawave update expiry failed after YAD deduction — manual retry needed",
+				zap.String("user_id", userID.String()), zap.Error(err))
+		} else {
+			_ = s.remna.EnableUser(ctx, remnaUUID)
+		}
 	}
 
 	s.log.Info("subscription purchased with ЯД",
@@ -740,18 +751,12 @@ func (s *TrialService) ActivateTrial(ctx context.Context, userID uuid.UUID) (*do
 	now := time.Now()
 	expiry := now.Add(3 * 24 * time.Hour)
 
-	// Create Remnawave user if not yet created
+	// Use the existing Remnawave UUID if the user already has one.
+	// For new users we leave it blank until after the commit (C-4: never grant
+	// VPN access before the DB record that prevents a second trial is committed).
 	remnaUUID := ""
-	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
-		remnaUser, err := s.remna.CreateUser(ctx, userID.String(), expiry)
-		if err != nil {
-			return nil, fmt.Errorf("create remnawave user: %w", err)
-		}
-		remnaUUID = remnaUser.UUID
-		_ = s.repo.UpdateRemnaUUID(ctx, userID, remnaUUID)
-	} else {
+	if user.RemnaUserUUID != nil {
 		remnaUUID = *user.RemnaUserUUID
-		_ = s.remna.UpdateExpiry(ctx, remnaUUID, expiry)
 	}
 
 	sub := &domain.Subscription{
@@ -775,10 +780,34 @@ func (s *TrialService) ActivateTrial(ctx context.Context, userID uuid.UUID) (*do
 	if err := s.repo.CreateSubscription(ctx, tx, sub); err != nil {
 		return nil, err
 	}
+	// C-3: mark trial_used inside the same transaction so a crash between
+	// CreateSubscription and the old post-commit SetTrialUsed cannot allow
+	// the user to claim a second trial.
+	if err := s.repo.SetTrialUsedTx(ctx, tx, userID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	_ = s.repo.SetTrialUsed(ctx, userID)
+
+	// Activate VPN access AFTER the commit (C-4). If Remnawave fails, the
+	// trial record already exists so the user cannot claim a second trial,
+	// and an admin / worker can re-activate them without re-charging.
+	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
+		remnaUser, err := s.remna.CreateUser(ctx, userID.String(), expiry)
+		if err != nil {
+			s.log.Error("remnawave create user failed after trial commit — manual activation needed",
+				zap.String("user_id", userID.String()), zap.Error(err))
+		} else {
+			_ = s.repo.UpdateRemnaUUID(ctx, userID, remnaUser.UUID)
+			_ = s.repo.UpdateSubscriptionRemna(ctx, sub.ID, remnaUser.UUID)
+		}
+	} else {
+		if err := s.remna.UpdateExpiry(ctx, remnaUUID, expiry); err != nil {
+			s.log.Error("remnawave update expiry failed after trial commit",
+				zap.String("user_id", userID.String()), zap.Error(err))
+		}
+	}
 
 	s.log.Info("trial activated", zap.String("user_id", userID.String()))
 	return sub, nil

@@ -9,6 +9,7 @@ package platega
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -103,7 +104,6 @@ func (c *Client) CreatePayment(ctx context.Context, req CreatePaymentRequest) (*
 
 	c.log.Info("platega: sending CreatePayment request",
 		zap.String("url", c.cfg.BaseURL+"/transaction/process"),
-		zap.String("body", string(body)),
 	)
 
 	httpReq, err := http.NewRequestWithContext(ctx,
@@ -126,7 +126,6 @@ func (c *Client) CreatePayment(ctx context.Context, req CreatePaymentRequest) (*
 
 	c.log.Info("platega: received response",
 		zap.Int("status", resp.StatusCode),
-		zap.String("body", string(respBody)),
 	)
 
 	if resp.StatusCode != http.StatusOK {
@@ -170,10 +169,12 @@ func (c *Client) GetPaymentStatus(ctx context.Context, transactionID string) (*C
 	return &result, nil
 }
 
-// VerifyWebhookHeaders validates the webhook came from Platega by checking
-// X-MerchantId and X-Secret headers against our stored credentials.
+// VerifyWebhookHeaders validates the webhook came from Platega using
+// constant-time comparison to prevent timing-based credential guessing (H-3).
 func (c *Client) VerifyWebhookHeaders(merchantID, secret string) bool {
-	return merchantID == c.cfg.MerchantID && secret == c.cfg.Secret
+	okM := subtle.ConstantTimeCompare([]byte(merchantID), []byte(c.cfg.MerchantID)) == 1
+	okS := subtle.ConstantTimeCompare([]byte(secret), []byte(c.cfg.Secret)) == 1
+	return okM && okS
 }
 
 func (c *Client) setHeaders(req *http.Request) {

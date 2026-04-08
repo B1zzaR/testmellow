@@ -123,7 +123,7 @@ func main() {
 	}
 
 	// Protected user endpoints
-	api := r.Group("/api", middleware.Auth(jwtMgr), middleware.BannedCheck(rdb), middleware.UserRateLimit(rdb, 120, time.Minute))
+	api := r.Group("/api", middleware.Auth(jwtMgr, rdb), middleware.BannedCheck(rdb), middleware.UserRateLimit(rdb, 120, time.Minute))
 	{
 		api.GET("/profile", profileH.Get)
 		api.GET("/profile/connection", profileH.GetConnection)
@@ -163,10 +163,10 @@ func main() {
 		api.POST("/devices/:id/disconnect", deviceH.Disconnect)
 	}
 
-	// Admin endpoints (JWT required + is_admin flag)
+	// Admin endpoints (JWT required + is_admin flag, DB-verified on each request — H-4)
 	adm := r.Group("/api/admin",
-		middleware.Auth(jwtMgr),
-		middleware.AdminOnly(),
+		middleware.Auth(jwtMgr, rdb),
+		middleware.AdminDBCheck(userRepo.IsAdmin),
 		middleware.AdminRateLimit(rdb, 300, time.Minute),
 	)
 	{

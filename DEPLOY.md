@@ -1,425 +1,327 @@
-# 🚀 VPN Platform - Production Deployment
+# Руководство по развёртыванию в продакшене
 
-Полная инструкция по развертыванию на сервере за 5 минут.
-
----
-
-## 📋 Требования
-
-- **Домен** с DNS, указывающий на ваш сервер (например `mellowpn.space`)
-- **Сервер** с Ubuntu/Debian и 2GB+ RAM
-- **Docker** + Docker Compose
-- **Открытые порты**: 80 (HTTP), 443 (HTTPS)
+Пошаговые инструкции по развёртыванию на чистом сервере Ubuntu/Debian.
 
 ---
 
-## 🚀 Быстрый старт (5 минут)
+## Требования
 
-### 1️⃣ На сервере - подготовка
+- Сервер с Ubuntu 22.04+ или Debian 12+, минимум 2 ГБ RAM
+- Домен с A-записью, указывающей на IP сервера (DNS должен распространиться до развёртывания)
+- Открытые порты 80 и 443 в брандмауэре сервера и вышестоящем брандмауэре/группе безопасности
+
+---
+
+## Шаг 1 — Установить Docker
 
 ```bash
-# SSH на сервер
-ssh user@your-server-ip
-cd /opt
-
-# Установить Docker (если нет)
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 newgrp docker
 
-# Установить Docker Compose
-sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
-  -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
+# Убедиться, что Compose V2 доступен (поставляется с Docker Engine 24+)
+docker compose version
+# Ожидаемый вывод: Docker Compose version v2.x.x
+```
 
-# Клонировать проект
-git clone YOUR_REPO_URL vpnplatform
+> **Важно:** НЕ устанавливайте устаревший бинарник `docker-compose`. Все команды в этом руководстве используют `docker compose` (с пробелом, без дефиса).
+
+---
+
+## Шаг 2 — Клонировать репозиторий
+
+```bash
+cd /opt
+git clone <url-репозитория> vpnplatform
 cd vpnplatform
 ```
 
-### 2️⃣ Настроить переменные (2 минуты)
+---
+
+## Шаг 3 — Создать и заполнить `.env`
 
 ```bash
-# .env уже существует, просто отредактировать его
+cp .env.example .env
 nano .env
 ```
 
-**Убедиться что установлены:**
-- `DOMAIN=mellowpn.space` → ваш домен
-- `ADMIN_EMAIL=admin@mellowpn.space` → ваш email
-- `POSTGRES_PASSWORD` → криптографически стойкий пароль (20+ символов)
-- `REDIS_PASSWORD` → криптографически стойкий пароль
-- `JWT_SECRET` → случайная строка
-- `PLATEGA_*` → данные платежного провайдера
-- `REMNA_*` → данные VPN провайдера
-- `TELEGRAM_TOKEN` → токен бота
+Сгенерировать надёжные секреты:
 
-Справка по генерации паролей:
 ```bash
-# Генерировать безопасный пароль (20 символов)
-openssl rand -base64 20
-
-# Генерировать JWT secret
+# Для POSTGRES_PASSWORD и REDIS_PASSWORD (64-символьная hex-строка)
 openssl rand -hex 32
+
+# Для JWT_SECRET (не менее 32 символов; использовать 128-символьный hex)
+openssl rand -hex 64
 ```
 
-### 3️⃣ Открыть firewall
+Заполните каждую переменную в `.env`. В таблице ниже указано, что нужно:
+
+| Переменная | Откуда взять |
+|---|---|
+| `DOMAIN` | Ваш домен, например `yourdomain.com` |
+| `ADMIN_EMAIL` | Ваш email — сюда приходят уведомления об истечении сертификата Let's Encrypt |
+| `POSTGRES_PASSWORD` | `openssl rand -hex 32` |
+| `REDIS_PASSWORD` | `openssl rand -hex 32` |
+| `JWT_SECRET` | `openssl rand -hex 64` |
+| `PLATEGA_MERCHANT_ID` | Личный кабинет мерчанта Platega |
+| `PLATEGA_SECRET` | Личный кабинет мерчанта Platega |
+| `PLATEGA_CALLBACK_URL` | `https://yourdomain.com/webhooks/platega` ← **без префикса `/api/`** |
+| `REMNA_BASE_URL` | URL вашей панели администратора Remnawave |
+| `REMNA_API_KEY` | Настройки API Remnawave |
+| `TELEGRAM_TOKEN` | [@BotFather](https://t.me/BotFather) → /newbot |
+| `TELEGRAM_ADMIN_ID` | Ваш числовой Telegram user ID (используйте [@userinfobot](https://t.me/userinfobot)) |
+| `TELEGRAM_BOT_USERNAME` | Имя вашего бота без `@` |
+| `WEBAPP_URL` | `https://yourdomain.com` |
+| `ADMIN_LOGIN` | Имя пользователя, которое получает права администратора при первом входе |
+| `ALLOWED_ORIGINS` | `https://yourdomain.com` — никогда не используйте `*` в продакшене |
+
+> **Предупреждение о PLATEGA_CALLBACK_URL:** Путь должен быть `/webhooks/platega` (не `/api/webhooks/platega`). Caddy направляет `/webhooks/*` напрямую к Go-бэкенду, который регистрирует хэндлер именно по пути `/webhooks/platega`. Добавление префикса `/api/` приведёт к 404 на каждый входящий платёж и все подписки зависнут в ожидании.
+
+---
+
+## Шаг 4 — Открыть порты
 
 ```bash
 sudo ufw allow 22/tcp
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw enable
+sudo ufw status
 ```
-
-### 4️⃣ Запустить развертывание (1 минута)
-
-```bash
-# Развернуть ВСЕ сервисы
-docker-compose up -d --build
-
-# Первый запуск: 5-10 минут (загрузка образов + получение SSL сертификата)
-```
-
-### 5️⃣ Проверить статус
-
-```bash
-# Все контейнеры запущены?
-docker-compose ps
-
-# Все должны быть "running" ✓
-
-# Логи Caddy (HTTPS)
-docker-compose logs caddy --tail 30
-
-# Когда видишь "certificate obtained successfully" - готово!
-```
-
-### 6️⃣ Проверить в браузере
-
-```
-https://mellowpn.space
-```
-
-Должен быть **зеленый замок** 🔒 и работающая платформа ✅
 
 ---
 
-## 📊 Основные команды
+## Шаг 5 — Развернуть
+
+```bash
+docker compose up -d --build
+```
+
+При первом запуске Docker скачивает базовые образы, компилирует Go-бинарники, а Caddy запрашивает TLS-сертификат у Let's Encrypt. Подождите 5–10 минут.
+
+---
+
+## Шаг 6 — Проверить
+
+```bash
+# Все сервисы должны быть "running" или "healthy"
+docker compose ps
+
+# Логи Caddy — ждите "certificate obtained successfully"
+docker compose logs caddy --tail 50
+
+# Эндпоинт проверки работоспособности API (должен вернуть {"status":"ok",...})
+curl https://yourdomain.com/api/health
+
+# Открыть в браузере — обязателен зелёный замок
+https://yourdomain.com
+```
+
+---
+
+## Типовые операции
 
 ### Статус и логи
 
 ```bash
-# Статус всех контейнеров
-docker-compose ps
+# Все контейнеры
+docker compose ps
 
-# Live логи (Ctrl+C для выхода)
-docker-compose logs -f
+# Live-логи (Ctrl-C для остановки)
+docker compose logs -f
 
-# Логи конкретного сервиса
-docker-compose logs backend --tail 50
-docker-compose logs caddy --tail 50
-docker-compose logs bot --tail 50
+# Один сервис
+docker compose logs backend --tail 100
+docker compose logs caddy   --tail 50
+docker compose logs bot     --tail 50
 
-# Логи с фильтром
-docker-compose logs | grep -i error
-docker-compose logs caddy | grep certificate
+# Фильтр по ошибкам
+docker compose logs | grep -i error
 ```
 
-### Управление
+### Управление сервисами
 
 ```bash
-# Остановить все
-docker-compose down
+# Перезапустить один сервис
+docker compose restart backend
 
-# Перезагрузить конкретный сервис
-docker-compose restart backend
-docker-compose restart caddy
+# Остановить всё
+docker compose down
 
-# Пересоздать с пересборкой
-docker-compose up -d --build
+# Полная пересборка и перезапуск
+docker compose up -d --build
 
-# Обновить код и перезагрузить
+# Обновить код без простоя
 git pull
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
-### SSH в контейнеры
+### Shell в контейнерах
 
 ```bash
-# Backend (Go приложение)
+# Go-бэкенд
 docker exec -it vpn_backend sh
 
-# Фронтенд (веб-сервер)
-docker exec -it vpn_frontend sh
-
-# База данных
+# Консоль PostgreSQL
 docker exec -it vpn_postgres psql -U vpn -d vpnplatform
 
-# Redis
-docker exec -it vpn_redis redis-cli -a $REDIS_PASSWORD
+# Redis CLI (читает пароль из .env)
+REDIS_PASS=$(grep ^REDIS_PASSWORD .env | cut -d= -f2)
+docker exec -it vpn_redis redis-cli --pass "$REDIS_PASS"
 ```
 
 ---
 
-## 🔐 SSL Сертификаты
+## Резервное копирование базы данных
 
-### ✅ Автоматическое управление
-
-- **Caddy автоматически** получает сертификат от Let's Encrypt
-- **Автоматически** обновляет за 30 дней до истечения
-- **Ничего не нужно делать** - все работает сам
-
-### 🔍 Проверить сертификат
+Резервные копии хранятся в именованном томе Docker `pgbackups`, управляемом контейнером `pg_backup` (ежедневно в полночь UTC, хранятся последние 7).
 
 ```bash
-# Список сертификатов
-docker exec vpn_caddy caddy list-certificates
+# Список существующих резервных копий
+docker exec vpn_pg_backup ls -lh /backups/
 
-# Дата истечения
-docker exec vpn_caddy caddy list-certificates | jq '.certificates[] | {domain: .subjects[0], expires, remaining}'
+# Ручной сжатый дамп
+docker exec vpn_postgres sh -c \
+  'PGPASSWORD=$POSTGRES_PASSWORD pg_dump -U vpn vpnplatform' \
+  | gzip > "backup-$(date +%Y%m%d-%H%M%S).sql.gz"
 
-# Проверить в браузере
-curl -I https://mellowpn.space
+# Восстановление из файла дампа
+gunzip -c backup-20260101-120000.sql.gz \
+  | docker exec -i vpn_postgres psql -U vpn -d vpnplatform
+
+# Копия тома бэкапов на локальную машину
+docker run --rm \
+  -v vpnplatform_pgbackups:/data \
+  alpine tar czf - /data \
+  | ssh user@server "cat > pgbackups-$(date +%Y%m%d).tar.gz"
 ```
 
-### 🚨 Если сертификат не получен
+---
+
+## SSL-сертификаты
+
+Caddy полностью автоматически управляет жизненным циклом сертификатов:
+
+- Запрашивает у Let's Encrypt при первом запуске.
+- Обновляет за 30 дней до истечения срока.
+- Хранится в томе `caddy_data` — сохраняется при перезапуске и пересборке контейнеров.
 
 ```bash
-# 1. Проверить логи
-docker-compose logs caddy
+# Проверить статус сертификата
+docker compose logs caddy | grep -i "certificate\|tls\|acme"
 
-# 2. Проверить DNS
-nslookup mellowpn.space
-# Должен вернуть IP вашего сервера
+# Проверить снаружи
+curl -I https://yourdomain.com
+```
 
-# 3. Проверить firewall
+**Если сертификат не выдан:**
+
+```bash
+# 1. Проверить, что DNS указывает на этот сервер
+nslookup yourdomain.com
+
+# 2. Проверить, что порты открыты
 sudo ufw status
-sudo netstat -tulpn | grep -E ':(80|443)'
+sudo ss -tlnp | grep -E ':80|:443'
 
-# Частые проблемы:
-# - DNS еще не распространился (ждать 30 мин)
-# - Ports закрыты провайдером
-# - Let's Encrypt rate limit (ждать 1 час)
+# 3. Лимит запросов Let's Encrypt — проверить логи Caddy на детали ошибки
+docker compose logs caddy | grep -i "rate limit"
 
-# 4. Перезагрузить Caddy
-docker-compose restart caddy
+# 4. Перезапустить Caddy
+docker compose restart caddy
 ```
 
 ---
 
-## 💾 Резервные копии
-
-### Автоматические бэкапы
-
-Контейнер `pg_backup` **ежедневно** создает архивы БД:
+## Мониторинг
 
 ```bash
-# Посмотреть существующие бэкапы
-ls -la pgbackups/
-
-# Скачать на локальную машину
-scp -r user@server:/opt/vpnplatform/pgbackups ~/backups/
-```
-
-### Ручное создание бэкапа
-
-```bash
-# Полный дамп БД
-docker exec vpn_postgres pg_dump -U vpn vpnplatform > backup-$(date +%Y%m%d-%H%M%S).sql
-
-# Архивированный дамп
-docker exec vpn_postgres pg_dump -U vpn vpnplatform | gzip > backup-$(date +%Y%m%d-%H%M%S).sql.gz
-
-# Восстановить из бэкапа
-docker exec -i vpn_postgres psql -U vpn vpnplatform < backup-20240101.sql
-```
-
----
-
-## 📈 Мониторинг
-
-### Использование ресурсов
-
-```bash
-# Live статистика
+# Использование ресурсов (в реальном времени)
 docker stats
 
-# С интервалом
-watch -n 5 'docker stats --no-stream'
+# Место на диске, занятое томами и образами Docker
+docker system df
 
-# Использование диска
-df -h
-du -sh /opt/vpnplatform/*
+# Размер базы данных PostgreSQL
+docker exec vpn_postgres psql -U vpn -d vpnplatform -c \
+  "SELECT pg_size_pretty(pg_database_size('vpnplatform'));"
 
-# Объем базы данных
-docker exec vpn_postgres du -sh /var/lib/postgresql/data
-```
-
-### Здоровье сервисов
-
-```bash
-# PostgreSQL
-docker exec vpn_postgres pg_isready
-
-# Redis
-docker exec vpn_redis redis-cli ping
-
-# Frontend доступен
-curl -I http://localhost
-
-# Backend доступен
-curl -I http://localhost:8080/health
-
-# HTTPS работает
-curl -I https://mellowpn.space
+# Использование памяти Redis
+REDIS_PASS=$(grep ^REDIS_PASSWORD .env | cut -d= -f2)
+docker exec vpn_redis redis-cli --pass "$REDIS_PASS" info memory | grep used_memory_human
 ```
 
 ---
 
-## 🆘 Решение проблем
+## Устранение неполадок
 
-### ❌ "Site not found" или 502 Bad Gateway
+### 502 Bad Gateway
 
 ```bash
-# 1. Проверить что все контейнеры запущены
-docker-compose ps
-
-# 2. Проверить логи фронтенда
-docker-compose logs frontend
-
-# 3. Проверить логи бэкенда
-docker-compose logs backend
-
-# 4. Перезагрузить
-docker-compose restart
-
-# 5. Полная пересборка
-docker-compose down
-docker-compose up -d --build
+docker compose ps                    # проверить, что все сервисы запущены
+docker compose logs backend --tail 50
+docker compose logs frontend --tail 50
+docker compose restart backend
 ```
 
-### ❌ Database connection error
+### Ошибка подключения к базе данных
 
 ```bash
-# Проверить PostgreSQL
-docker-compose logs postgres
-
-# Проверить что база здорова
-docker exec vpn_postgres pg_isready
-
-# Перезагрузить БД
-docker-compose restart postgres
-
-# Проверить credentials в .env
-grep POSTGRES .env
+docker compose logs postgres --tail 30
+docker exec vpn_postgres pg_isready  # должно вывести "accepting connections"
+grep POSTGRES .env                   # убедиться, что учётные данные совпадают
+docker compose restart postgres
 ```
 
-### ❌ Redis connection refused
+### Бот не отвечает
 
 ```bash
-# Логи Redis
-docker-compose logs redis
-
-# Проверить Redis
-docker exec vpn_redis redis-cli ping
-
-# Перезагрузить Redis
-docker-compose restart redis
+docker compose logs bot --tail 50
+grep TELEGRAM_TOKEN .env             # убедиться, что токен установлен
+docker exec vpn_bot sh -c 'wget -qO- https://api.telegram.org 2>&1 | head -5'
+docker compose restart bot
 ```
 
-### ❌ Telegram bot не отвечает
+### Платежи зависли в ожидании
+
+Проверьте `PLATEGA_CALLBACK_URL` в `.env`:
 
 ```bash
-# Логи бота
-docker-compose logs bot --tail 50
-
-# Проверить что токен установлен
-grep TELEGRAM_TOKEN .env
-
-# Проверить connectivity
-docker exec vpn_bot ping -c 3 api.telegram.org
-
-# Перезагрузить бота
-docker-compose restart bot
+grep PLATEGA_CALLBACK_URL .env
+# Правильно:   https://yourdomain.com/webhooks/platega
+# Неправильно: https://yourdomain.com/api/webhooks/platega  ← вызывает 404
 ```
 
 ---
 
-## 🔄 Обновления
-
-### Обновить код
+## Обновления
 
 ```bash
+# Получить последний код и пересобрать изменённые контейнеры
 git pull
-docker-compose up -d --build
-```
+docker compose up -d --build
 
-### Обновить Docker образы
-
-```bash
-docker-compose pull
-docker-compose up -d
+# Обновить базовые образы (postgres, redis, caddy, nginx)
+docker compose pull
+docker compose up -d
 ```
 
 ---
 
-## 🎯 Структура файлов
+## Структура файлов
 
 ```
 /opt/vpnplatform/
-├── .env                          # Переменные окружения (используется везде)
-├── .env.example                  # Шаблон .env
-├── docker-compose.yml            # Один универсальный конфиг
-├── Caddyfile                     # HTTPS конфигурация
-│
-├── cmd/                          # Go приложения
-│   ├── api/main.go              # Backend REST API
-│   ├── bot/main.go              # Telegram бот
-│   └── worker/main.go           # Background jobs
-│
-├── frontend/                     # React приложение
-│   ├── Dockerfile
-│   ├── nginx.conf
-│   └── src/
-│
-├── deployments/                  # Docker образы
-│   ├── Dockerfile.backend
-│   ├── Dockerfile.bot
-│   └── Dockerfile.worker
-│
-├── pgbackups/                    # Автоматические backup'ы БД
-│   └── vpnplatform_YYYYMMDD.sql.gz
-│
-└── DEPLOY.md                     # Эта инструкция
+├── .env                  Секреты окружения — НЕ в git
+├── .env.example          Зафиксированный шаблон (справочник по всем переменным)
+├── docker-compose.yml    Все определения сервисов
+├── Caddyfile             Конфиг HTTPS обратного прокси
+├── cmd/                  Точки входа Go (api, bot, worker)
+├── frontend/             React SPA (Vite + Tailwind)
+├── deployments/          Dockerfile-ы для Go-сервисов
+├── internal/             Код сервисов, хэндлеров и репозиториев Go
+└── migrations/           SQL-миграции схемы
 ```
 
----
-
-## ✨ Рекомендации
-
-1. **Регулярно обновляй код**
-   ```bash
-   cd /opt/vpnplatform && git pull && docker-compose up -d --build
-   ```
-
-2. **Мониторь логи**
-   ```bash
-   docker-compose logs -f backend
-   ```
-
-3. **Делай бэкапы**
-   ```bash
-   docker exec vpn_postgres pg_dump -U vpn vpnplatform | gzip > backup-$(date +%Y%m%d).sql.gz
-   scp -r user@server:/opt/vpnplatform/pgbackups ~/backups/
-   ```
-
-4. **Проверяй здоровье**
-   ```bash
-   docker-compose ps
-   docker stats --no-stream
-   ```
-
----
-
-**✅ Готово! Платформа работает на https://mellowpn.space 🚀**
+Данные резервных копий хранятся в томе Docker `pgbackups` (не как директория в папке проекта).

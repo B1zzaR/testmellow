@@ -20,36 +20,37 @@ const queryClient = new QueryClient({
 })
 
 export default function App() {
-  const token = useAuthStore((s) => s.token)
   const setAuth = useAuthStore((s) => s.setAuth)
+  const clearAuth = useAuthStore((s) => s.clearAuth)
   const mode = useThemeStore((s) => s.mode)
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', mode === 'dark')
   }, [mode])
 
+  // On mount, verify the session via the HttpOnly cookie.
+  // If the cookie is valid the server returns the user profile; otherwise 401 clears state.
   useEffect(() => {
-    if (!token) return
-
     let canceled = false
     profileApi
       .getProfile()
       .then((profile) => {
         if (canceled) return
-        setAuth(token, {
+        setAuth({
           id: profile.id,
           is_admin: profile.is_admin,
           email: profile.email ?? null,
         })
       })
       .catch(() => {
-        // Ignore bootstrap errors: route guards and interceptors handle invalid sessions.
+        if (canceled) return
+        clearAuth()
       })
 
     return () => {
       canceled = true
     }
-  }, [token, setAuth])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <QueryClientProvider client={queryClient}>

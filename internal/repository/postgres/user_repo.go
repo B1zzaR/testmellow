@@ -193,6 +193,21 @@ func (r *UserRepo) SetTrialUsed(ctx context.Context, userID uuid.UUID) error {
 	return err
 }
 
+// SetTrialUsedTx marks trial as used within an existing transaction (C-3).
+// Uses a conditional WHERE so a double-call returns an error instead of silently succeeding.
+func (r *UserRepo) SetTrialUsedTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	tag, err := tx.Exec(ctx,
+		`UPDATE users SET trial_used = TRUE, updated_at = NOW() WHERE id = $1 AND trial_used = FALSE`,
+		userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("trial already used")
+	}
+	return nil
+}
+
 func (r *UserRepo) List(ctx context.Context, limit, offset int) ([]*domain.User, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, telegram_id, username, email, password_hash,
@@ -237,15 +252,17 @@ func (r *UserRepo) Search(ctx context.Context, q string, limit, offset int) ([]*
 	var err error
 
 	if q != "" {
-		pattern := "%" + q + "%"
+		// Escape ILIKE wildcards so q="%" does not dump all users (M-6).
+		escaped := escapeLike(q)
+		pattern := "%" + escaped + "%"
 		if err = r.db.QueryRow(ctx,
-			`SELECT COUNT(*) FROM users WHERE username ILIKE $1 OR id::text ILIKE $1`,
+			`SELECT COUNT(*) FROM users WHERE username ILIKE $1 ESCAPE '\' OR id::text ILIKE $1 ESCAPE '\'`,
 			pattern).Scan(&total); err != nil {
 			return nil, 0, err
 		}
 		rows, err = r.db.Query(ctx,
 			`SELECT `+cols+`
-			 FROM users WHERE username ILIKE $1 OR id::text ILIKE $1
+			 FROM users WHERE username ILIKE $1 ESCAPE '\' OR id::text ILIKE $1 ESCAPE '\'
 			 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 			pattern, limit, offset)
 	} else {
@@ -397,6 +414,17 @@ func (r *UserRepo) SetAdmin(ctx context.Context, userID uuid.UUID, isAdmin bool)
 	return err
 }
 
+// IsAdmin returns true if the user has is_admin=TRUE in the database (H-4).
+// Intended for per-request re-validation in AdminDBCheck middleware.
+func (r *UserRepo) IsAdmin(ctx context.Context, userID uuid.UUID) (bool, error) {
+	var isAdmin bool
+	err := r.db.QueryRow(ctx, `SELECT is_admin FROM users WHERE id=$1`, userID).Scan(&isAdmin)
+	if err != nil {
+		return false, err
+	}
+	return isAdmin, nil
+}
+
 // SetTelegramID sets or clears the Telegram ID for a user.
 // Pass nil to unlink.
 func (r *UserRepo) SetTelegramID(ctx context.Context, userID uuid.UUID, tgID *int64) error {
@@ -410,6 +438,19 @@ func (r *UserRepo) CountUsersFromIP(ctx context.Context, ip string, excludeUserI
 	var count int
 	err := r.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM users WHERE last_known_ip=$1::inet AND id<>$2`, ip, excludeUserID).Scan(&count)
+	return count, err
+}
+
+// CountUsersFromFingerprint returns the number of users that registered with the
+// same device fingerprint, excluding the given user (H-5).
+func (r *UserRepo) CountUsersFromFingerprint(ctx context.Context, fingerprint string, excludeUserID uuid.UUID) (int, error) {
+	if fingerprint == "" {
+		return 0, nil
+	}
+	var count int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM users WHERE device_fingerprint=$1 AND id<>$2`,
+		fingerprint, excludeUserID).Scan(&count)
 	return count, err
 }
 
@@ -898,12 +939,16 @@ func (r *UserRepo) GetPromoByCode(ctx context.Context, code string) (*domain.Pro
 }
 
 func (r *UserRepo) UsePromoCode(ctx context.Context, tx pgx.Tx, promoID, userID uuid.UUID) error {
-	// Record the use atomically with counter increment
-	_, err := tx.Exec(ctx, `
-		UPDATE promocodes SET used_count=used_count+1 WHERE id=$1 AND used_count < max_uses`,
+	// Atomically increment used_count only while under the cap (H-6).
+	// If the promo is already fully used, RowsAffected == 0.
+	tag, err := tx.Exec(ctx,
+		`UPDATE promocodes SET used_count=used_count+1 WHERE id=$1 AND used_count < max_uses`,
 		promoID)
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("промокод исчерпан")
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO promocode_uses (id, promo_code_id, user_id, used_at)
@@ -1311,4 +1356,25 @@ func (r *UserRepo) MergeAccounts(ctx context.Context, dstID, srcID uuid.UUID) (*
 		return nil, fmt.Errorf("commit merge: %w", err)
 	}
 	return res, nil
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// escapeLike escapes ILIKE/LIKE special characters so a user-supplied search
+// term cannot be used as a wildcard (M-6). Must be used with ESCAPE '\'.
+func escapeLike(s string) string {
+	out := make([]byte, 0, len(s)+4)
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			out = append(out, '\\', '\\')
+		case '%':
+			out = append(out, '\\', '%')
+		case '_':
+			out = append(out, '\\', '_')
+		default:
+			out = append(out, s[i])
+		}
+	}
+	return string(out)
 }

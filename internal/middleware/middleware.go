@@ -37,30 +37,77 @@ func MaxBodySize(maxBytes int64) gin.HandlerFunc {
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 
-func Auth(jwtMgr *jwtpkg.Manager) gin.HandlerFunc {
+// Auth reads a JWT from the Authorization: Bearer header or the access_token
+// HttpOnly cookie (H-7: cookie is preferred as it is not XSS-accessible).
+// rdb is used to reject tokens issued before a password change (session invalidation).
+func Auth(jwtMgr *jwtpkg.Manager, rdb *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		header := c.GetHeader("Authorization")
-		if header == "" || !strings.HasPrefix(header, "Bearer ") {
+		var tokenStr string
+
+		// Prefer the Authorization header (keeps CLI / mobile clients working).
+		if header := c.GetHeader("Authorization"); strings.HasPrefix(header, "Bearer ") {
+			tokenStr = strings.TrimPrefix(header, "Bearer ")
+		} else if cookie, err := c.Cookie("access_token"); err == nil && cookie != "" {
+			tokenStr = cookie
+		}
+
+		if tokenStr == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "необходима авторизация"})
 			return
 		}
-		tokenStr := strings.TrimPrefix(header, "Bearer ")
 		claims, err := jwtMgr.Parse(tokenStr)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
 			return
 		}
+
+		// Reject tokens issued before the user last changed their password.
+		if claims.IssuedAt != nil {
+			if err := redisrepo.CheckPasswordVersion(c.Request.Context(), rdb, claims.UserID.String(), claims.IssuedAt.Time); err != nil {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
+				return
+			}
+		}
+
 		c.Set(ContextUserID, claims.UserID)
 		c.Set(ContextIsAdmin, claims.IsAdmin)
 		c.Next()
 	}
 }
 
-// AdminOnly requires the user to have is_admin = true
+// AdminOnly requires the user to have is_admin = true (JWT claim check only).
+// For admin API routes prefer AdminDBCheck which re-validates against the DB (H-4).
 func AdminOnly() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		isAdmin, _ := c.Get(ContextIsAdmin)
 		if isAdmin != true {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "доступ запрещён"})
+			return
+		}
+		c.Next()
+	}
+}
+
+// AdminDBCheck re-verifies the admin flag from the database on every request
+// so that a demoted admin cannot continue using a previously-issued JWT (H-4).
+// isAdminFn should be a lightweight closure over the user repository:
+//
+//	func(ctx context.Context, id uuid.UUID) (bool, error) { return repo.IsAdmin(ctx, id) }
+func AdminDBCheck(isAdminFn func(ctx context.Context, id uuid.UUID) (bool, error)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// First gate: fast JWT claim check (avoids DB hit for non-admin tokens).
+		isAdminClaim, _ := c.Get(ContextIsAdmin)
+		if isAdminClaim != true {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "доступ запрещён"})
+			return
+		}
+		userID := CurrentUserID(c)
+		if userID == (uuid.UUID{}) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "доступ запрещён"})
+			return
+		}
+		ok, err := isAdminFn(c.Request.Context(), userID)
+		if err != nil || !ok {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "доступ запрещён"})
 			return
 		}
@@ -120,6 +167,7 @@ func SecurityHeaders() gin.HandlerFunc {
 		c.Header("X-XSS-Protection", "1; mode=block")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Content-Security-Policy", "default-src 'self'")
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()")
 		c.Next()
 	}
 }
