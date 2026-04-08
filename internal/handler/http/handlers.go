@@ -231,6 +231,13 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
+// POST /api/auth/logout
+func (h *AuthHandler) Logout(c *gin.Context) {
+	// Clear auth cookies on client
+	clearAuthCookies(c)
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
 // ─── Profile Handler ──────────────────────────────────────────────────────────
 
 type ProfileHandler struct {

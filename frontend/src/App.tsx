@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from 'react-router-dom'
 import { router } from '@/router'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { profileApi } from '@/api/profile'
 import { useAuthStore } from '@/store/authStore'
 import { useThemeStore } from '@/store/themeStore'
@@ -23,9 +23,8 @@ const queryClient = new QueryClient({
 function RootInitializer() {
   const setAuth = useAuthStore((s) => s.setAuth)
   const clearAuth = useAuthStore((s) => s.clearAuth)
-  const setInitialized = useAuthStore((s) => s.setInitialized)
-  const initialized = useAuthStore((s) => s.initialized)
   const mode = useThemeStore((s) => s.mode)
+  const [initialized, setInitialized] = useState(false)
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', mode === 'dark')
@@ -56,7 +55,7 @@ function RootInitializer() {
     return () => {
       canceled = true
     }
-  }, [setAuth, clearAuth, setInitialized])
+  }, [setAuth, clearAuth])
 
   // Don't render anything until auth is initialized
   if (!initialized) {

@@ -58,8 +58,13 @@ export function useLogout() {
   const queryClient = useQueryClient()
 
   return () => {
+    // Call logout endpoint to clear cookies on server
+    authApi.logout().catch(() => {
+      // Even if logout fails, clear client state
+    })
+
     clearAuth()
     queryClient.clear()
-    navigate('/login')
+    navigate('/login', { replace: true })
   }
 }

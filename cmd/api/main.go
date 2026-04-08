@@ -120,6 +120,7 @@ func main() {
 		auth.POST("/register", middleware.IPRateLimit(rdb, "register", 5, time.Hour), authH.Register)
 		auth.POST("/login", middleware.IPRateLimit(rdb, "login", 10, 15*time.Minute), authH.Login)
 		auth.POST("/refresh", authH.Refresh)
+		auth.POST("/logout", authH.Logout)
 	}
 
 	// Protected user endpoints

@@ -16,4 +16,9 @@ export const authApi = {
     // Cookies are sent automatically via withCredentials — no body needed.
     await apiClient.post('/api/auth/refresh')
   },
+
+  logout: async (): Promise<void> => {
+    // Call logout endpoint to clear cookies on server
+    await apiClient.post('/api/auth/logout')
+  },
 }
