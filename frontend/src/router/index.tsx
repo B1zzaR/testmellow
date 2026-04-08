@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router-dom'
 import { PrivateRoute } from './PrivateRoute'
 import { AdminRoute } from './AdminRoute'
+import { PublicRoute } from './PublicRoute'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { AdminLayout } from '@/components/layout/AdminLayout'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -39,13 +40,28 @@ import { AdminSubscriptionsPage } from '@/pages/admin/AdminSubscriptionsPage'
 import { AdminReferralsPage } from '@/pages/admin/AdminReferralsPage'
 import { AdminYADPage } from '@/pages/admin/AdminYADPage'
 
-// Public routes (not wrapped in PrivateRoute)
+// Public routes (wrapped in PublicRoute to prevent authenticated users from accessing)
 const publicRoutes = [
-  { path: '/login', element: <LoginPage /> },
-  { path: '/register', element: <RegisterPage /> },
-  { path: '/', element: <LandingPage /> },
-  { path: '/PrivacyPolicy', element: <PrivacyPolicyPage /> },
-  { path: '/UserAgreement', element: <UserAgreementPage /> },
+  { 
+    path: '/login', 
+    element: <PublicRoute><LoginPage /></PublicRoute> 
+  },
+  { 
+    path: '/register', 
+    element: <PublicRoute><RegisterPage /></PublicRoute> 
+  },
+  { 
+    path: '/', 
+    element: <PublicRoute><LandingPage /></PublicRoute> 
+  },
+  { 
+    path: '/PrivacyPolicy', 
+    element: <PrivacyPolicyPage /> 
+  },
+  { 
+    path: '/UserAgreement', 
+    element: <UserAgreementPage /> 
+  },
 ]
 
 // User protected routes
