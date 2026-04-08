@@ -23,6 +23,8 @@ export function AdminSubscriptionsPage() {
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState('')
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+  const [page, setPage] = useState(1)
+  const limit = 50
 
   // Extend modal
   const [extendId, setExtendId] = useState<string | null>(null)
@@ -32,11 +34,11 @@ export function AdminSubscriptionsPage() {
   const [setStatusId, setSetStatusId] = useState<string | null>(null)
   const [newStatus, setNewStatus] = useState<SubscriptionStatus>('active')
 
-  const params: Record<string, string> = {}
+  const params: Record<string, string | number> = { limit, offset: (page - 1) * limit }
   if (statusFilter) params.status = statusFilter
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-subscriptions', statusFilter],
+    queryKey: ['admin-subscriptions', statusFilter, page],
     queryFn: () => adminApi.listSubscriptions(params),
   })
 
@@ -81,7 +83,7 @@ export function AdminSubscriptionsPage() {
             <label className="mb-1 block text-xs font-medium text-slate-400">Статус</label>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}
               className="rounded-lg border border-surface-600 bg-surface-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-yellow-500"
             >
               {STATUS_OPTIONS.map((o) => (
@@ -89,7 +91,7 @@ export function AdminSubscriptionsPage() {
               ))}
             </select>
           </div>
-          <Button variant="secondary" onClick={() => setStatusFilter('')}>
+          <Button variant="secondary" onClick={() => { setStatusFilter(''); setPage(1) }}>
             Сбросить
           </Button>
         </div>
@@ -146,7 +148,14 @@ export function AdminSubscriptionsPage() {
             </tbody>
           </table>
         </div>
-        <p className="mt-3 text-xs text-slate-500">Всего: {subs.length}</p>
+        <p className="mt-3 text-xs text-slate-500">Всего: {data?.total ?? 0}</p>
+        {(data?.total ?? 0) > limit && (
+          <div className="mt-3 flex items-center gap-3">
+            <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>← Назад</Button>
+            <span className="text-xs text-slate-400">Страница {page} из {Math.ceil((data?.total ?? 0) / limit)}</span>
+            <Button variant="secondary" size="sm" disabled={page * limit >= (data?.total ?? 0)} onClick={() => setPage((p) => p + 1)}>Вперёд →</Button>
+          </div>
+        )}
       </Card>
 
       {/* Extend modal */}

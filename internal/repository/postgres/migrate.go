@@ -308,6 +308,49 @@ CREATE INDEX IF NOT EXISTS idx_devices_user_id     ON devices(user_id);
 CREATE INDEX IF NOT EXISTS idx_devices_last_active ON devices(last_active);
 `,
 		},
+		{
+			version: "006_updated_at_triggers",
+			sql: `
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+DO $$ BEGIN
+    CREATE TRIGGER trg_users_updated_at
+        BEFORE UPDATE ON users
+        FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TRIGGER trg_subscriptions_updated_at
+        BEFORE UPDATE ON subscriptions
+        FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TRIGGER trg_payments_updated_at
+        BEFORE UPDATE ON payments
+        FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE TRIGGER trg_tickets_updated_at
+        BEFORE UPDATE ON tickets
+        FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+`,
+		},
+		{
+			version: "007_username_unique",
+			sql: `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)
+    WHERE username IS NOT NULL;
+`,
+		},
 	}
 
 	for _, m := range migrations {

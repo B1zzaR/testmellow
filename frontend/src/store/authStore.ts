@@ -9,8 +9,9 @@ interface AuthUser {
 
 interface AuthState {
   token: string | null
+  refreshToken: string | null
   user: AuthUser | null
-  setAuth: (token: string, user: AuthUser) => void
+  setAuth: (token: string, user: AuthUser, refreshToken?: string) => void
   clearAuth: () => void
   isAuthenticated: () => boolean
   isAdmin: () => boolean
@@ -20,17 +21,20 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       token: null,
+      refreshToken: null,
       user: null,
 
-      setAuth: (token, user) => {
+      setAuth: (token, user, refreshToken) => {
         localStorage.setItem('auth_token', token)
-        set({ token, user })
+        if (refreshToken) localStorage.setItem('refresh_token', refreshToken)
+        set({ token, user, refreshToken: refreshToken ?? get().refreshToken })
       },
 
       clearAuth: () => {
         localStorage.removeItem('auth_token')
         localStorage.removeItem('auth_user')
-        set({ token: null, user: null })
+        localStorage.removeItem('refresh_token')
+        set({ token: null, user: null, refreshToken: null })
       },
 
       isAuthenticated: () => {
@@ -53,7 +57,7 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth_store',
-      partialize: (state) => ({ token: state.token, user: state.user }),
+      partialize: (state) => ({ token: state.token, user: state.user, refreshToken: state.refreshToken }),
     },
   ),
 )

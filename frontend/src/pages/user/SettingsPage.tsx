@@ -140,7 +140,16 @@ function TelegramSection() {
             Привязать через бота
           </Button>
           <p className="text-xs text-gray-400 dark:text-slate-600">
-            Вам будет сгенерирован код — отправьте его нашему боту, и аккаунты свяжутся автоматически.
+            Вам будет сгенерирован код — отправьте его боту{' '}
+            <a
+              href="https://t.me/mellowpn_bot"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-primary-500 hover:underline"
+            >
+              @mellowpn_bot
+            </a>
+            , и аккаунты свяжутся автоматически.
           </p>
         </div>
       )}

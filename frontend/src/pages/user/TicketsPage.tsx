@@ -57,10 +57,21 @@ export function TicketsPage() {
           <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100">Тикеты поддержки</h1>
           <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">Получите помощь от нашей команды</p>
         </div>
-        <Button onClick={() => setModalOpen(true)} size="sm">
-          <Icon name="message" size={14} />
-          Новый тикет
-        </Button>
+        <div className="flex items-center gap-2">
+          <a
+            href="https://t.me/Mellow_support"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-400 transition-colors hover:bg-sky-500/20"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L8.32 14.347l-2.96-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.828.212z"/></svg>
+            @Mellow_support
+          </a>
+          <Button onClick={() => setModalOpen(true)} size="sm">
+            <Icon name="message" size={14} />
+            Новый тикет
+          </Button>
+        </div>
       </div>
 
       {errorMsg && <Alert variant="error" message={errorMsg} />}

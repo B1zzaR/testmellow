@@ -8,25 +8,28 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/vpnplatform/internal/anticheat"
 	"github.com/vpnplatform/internal/domain"
 	"github.com/vpnplatform/internal/integration/platega"
 	"github.com/vpnplatform/internal/integration/remnawave"
+	"github.com/vpnplatform/internal/middleware"
 	"github.com/vpnplatform/internal/repository/postgres"
 )
 
 type Handler struct {
 	repo    *postgres.UserRepo
+	rdb     *redis.Client
 	anti    *anticheat.Engine
 	platega *platega.Client
 	remna   *remnawave.Client
 	log     *zap.Logger
 }
 
-func NewHandler(repo *postgres.UserRepo, anti *anticheat.Engine, platClient *platega.Client, remnaClient *remnawave.Client, log *zap.Logger) *Handler {
-	return &Handler{repo: repo, anti: anti, platega: platClient, remna: remnaClient, log: log}
+func NewHandler(repo *postgres.UserRepo, rdb *redis.Client, anti *anticheat.Engine, platClient *platega.Client, remnaClient *remnawave.Client, log *zap.Logger) *Handler {
+	return &Handler{repo: repo, rdb: rdb, anti: anti, platega: platClient, remna: remnaClient, log: log}
 }
 
 // ─── Audit log helper ────────────────────────────────────────────────────────
@@ -53,14 +56,22 @@ func uidPtr(u uuid.UUID) *uuid.UUID { return &u }
 
 // ─── Users ───────────────────────────────────────────────────────────────────
 
-// GET /admin/users
+// GET /admin/users?q=&page=
 func (h *Handler) ListUsers(c *gin.Context) {
-	users, err := h.repo.List(c.Request.Context(), 50, 0)
+	q := c.Query("q")
+	page := queryInt(c, "page", 1)
+	if page < 1 {
+		page = 1
+	}
+	const limit = 50
+	offset := (page - 1) * limit
+
+	users, total, err := h.repo.Search(c.Request.Context(), q, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load users"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"users": users})
+	c.JSON(http.StatusOK, gin.H{"users": users, "total": total, "page": page, "limit": limit})
 }
 
 // GET /admin/users/:id
@@ -89,6 +100,10 @@ func (h *Handler) BanUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ban user"})
 		return
 	}
+	// Immediately invalidate any live JWT by adding user to the Redis ban set.
+	if err := middleware.SetBanKey(c.Request.Context(), h.rdb, id, true); err != nil {
+		h.log.Warn("ban: redis set failed", zap.String("user_id", id.String()), zap.Error(err))
+	}
 	h.audit(c, "user.ban", strPtr("user"), uidPtr(id), nil)
 	h.log.Info("user banned by admin", zap.String("user_id", id.String()))
 	c.JSON(http.StatusOK, gin.H{"message": "user banned"})
@@ -104,6 +119,10 @@ func (h *Handler) UnbanUser(c *gin.Context) {
 	if err := h.repo.UpdateBanStatus(c.Request.Context(), id, false); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unban user"})
 		return
+	}
+	// Remove the Redis ban key so the user can access the API again.
+	if err := middleware.SetBanKey(c.Request.Context(), h.rdb, id, false); err != nil {
+		h.log.Warn("unban: redis del failed", zap.String("user_id", id.String()), zap.Error(err))
 	}
 	h.audit(c, "user.unban", strPtr("user"), uidPtr(id), nil)
 	c.JSON(http.StatusOK, gin.H{"message": "user unbanned"})

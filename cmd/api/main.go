@@ -74,7 +74,7 @@ func main() {
 	jwtMgr := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTLHours)
 
 	// ── Handlers ──────────────────────────────────────────────────────────
-	authH := httpHandler.NewAuthHandler(authSvc, jwtMgr, log)
+	authH := httpHandler.NewAuthHandler(authSvc, jwtMgr, rdb, log)
 	profileH := httpHandler.NewProfileHandler(userRepo, remnaClient, rdb, cfg.Telegram.BotUsername, log)
 	balanceH := httpHandler.NewBalanceHandler(userRepo, log)
 	subH := httpHandler.NewSubscriptionHandler(subSvc, log)
@@ -86,7 +86,7 @@ func main() {
 	ticketH := httpHandler.NewTicketHandler(userRepo, log)
 	shopH := httpHandler.NewShopHandler(userRepo, ecoSvc, log)
 	webhookH := webhookHandler.NewPlategalHandler(platClient, userRepo, rdb, log)
-	adminH := adminHandler.NewHandler(userRepo, antiEngine, platClient, remnaClient, log)
+	adminH := adminHandler.NewHandler(userRepo, rdb, antiEngine, platClient, remnaClient, log)
 
 	// ── Gin Router ────────────────────────────────────────────────────────
 	if cfg.App.Env == "production" {
@@ -100,6 +100,7 @@ func main() {
 		middleware.Logger(log),
 		middleware.SecurityHeaders(),
 		middleware.CORS(strings.Split(cfg.App.AllowedOrigins, ",")),
+		middleware.MaxBodySize(1<<20), // 1 MiB
 	)
 
 	// Suppress browser noise
@@ -122,7 +123,7 @@ func main() {
 	}
 
 	// Protected user endpoints
-	api := r.Group("/api", middleware.Auth(jwtMgr))
+	api := r.Group("/api", middleware.Auth(jwtMgr), middleware.BannedCheck(rdb), middleware.UserRateLimit(rdb, 120, time.Minute))
 	{
 		api.GET("/profile", profileH.Get)
 		api.GET("/profile/connection", profileH.GetConnection)
@@ -159,7 +160,6 @@ func main() {
 		api.POST("/shop/buy-subscription", shopH.BuySubscription)
 
 		api.GET("/devices", deviceH.List)
-		api.POST("/devices/register", deviceH.Register)
 		api.POST("/devices/:id/disconnect", deviceH.Disconnect)
 	}
 

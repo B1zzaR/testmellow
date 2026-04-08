@@ -59,6 +59,49 @@ func (r *UserRepo) ListAllPayments(ctx context.Context, status string, from, to 
 	return payments, rows.Err()
 }
 
+// CountPayments returns total payment rows matching the given filters.
+func (r *UserRepo) CountPayments(ctx context.Context, status string, from, to *time.Time) (int, error) {
+	q := `SELECT COUNT(*) FROM payments WHERE 1=1`
+	args := []any{}
+	n := 1
+	if status != "" {
+		q += fmt.Sprintf(" AND status = $%d", n)
+		args = append(args, status)
+		n++
+	}
+	if from != nil {
+		q += fmt.Sprintf(" AND created_at >= $%d", n)
+		args = append(args, *from)
+		n++
+	}
+	if to != nil {
+		q += fmt.Sprintf(" AND created_at <= $%d", n)
+		args = append(args, *to)
+		n++
+	}
+	var total int
+	return total, r.db.QueryRow(ctx, q, args...).Scan(&total)
+}
+
+// CountSubscriptions returns total subscription rows matching the given filters.
+func (r *UserRepo) CountSubscriptions(ctx context.Context, status string, userID *uuid.UUID) (int, error) {
+	q := `SELECT COUNT(*) FROM subscriptions WHERE 1=1`
+	args := []any{}
+	n := 1
+	if status != "" {
+		q += fmt.Sprintf(" AND status = $%d", n)
+		args = append(args, status)
+		n++
+	}
+	if userID != nil {
+		q += fmt.Sprintf(" AND user_id = $%d", n)
+		args = append(args, *userID)
+		n++
+	}
+	var total int
+	return total, r.db.QueryRow(ctx, q, args...).Scan(&total)
+}
+
 // ListPaymentsByUser returns the most recent payments for a specific user (admin view).
 func (r *UserRepo) ListPaymentsByUser(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Payment, error) {
 	rows, err := r.db.Query(ctx, `

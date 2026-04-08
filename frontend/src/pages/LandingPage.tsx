@@ -175,6 +175,15 @@ function HeroSection() {
             Начать
           </button>
           <a
+            href="https://t.me/mellowpn_bot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-xl border border-sky-500/40 bg-sky-500/10 px-8 py-3.5 text-base font-semibold text-sky-400 transition-all hover:bg-sky-500/20 hover:border-sky-500/60"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L8.32 14.347l-2.96-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.828.212z"/></svg>
+            Открыть бота
+          </a>
+          <a
             href="#pricing"
             className="inline-flex items-center gap-2 rounded-xl border border-surface-600 bg-surface-800 px-8 py-3.5 text-base font-semibold text-slate-300 transition-all hover:border-primary-500/40 hover:bg-surface-700 hover:text-slate-100"
           >
@@ -241,8 +250,8 @@ const features = [
   },
   {
     icon: 'message' as const,
-    title: 'Поддержка в Telegram',
-    desc: 'Связь через Telegram. Отвечаем по рабочим дням.',
+    title: 'Telegram-бот',
+    desc: 'Управляйте подпиской прямо в Telegram — бот @mellowpn_bot предоставляет те же возможности, что и сайт: покупка, продление, устройства, поддержка.',
   },
 ]
 
@@ -575,7 +584,7 @@ const faqs = [
   },
   {
     q: 'Что такое ЯД?',
-    a: 'ЯД — внутренняя валюта сервиса. Начисляется за рефералы и промокоды. Можно потратить в магазине или обменять на дни подписки.',
+    a: 'ЯД — внутренняя валюта сервиса. Начисляется за рефералы (15% от платежа) и за промокоды сразу.',
   },
   {
     q: 'Можно ли отменить подписку?',

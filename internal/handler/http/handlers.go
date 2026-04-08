@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,12 +29,15 @@ import (
 type AuthHandler struct {
 	auth   *service.AuthService
 	jwtMgr *jwtpkg.Manager
+	rdb    *redis.Client
 	log    *zap.Logger
 }
 
-func NewAuthHandler(auth *service.AuthService, jwtMgr *jwtpkg.Manager, log *zap.Logger) *AuthHandler {
-	return &AuthHandler{auth: auth, jwtMgr: jwtMgr, log: log}
+func NewAuthHandler(auth *service.AuthService, jwtMgr *jwtpkg.Manager, rdb *redis.Client, log *zap.Logger) *AuthHandler {
+	return &AuthHandler{auth: auth, jwtMgr: jwtMgr, rdb: rdb, log: log}
 }
+
+var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
 type registerRequest struct {
 	Username          string `json:"username" binding:"required,min=3,max=64"`
@@ -46,6 +51,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !usernameRe.MatchString(req.Username) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "логин может содержать только латинские буквы, цифры и '_'"})
 		return
 	}
 
@@ -100,8 +109,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		IP:       c.ClientIP(),
 	})
 	if err != nil {
-		// Generic message to prevent user enumeration
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "неверный логин или пароль"})
+		// Show the ban message specifically; keep wrong-credentials generic.
+		msg := "неверный логин или пароль"
+		if strings.Contains(err.Error(), "заблокирован") {
+			msg = "ваш аккаунт заблокирован"
+		}
+		c.JSON(http.StatusUnauthorized, gin.H{"error": msg})
 		return
 	}
 
@@ -139,6 +152,12 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	claims, err := h.jwtMgr.ParseRefresh(req.RefreshToken)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
+		return
+	}
+
+	// Reject refresh if the user is banned.
+	if exists, rErr := h.rdb.Exists(c.Request.Context(), "ban:"+claims.UserID.String()).Result(); rErr == nil && exists > 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "аккаунт заблокирован"})
 		return
 	}
 
@@ -183,21 +202,21 @@ func (h *ProfileHandler) Get(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"id":                   user.ID,
-		"username":             user.Username,
-		"telegram_id":          user.TelegramID,
-		"telegram_username":    user.TelegramUsername,
-		"telegram_first_name":  user.TelegramFirstName,
-		"telegram_last_name":   user.TelegramLastName,
-		"telegram_photo_url":   user.TelegramPhotoURL,
-		"yad_balance":          user.YADBalance,
-		"referral_code":        user.ReferralCode,
-		"ltv_kopecks":          user.LTV,
-		"trial_used":           user.TrialUsed,
-		"is_admin":             user.IsAdmin,
-		"is_banned":            user.IsBanned,
-		"risk_score":           user.RiskScore,
-		"created_at":           user.CreatedAt,
+		"id":                  user.ID,
+		"username":            user.Username,
+		"telegram_id":         user.TelegramID,
+		"telegram_username":   user.TelegramUsername,
+		"telegram_first_name": user.TelegramFirstName,
+		"telegram_last_name":  user.TelegramLastName,
+		"telegram_photo_url":  user.TelegramPhotoURL,
+		"yad_balance":         user.YADBalance,
+		"referral_code":       user.ReferralCode,
+		"ltv_kopecks":         user.LTV,
+		"trial_used":          user.TrialUsed,
+		"is_admin":            user.IsAdmin,
+		"is_banned":           user.IsBanned,
+		"risk_score":          user.RiskScore,
+		"created_at":          user.CreatedAt,
 	})
 }
 
@@ -1097,43 +1116,6 @@ func (h *DeviceHandler) List(c *gin.Context) {
 		"devices": result,
 		"count":   activeCount,
 		"limit":   domain.DeviceMaxPerUser,
-	})
-}
-
-// POST /api/devices/register
-func (h *DeviceHandler) Register(c *gin.Context) {
-	userID := middleware.CurrentUserID(c)
-
-	var req struct {
-		HWID        string `json:"hwid" binding:"required"`
-		DeviceName  string `json:"device_name" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Try to parse HWID as UUID directly
-	deviceID, err := uuid.Parse(req.HWID)
-	if err != nil {
-		// If not a UUID, generate a deterministic UUID from the HWID using v5 namespace
-		// This ensures the same HWID always maps to the same UUID
-		namespace := uuid.MustParse("6ba7b811-9dad-11d1-80b4-00c04fd430c8") // DNS namespace
-		deviceID = uuid.NewSHA1(namespace, []byte(req.HWID))
-	}
-
-	device, err := h.svc.RegisterDevice(c.Request.Context(), userID, deviceID, req.DeviceName)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"id":           device.ID,
-		"device_name":  device.DeviceName,
-		"last_active":  device.LastActive.Format(time.RFC3339),
-		"is_active":    device.IsActive,
-		"is_inactive":  device.IsInactive(),
 	})
 }
 

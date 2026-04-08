@@ -171,6 +171,14 @@ export function SubscriptionsPage() {
       {/* Active subscription */}
       {activeSub && (
         <Card title="Активная подписка" glow>
+          {daysUntil(activeSub.expires_at) <= 7 && daysUntil(activeSub.expires_at) >= 0 && (
+            <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
+              <span className="shrink-0 text-yellow-500">⚠</span>
+              <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                Подписка истекает через <strong>{daysUntil(activeSub.expires_at)} дн.</strong> — не забудьте продлить.
+              </p>
+            </div>
+          )}
           <div className="flex flex-wrap gap-6">
             {[
               { label: 'Тариф',        value: planLabel(activeSub.plan) },

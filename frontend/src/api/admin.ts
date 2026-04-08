@@ -24,8 +24,8 @@ import type {
 
 export const adminApi = {
   // ─── Users ──────────────────────────────────────────────────────────────
-  listUsers: async (): Promise<{ users: User[] }> => {
-    const res = await apiClient.get<{ users: User[] }>('/api/admin/users')
+  listUsers: async (params?: { q?: string; page?: number }): Promise<{ users: User[]; total: number; page: number; limit: number }> => {
+    const res = await apiClient.get<{ users: User[]; total: number; page: number; limit: number }>('/api/admin/users', { params })
     return res.data
   },
 
@@ -105,8 +105,8 @@ export const adminApi = {
     to?: string
     limit?: number
     offset?: number
-  }): Promise<{ payments: Payment[] }> => {
-    const res = await apiClient.get<{ payments: Payment[] }>('/api/admin/payments', { params })
+  }): Promise<{ payments: Payment[]; total: number; limit: number; offset: number }> => {
+    const res = await apiClient.get<{ payments: Payment[]; total: number; limit: number; offset: number }>('/api/admin/payments', { params })
     return res.data
   },
 
@@ -126,8 +126,8 @@ export const adminApi = {
     user_id?: string
     limit?: number
     offset?: number
-  }): Promise<{ subscriptions: Subscription[] }> => {
-    const res = await apiClient.get<{ subscriptions: Subscription[] }>('/api/admin/subscriptions', { params })
+  }): Promise<{ subscriptions: Subscription[]; total: number; limit: number; offset: number }> => {
+    const res = await apiClient.get<{ subscriptions: Subscription[]; total: number; limit: number; offset: number }>('/api/admin/subscriptions', { params })
     return res.data
   },
 

@@ -223,6 +223,62 @@ func (r *UserRepo) List(ctx context.Context, limit, offset int) ([]*domain.User,
 	return users, rows.Err()
 }
 
+// Search returns users matching an optional query string (by username or UUID prefix)
+// together with the total count of matching rows for pagination.
+func (r *UserRepo) Search(ctx context.Context, q string, limit, offset int) ([]*domain.User, int, error) {
+	const cols = `id, telegram_id, username, email, password_hash,
+		       yad_balance, referrer_id, referral_code, ltv,
+		       risk_score, is_admin, is_banned, remna_user_uuid,
+		       device_fingerprint, last_known_ip::text, trial_used,
+		       created_at, updated_at`
+
+	var total int
+	var rows pgx.Rows
+	var err error
+
+	if q != "" {
+		pattern := "%" + q + "%"
+		if err = r.db.QueryRow(ctx,
+			`SELECT COUNT(*) FROM users WHERE username ILIKE $1 OR id::text ILIKE $1`,
+			pattern).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+		rows, err = r.db.Query(ctx,
+			`SELECT `+cols+`
+			 FROM users WHERE username ILIKE $1 OR id::text ILIKE $1
+			 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+			pattern, limit, offset)
+	} else {
+		if err = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+		rows, err = r.db.Query(ctx,
+			`SELECT `+cols+`
+			 FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+			limit, offset)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var users []*domain.User
+	for rows.Next() {
+		u := &domain.User{}
+		if err := rows.Scan(
+			&u.ID, &u.TelegramID, &u.Username, &u.Email, &u.PasswordHash,
+			&u.YADBalance, &u.ReferrerID, &u.ReferralCode, &u.LTV,
+			&u.RiskScore, &u.IsAdmin, &u.IsBanned, &u.RemnaUserUUID,
+			&u.DeviceFingerprint, &u.LastKnownIP, &u.TrialUsed,
+			&u.CreatedAt, &u.UpdatedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		users = append(users, u)
+	}
+	return users, total, rows.Err()
+}
+
 func (r *UserRepo) BeginTx(ctx context.Context) (pgx.Tx, error) {
 	return r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 }

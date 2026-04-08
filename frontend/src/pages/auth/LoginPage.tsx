@@ -9,11 +9,24 @@ import { SnakeLogo } from '@/components/ui/Icons'
 export function LoginPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [validationError, setValidationError] = useState('')
   const login = useLogin()
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    login.mutate({ username, password })
+    setValidationError('')
+
+    const trimmed = username.trim()
+    if (trimmed.length < 3) {
+      setValidationError('Логин должен содержать минимум 3 символа')
+      return
+    }
+    if (password.length < 8) {
+      setValidationError('Пароль должен содержать минимум 8 символов')
+      return
+    }
+
+    login.mutate({ username: trimmed, password })
   }
 
   return (
@@ -54,8 +67,8 @@ export function LoginPage() {
               autoComplete="current-password"
             />
 
-            {login.isError && (
-              <Alert variant="error" message={login.error?.message ?? 'Ошибка входа'} />
+            {(validationError || login.isError) && (
+              <Alert variant="error" message={validationError || (login.error?.message ?? 'Ошибка входа')} />
             )}
 
             <Button type="submit" className="w-full" loading={login.isPending} size="lg">

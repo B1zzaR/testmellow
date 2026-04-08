@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,6 +20,20 @@ const (
 	ContextUserID  = "user_id"
 	ContextIsAdmin = "is_admin"
 )
+
+// ─── Body Size Limit ──────────────────────────────────────────────────────────
+
+// MaxBodySize rejects requests whose body exceeds maxBytes (default: 1 MiB).
+func MaxBodySize(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+		if c.Request.Body != nil {
+			// Check if the body was too large (MaxBytesReader sets error on read)
+			_ = c.Request.Body.Close()
+		}
+	}
+}
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 
@@ -199,11 +214,74 @@ func AdminRateLimit(rdb *redis.Client, maxReq int64, window time.Duration) gin.H
 	}
 }
 
+// ─── Banned User Check ────────────────────────────────────────────────────────
+
+// BannedCheck aborts requests from users whose ID appears in the Redis ban set.
+// Must run AFTER the Auth middleware (requires ContextUserID to be set).
+// Ban key format: "ban:<userID>" (set by admin BanUser handler, TTL = 30 days).
+func BannedCheck(rdb *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, _ := c.Get(ContextUserID)
+		uid, ok := userID.(uuid.UUID)
+		if !ok {
+			c.Next()
+			return
+		}
+		exists, err := rdb.Exists(c.Request.Context(), "ban:"+uid.String()).Result()
+		if err != nil {
+			// Fail open on Redis error — better to allow than to block everyone.
+			c.Next()
+			return
+		}
+		if exists > 0 {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "аккаунт заблокирован"})
+			return
+		}
+		c.Next()
+	}
+}
+
+// SetBanKey writes (or removes) the Redis ban key for a user.
+// Call duration = 30 days so the key auto-expires even if unban is missed.
+// Exported so admin handlers can call it without importing middleware.
+func SetBanKey(ctx context.Context, rdb *redis.Client, userID uuid.UUID, banned bool) error {
+	key := "ban:" + userID.String()
+	if banned {
+		return rdb.Set(ctx, key, 1, 30*24*time.Hour).Err()
+	}
+	return rdb.Del(ctx, key).Err()
+}
+
 // IPRateLimit limits each client IP to maxReq requests per window.
 // Used for sensitive unauthenticated endpoints (login, register) and promo code application.
 func IPRateLimit(rdb *redis.Client, prefix string, maxReq int64, window time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := fmt.Sprintf("rl:%s:%s", prefix, c.ClientIP())
+		count, err := redisrepo.Increment(c.Request.Context(), rdb, key, window)
+		if err != nil {
+			// Fail open on Redis errors
+			c.Next()
+			return
+		}
+		if count > maxReq {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "слишком много запросов, повторите позже"})
+			return
+		}
+		c.Next()
+	}
+}
+
+// UserRateLimit limits each authenticated user to maxReq requests per window.
+// Uses the user_id from JWT context so it works across IPs (e.g. mobile + desktop).
+func UserRateLimit(rdb *redis.Client, maxReq int64, window time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, _ := c.Get(ContextUserID)
+		uid, ok := userID.(uuid.UUID)
+		if !ok {
+			c.Next()
+			return
+		}
+		key := "rl:user:" + uid.String()
 		count, err := redisrepo.Increment(c.Request.Context(), rdb, key, window)
 		if err != nil {
 			// Fail open on Redis errors

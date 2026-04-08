@@ -126,7 +126,8 @@ func (h *Handler) ListPayments(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load payments"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"payments": payments})
+	total, _ := h.repo.CountPayments(c.Request.Context(), status, from, to)
+	c.JSON(http.StatusOK, gin.H{"payments": payments, "total": total, "limit": limit, "offset": offset})
 }
 
 // GET /admin/payments/:id
@@ -301,7 +302,8 @@ func (h *Handler) ListSubscriptions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load subscriptions"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"subscriptions": subs})
+	total, _ := h.repo.CountSubscriptions(c.Request.Context(), status, userID)
+	c.JSON(http.StatusOK, gin.H{"subscriptions": subs, "total": total, "limit": limit, "offset": offset})
 }
 
 type setSubStatusRequest struct {

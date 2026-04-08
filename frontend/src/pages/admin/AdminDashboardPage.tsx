@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { adminApi } from '@/api/admin'
 import { StatCard, Card } from '@/components/ui/Card'
 import { Icon } from '@/components/ui/Icons'
@@ -88,16 +89,16 @@ export function AdminDashboardPage() {
             { href: '/admin/promo',   iconName: 'tag'     as const, label: 'Промокоды' },
             { href: '/dashboard',     iconName: 'back'    as const, label: 'Личный кабинет' },
           ].map((item) => (
-            <a
+            <Link
               key={item.href}
-              href={item.href}
+              to={item.href}
               className="flex flex-col items-center gap-2 rounded-xl border border-surface-700 bg-surface-900 p-4 text-center hover:border-primary-900/60 hover:bg-primary-500/5 transition-colors"
             >
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-500/10 text-primary-500">
                 <Icon name={item.iconName} size={16} />
               </div>
               <span className="text-sm font-medium text-slate-300">{item.label}</span>
-            </a>
+            </Link>
           ))}
         </div>
       </Card>

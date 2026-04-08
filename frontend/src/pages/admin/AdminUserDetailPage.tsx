@@ -156,10 +156,6 @@ export function AdminUserDetailPage() {
                   <dd className="mt-0.5 font-mono text-xs text-slate-400">{user.id}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Email</dt>
-                  <dd className="mt-0.5 font-medium">{user.email ?? '—'}</dd>
-                </div>
-                <div>
                   <dt className="text-slate-500">Логин</dt>
                   <dd className="mt-0.5 font-medium">{user.username ?? '—'}</dd>
                 </div>

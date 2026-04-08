@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { adminApi } from '@/api/admin'
 import { Table } from '@/components/ui/Table'
 import { Input } from '@/components/ui/Input'
+import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { formatDate, formatRubles, formatYAD } from '@/utils/formatters'
@@ -11,33 +12,43 @@ import type { User } from '@/api/types'
 
 export function AdminUsersPage() {
   const navigate = useNavigate()
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin-users'],
-    queryFn: adminApi.listUsers,
-  })
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const users = (data?.users ?? []).filter((u) => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return (
-      u.email?.toLowerCase().includes(q) ||
-      u.username?.toLowerCase().includes(q) ||
-      u.id.includes(q)
-    )
+  // Debounce search input — reset to page 1 on new query
+  useEffect(() => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    debounceTimer.current = setTimeout(() => {
+      setDebouncedSearch(search)
+      setPage(1)
+    }, 400)
+    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current) }
+  }, [search])
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin-users', debouncedSearch, page],
+    queryFn: () => adminApi.listUsers({ q: debouncedSearch || undefined, page }),
+    staleTime: 30_000,
   })
 
-  if (isLoading) return <PageSpinner />
+  const users = data?.users ?? []
+  const total = data?.total ?? 0
+  const limit = data?.limit ?? 50
+  const totalPages = Math.max(1, Math.ceil(total / limit))
+
+  if (isLoading && page === 1 && !debouncedSearch) return <PageSpinner />
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-100">Пользователи</h1>
-        <span className="text-sm text-slate-500">{(data?.users ?? []).length} total</span>
+        <span className="text-sm text-slate-500">{total} всего</span>
       </div>
 
       <Input
-        placeholder="Поиск по email, логину или ID…"
+        placeholder="Поиск по логину или ID…"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="max-w-md"
@@ -46,19 +57,14 @@ export function AdminUsersPage() {
       <Table<User>
         keyExtractor={(u) => u.id}
         data={users}
-        loading={false}
+        loading={isLoading}
         onRowClick={(u) => navigate(`/admin/users/${u.id}`)}
         emptyMessage="Пользователи не найдены"
         columns={[
           {
-            key: 'email',
-            header: 'Email / Логин',
-            render: (u) => (
-              <div>
-                <p className="font-medium">{u.email ?? '—'}</p>
-                {u.username && <p className="text-xs text-gray-400">{u.username}</p>}
-              </div>
-            ),
+            key: 'username',
+            header: 'Логин',
+            render: (u) => u.username ?? '—',
           },
           {
             key: 'yad_balance',
@@ -105,6 +111,28 @@ export function AdminUsersPage() {
           },
         ]}
       />
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between pt-2">
+          <Button
+            variant="secondary"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            ← Назад
+          </Button>
+          <span className="text-sm text-slate-400">
+            Страница {page} из {totalPages}
+          </span>
+          <Button
+            variant="secondary"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Вперёд →
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

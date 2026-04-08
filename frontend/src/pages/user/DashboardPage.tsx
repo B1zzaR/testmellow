@@ -125,7 +125,7 @@ export function DashboardPage() {
       {/* Page heading */}
       <div>
         <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100">
-          {profile?.email ? `Привет, ${profile.email.split('@')[0]}` : 'Дашборд'}
+          {profile?.username ? `Привет, ${profile.username}` : 'Дашборд'}
         </h1>
         <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">
           Ваша личная VPN-платформа

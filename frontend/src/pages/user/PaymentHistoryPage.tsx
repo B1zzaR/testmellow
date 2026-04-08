@@ -62,6 +62,7 @@ export function PaymentHistoryPage() {
                     {planLabel(p.plan as SubscriptionPlan)}
                   </p>
                   <p className="text-xs text-gray-400 dark:text-slate-600">{formatDateTime(p.created_at)}</p>
+                  <p className="font-mono text-xs text-gray-300 dark:text-slate-700">#{p.id.slice(0, 8)}</p>
                 </div>
                 <div className="text-right space-y-0.5">
                   <p className="text-sm font-bold text-gray-900 dark:text-slate-100">

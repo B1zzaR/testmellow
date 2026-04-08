@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -158,15 +157,64 @@ func (w *Worker) loop(ctx context.Context, queue string, handler func(context.Co
 				zap.String("payload", payload),
 				zap.Error(err),
 			)
-			// Re-queue on failure for retry (with backoff in production use dead-letter queue)
-			if retryErr := w.rdb.LPush(ctx, queue+":retry", payload).Err(); retryErr != nil {
-				w.log.Error("re-queue failed", zap.Error(retryErr))
-			}
+			w.requeueOrDead(ctx, queue, payload)
 		}
 	}
 }
 
 // ─── Payment Processing ───────────────────────────────────────────────────────
+
+// requeueOrDead increments the _retries counter embedded in the JSON payload.
+// If retries < maxJobRetries the job is pushed back onto the original queue;
+// otherwise it is moved to "dead:<queue>" so an operator can inspect it.
+const maxJobRetries = 5
+
+func (w *Worker) requeueOrDead(ctx context.Context, queue, payload string) {
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &env); err != nil {
+		// Not valid JSON — move straight to dead-letter.
+		w.log.Warn("invalid job payload, moving to dead-letter", zap.String("queue", queue))
+		_ = w.rdb.LPush(ctx, "dead:"+queue, payload).Err()
+		return
+	}
+
+	var retries int
+	if r, ok := env["_retries"]; ok {
+		_ = json.Unmarshal(r, &retries)
+	}
+
+	retries++
+	if retries > maxJobRetries {
+		w.log.Warn("job exceeded max retries, moving to dead-letter",
+			zap.String("queue", queue),
+			zap.Int("retries", retries),
+		)
+		_ = w.rdb.LPush(ctx, "dead:"+queue, payload).Err()
+		return
+	}
+
+	retriesJSON, _ := json.Marshal(retries)
+	env["_retries"] = retriesJSON
+	updated, err := json.Marshal(env)
+	if err != nil {
+		w.log.Error("marshal retried job", zap.Error(err))
+		return
+	}
+
+	// Exponential backoff: 2^retries seconds (2s, 4s, 8s, 16s, 32s)
+	backoff := time.Duration(1<<uint(retries)) * time.Second
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(backoff):
+	}
+
+	if pushErr := w.rdb.LPush(ctx, queue, string(updated)).Err(); pushErr != nil {
+		w.log.Error("re-queue failed", zap.String("queue", queue), zap.Error(pushErr))
+	}
+}
+
+// ─── Payment Processing (continued) ──────────────────────────────────────────
 
 func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error {
 	var job PaymentProcessJob
@@ -446,9 +494,8 @@ func (w *Worker) handleReferralReward(ctx context.Context, payload string) error
 	immediateYAD := totalYAD
 	deferredYAD := int64(0)
 
-	// Random delay 24–72 hours
-	delaySecs := 24*3600 + rand.Intn(48*3600)
-	scheduledAt := time.Now().Add(time.Duration(delaySecs) * time.Second)
+	// No delay - pay immediately
+	scheduledAt := time.Now()
 	var deferredAt *time.Time
 
 	rr := &domain.ReferralReward{
@@ -472,6 +519,7 @@ func (w *Worker) handleReferralReward(ctx context.Context, payload string) error
 	}
 	defer tx.Rollback(ctx)
 
+	// Create the reward record
 	if err := w.repo.CreateReferralReward(ctx, tx, rr); err != nil {
 		return err
 	}
@@ -479,14 +527,25 @@ func (w *Worker) handleReferralReward(ctx context.Context, payload string) error
 	if err := w.repo.UpdateReferralTotals(ctx, tx, referral.ID, job.PaidKopecks, totalYAD); err != nil {
 		return err
 	}
+
+	// Pay immediately without waiting
+	refID := rr.ID
+	if err := w.repo.AdjustYADBalance(ctx, tx, referral.ReferrerID,
+		immediateYAD, domain.YADTxReferralReward, &refID,
+		fmt.Sprintf("Referral reward (immediate)")); err != nil {
+		return fmt.Errorf("credit immediate yad: %w", err)
+	}
+	if err := w.repo.UpdateRewardStatus(ctx, tx, rr.ID, domain.SplitImmediate); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 
-	w.log.Info("referral reward scheduled",
+	w.log.Info("referral reward paid immediately",
 		zap.String("referrer_id", referral.ReferrerID.String()),
 		zap.Int64("total_yad", totalYAD),
-		zap.Time("scheduled_at", scheduledAt),
 	)
 	return nil
 }

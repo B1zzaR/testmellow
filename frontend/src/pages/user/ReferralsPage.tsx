@@ -100,8 +100,7 @@ export function ReferralsPage() {
           <div className="flex items-start gap-2 text-xs text-primary-700 dark:text-primary-400">
             <Icon name="coins" size={13} className="mt-0.5 shrink-0" />
             <span>
-              Вы получаете <strong>15%</strong> от каждого платежа реферала: <strong>30%</strong> награды начисляется сразу, 
-              <strong>70%</strong> — через 30 дней.
+              Вы получаете <strong>15%</strong> от каждого платежа реферала в ЯД. Награда начисляется <strong>сразу</strong> после подтверждения платежа.
             </span>
           </div>
         </div>

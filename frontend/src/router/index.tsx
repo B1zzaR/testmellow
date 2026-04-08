@@ -3,6 +3,7 @@ import { PrivateRoute } from './PrivateRoute'
 import { AdminRoute } from './AdminRoute'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { AdminLayout } from '@/components/layout/AdminLayout'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { LandingPage } from '@/pages/LandingPage'
 import { PrivacyPolicyPage } from '@/pages/PrivacyPolicyPage'
 import { UserAgreementPage } from '@/pages/UserAgreementPage'
@@ -53,18 +54,18 @@ export const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: '/dashboard', element: <DashboardPage /> },
-          { path: '/subscriptions', element: <SubscriptionsPage /> },
-          { path: '/subscriptions/renew', element: <RenewalPage /> },
-          { path: '/referrals', element: <ReferralsPage /> },
-          { path: '/shop', element: <ShopPage /> },
-          { path: '/tickets', element: <TicketsPage /> },
-          { path: '/tickets/:id', element: <TicketDetailPage /> },
-          { path: '/promo', element: <PromoPage /> },
-          { path: '/balance', element: <BalancePage /> },
-          { path: '/settings', element: <SettingsPage /> },
-          { path: '/settings/password', element: <ChangePasswordPage /> },
-          { path: '/payments/history', element: <PaymentHistoryPage /> },
+          { path: '/dashboard', element: <ErrorBoundary><DashboardPage /></ErrorBoundary> },
+          { path: '/subscriptions', element: <ErrorBoundary><SubscriptionsPage /></ErrorBoundary> },
+          { path: '/subscriptions/renew', element: <ErrorBoundary><RenewalPage /></ErrorBoundary> },
+          { path: '/referrals', element: <ErrorBoundary><ReferralsPage /></ErrorBoundary> },
+          { path: '/shop', element: <ErrorBoundary><ShopPage /></ErrorBoundary> },
+          { path: '/tickets', element: <ErrorBoundary><TicketsPage /></ErrorBoundary> },
+          { path: '/tickets/:id', element: <ErrorBoundary><TicketDetailPage /></ErrorBoundary> },
+          { path: '/promo', element: <ErrorBoundary><PromoPage /></ErrorBoundary> },
+          { path: '/balance', element: <ErrorBoundary><BalancePage /></ErrorBoundary> },
+          { path: '/settings', element: <ErrorBoundary><SettingsPage /></ErrorBoundary> },
+          { path: '/settings/password', element: <ErrorBoundary><ChangePasswordPage /></ErrorBoundary> },
+          { path: '/payments/history', element: <ErrorBoundary><PaymentHistoryPage /></ErrorBoundary> },
         ],
       },
     ],
@@ -77,16 +78,16 @@ export const router = createBrowserRouter([
       {
         element: <AdminLayout />,
         children: [
-          { path: '/admin', element: <AdminDashboardPage /> },
-          { path: '/admin/users', element: <AdminUsersPage /> },
-          { path: '/admin/users/:id', element: <AdminUserDetailPage /> },
-          { path: '/admin/promo', element: <AdminPromoPage /> },
-          { path: '/admin/tickets', element: <AdminTicketsPage /> },
-          { path: '/admin/tickets/:id', element: <AdminTicketDetailPage /> },
-          { path: '/admin/payments', element: <AdminPaymentsPage /> },
-          { path: '/admin/subscriptions', element: <AdminSubscriptionsPage /> },
-          { path: '/admin/referrals', element: <AdminReferralsPage /> },
-          { path: '/admin/yad', element: <AdminYADPage /> },
+          { path: '/admin', element: <ErrorBoundary><AdminDashboardPage /></ErrorBoundary> },
+          { path: '/admin/users', element: <ErrorBoundary><AdminUsersPage /></ErrorBoundary> },
+          { path: '/admin/users/:id', element: <ErrorBoundary><AdminUserDetailPage /></ErrorBoundary> },
+          { path: '/admin/promo', element: <ErrorBoundary><AdminPromoPage /></ErrorBoundary> },
+          { path: '/admin/tickets', element: <ErrorBoundary><AdminTicketsPage /></ErrorBoundary> },
+          { path: '/admin/tickets/:id', element: <ErrorBoundary><AdminTicketDetailPage /></ErrorBoundary> },
+          { path: '/admin/payments', element: <ErrorBoundary><AdminPaymentsPage /></ErrorBoundary> },
+          { path: '/admin/subscriptions', element: <ErrorBoundary><AdminSubscriptionsPage /></ErrorBoundary> },
+          { path: '/admin/referrals', element: <ErrorBoundary><AdminReferralsPage /></ErrorBoundary> },
+          { path: '/admin/yad', element: <ErrorBoundary><AdminYADPage /></ErrorBoundary> },
         ],
       },
     ],

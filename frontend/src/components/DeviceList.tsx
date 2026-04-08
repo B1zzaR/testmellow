@@ -4,6 +4,7 @@ import { devicesApi } from '@/api/devices'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
+import { Modal } from '@/components/ui/Modal'
 import { Icon } from '@/components/ui/Icons'
 import { formatDateTime } from '@/utils/formatters'
 import type { Device, DeviceListResponse } from '@/api/types'
@@ -18,6 +19,7 @@ export function DeviceList({ data }: DeviceListProps) {
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [showInactive, setShowInactive] = useState(false)
+  const [confirmId, setConfirmId] = useState<string | null>(null)
 
   const disconnectMutation = useMutation({
     mutationFn: (id: string) => devicesApi.disconnect(id),
@@ -25,10 +27,12 @@ export function DeviceList({ data }: DeviceListProps) {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       setSuccessMsg('Устройство отключено')
       setErrorMsg('')
+      setConfirmId(null)
     },
     onError: (e: Error) => {
       setErrorMsg(e.message)
       setSuccessMsg('')
+      setConfirmId(null)
     },
   })
 
@@ -43,6 +47,32 @@ export function DeviceList({ data }: DeviceListProps) {
     >
       {successMsg && <Alert variant="success" message={successMsg} className="mb-4" />}
       {errorMsg && <Alert variant="error" message={errorMsg} className="mb-4" />}
+
+      {/* Disconnect confirmation modal */}
+      <Modal
+        open={confirmId !== null}
+        onClose={() => setConfirmId(null)}
+        title="Отключить устройство"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setConfirmId(null)}>
+              Отмена
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              loading={disconnectMutation.isPending}
+              onClick={() => confirmId && disconnectMutation.mutate(confirmId)}
+            >
+              Отключить
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-600 dark:text-slate-400">
+          Вы уверены, что хотите отключить это устройство? Оно потеряет доступ к VPN.
+        </p>
+      </Modal>
 
       {atLimit && (
         <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
@@ -63,7 +93,7 @@ export function DeviceList({ data }: DeviceListProps) {
                 <DeviceRow
                   key={device.id}
                   device={device}
-                  onDisconnect={() => disconnectMutation.mutate(device.id)}
+                  onDisconnect={() => setConfirmId(device.id)}
                   loading={disconnectMutation.isPending && disconnectMutation.variables === device.id}
                 />
               ))}
@@ -86,7 +116,7 @@ export function DeviceList({ data }: DeviceListProps) {
                     <DeviceRow
                       key={device.id}
                       device={device}
-                      onDisconnect={() => disconnectMutation.mutate(device.id)}
+                      onDisconnect={() => setConfirmId(device.id)}
                       loading={disconnectMutation.isPending && disconnectMutation.variables === device.id}
                     />
                   ))}

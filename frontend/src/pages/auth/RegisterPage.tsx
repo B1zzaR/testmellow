@@ -6,6 +6,20 @@ import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
 import { SnakeLogo } from '@/components/ui/Icons'
 
+function passwordStrength(pwd: string): { score: number; label: string; color: string } {
+  if (pwd.length === 0) return { score: 0, label: '', color: '' }
+  let score = 0
+  if (pwd.length >= 8) score++
+  if (pwd.length >= 12) score++
+  if (/[A-Z]/.test(pwd)) score++
+  if (/[0-9]/.test(pwd)) score++
+  if (/[^a-zA-Z0-9]/.test(pwd)) score++
+  if (score <= 1) return { score, label: 'Слабый', color: 'bg-red-500' }
+  if (score <= 2) return { score, label: 'Средний', color: 'bg-yellow-500' }
+  if (score <= 3) return { score, label: 'Хороший', color: 'bg-blue-500' }
+  return { score, label: 'Надёжный', color: 'bg-primary-500' }
+}
+
 export function RegisterPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -27,8 +41,22 @@ export function RegisterPage() {
       return
     }
 
+    const trimmedUsername = username.trim()
+    if (trimmedUsername.length < 3) {
+      setValidationError('Логин должен содержать минимум 3 символа')
+      return
+    }
+    if (trimmedUsername.length > 32) {
+      setValidationError('Логин должен быть не длиннее 32 символов')
+      return
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(trimmedUsername)) {
+      setValidationError('Логин может содержать только латинские буквы, цифры и "_"')
+      return
+    }
+
     register.mutate({
-      username,
+      username: trimmedUsername,
       password,
       referral_code: referralCode.trim() || undefined,
     })
@@ -68,6 +96,29 @@ export function RegisterPage() {
               required
               autoComplete="new-password"
             />
+            {password.length > 0 && (() => {
+              const strength = passwordStrength(password)
+              return (
+                <div className="-mt-2">
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div
+                        key={i}
+                        className={[
+                          'h-1 flex-1 rounded-full transition-colors',
+                          strength.score >= i ? strength.color : 'bg-gray-200 dark:bg-surface-600',
+                        ].join(' ')}
+                      />
+                    ))}
+                  </div>
+                  <p className={`mt-1 text-xs font-medium ${
+                    strength.score <= 1 ? 'text-red-500' :
+                    strength.score <= 2 ? 'text-yellow-500' :
+                    strength.score <= 3 ? 'text-blue-500' : 'text-primary-500'
+                  }`}>{strength.label}</p>
+                </div>
+              )
+            })()}
             <Input
               label="Подтвердите пароль"
               type="password"
