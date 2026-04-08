@@ -90,16 +90,3 @@ apiClient.interceptors.response.use(
 )
 
 export default apiClient
-      message = 'Превышено время ожидания — попробуйте позже'
-    } else if (error.response?.status === 429) {
-      const retryAfter = error.response.headers['retry-after']
-      message = retryAfter
-        ? `Слишком много запросов — повторите через ${retryAfter} сек.`
-        : 'Слишком много запросов — повторите позже'
-    }
-
-    return Promise.reject(new Error(message))
-  },
-)
-
-export default apiClient
