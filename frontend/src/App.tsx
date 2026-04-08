@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from 'react-router-dom'
 import { router } from '@/router'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { profileApi } from '@/api/profile'
 import { useAuthStore } from '@/store/authStore'
 import { useThemeStore } from '@/store/themeStore'
+import { Spinner } from '@/components/ui/Spinner'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,9 +20,11 @@ const queryClient = new QueryClient({
   },
 })
 
-export default function App() {
+function RootInitializer() {
   const setAuth = useAuthStore((s) => s.setAuth)
   const clearAuth = useAuthStore((s) => s.clearAuth)
+  const setInitialized = useAuthStore((s) => s.setInitialized)
+  const initialized = useAuthStore((s) => s.initialized)
   const mode = useThemeStore((s) => s.mode)
 
   useEffect(() => {
@@ -32,8 +35,7 @@ export default function App() {
   // If the cookie is valid the server returns the user profile; otherwise 401 clears state.
   useEffect(() => {
     let canceled = false
-    const setInitialized = useAuthStore.getState().setInitialized
-    
+
     profileApi
       .getProfile()
       .then((profile) => {
@@ -54,11 +56,24 @@ export default function App() {
     return () => {
       canceled = true
     }
-  }, [setAuth, clearAuth]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [setAuth, clearAuth, setInitialized])
 
+  // Don't render anything until auth is initialized
+  if (!initialized) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-surface-950">
+        <Spinner />
+      </div>
+    )
+  }
+
+  return <RouterProvider router={router} />
+}
+
+export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <RootInitializer />
     </QueryClientProvider>
   )
 }
