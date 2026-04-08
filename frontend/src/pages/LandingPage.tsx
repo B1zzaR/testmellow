@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { SnakeLogo, Icon } from '@/components/ui/Icons'
 import { useAuthStore } from '@/store/authStore'
@@ -831,6 +831,19 @@ function LandingFooter() {
 // ─── Page Export ──────────────────────────────────────────────────────────────
 
 export function LandingPage() {
+  const navigate = useNavigate()
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated())
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [isAuthenticated, navigate])
+
+  if (isAuthenticated) {
+    return null
+  }
+
   return (
     <div className="min-h-screen bg-surface-950 text-slate-200">
       <LandingNav />
