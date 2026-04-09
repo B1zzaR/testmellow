@@ -17,10 +17,10 @@ const notificationTypeIcons = {
 }
 
 const notificationTypeColors = {
-  warning: 'bg-yellow-50 text-yellow-800 border-yellow-200',
-  error: 'bg-red-50 text-red-800 border-red-200',
-  info: 'bg-blue-50 text-blue-800 border-blue-200',
-  success: 'bg-green-50 text-green-800 border-green-200',
+  warning: 'bg-yellow-50 dark:bg-yellow-950/30 text-yellow-800 dark:text-yellow-300 border-yellow-200 dark:border-yellow-700',
+  error: 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300 border-red-200 dark:border-red-700',
+  info: 'bg-blue-50 dark:bg-blue-950/30 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-700',
+  success: 'bg-green-50 dark:bg-green-950/30 text-green-800 dark:text-green-300 border-green-200 dark:border-green-700',
 }
 
 interface NotificationFormData {
@@ -224,7 +224,7 @@ export function AdminNotificationsPage() {
                     <button
                       onClick={() => toggleActiveMutation.mutate(notif)}
                       disabled={toggleActiveMutation.isPending}
-                      className="px-2 py-1 text-xs rounded bg-gray-200 hover:bg-gray-300 transition disabled:opacity-50"
+                      className="px-2 py-1 text-xs rounded bg-gray-200 dark:bg-surface-700 hover:bg-gray-300 dark:hover:bg-surface-600 transition disabled:opacity-50 text-gray-900 dark:text-gray-100"
                     >
                       {notif.is_active ? 'Deactivate' : 'Activate'}
                     </button>

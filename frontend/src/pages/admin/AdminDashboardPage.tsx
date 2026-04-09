@@ -229,14 +229,22 @@ export function AdminDashboardPage() {
           <div className="flex gap-2">
             <Button
               variant="secondary"
-              onClick={() => setShowConfirmModal(false)}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setShowConfirmModal(false)
+              }}
             >
               Отмена
             </Button>
             <Button
               variant="primary"
               loading={toggleBlockRealMoneyMutation.isPending}
-              onClick={() => toggleBlockRealMoneyMutation.mutate(!settings?.block_real_money_purchases)}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                toggleBlockRealMoneyMutation.mutate(!settings?.block_real_money_purchases)
+              }}
             >
               {settings?.block_real_money_purchases ? 'Разрешить' : 'Заблокировать'}
             </Button>
