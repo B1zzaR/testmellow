@@ -1378,3 +1378,26 @@ func escapeLike(s string) string {
 	}
 	return string(out)
 }
+
+// ─── Platform Settings ────────────────────────────────────────────────────────
+
+// GetPlatformSettings returns the current platform settings.
+func (r *UserRepo) GetPlatformSettings(ctx context.Context) (*domain.PlatformSettings, error) {
+	s := &domain.PlatformSettings{}
+	err := r.db.QueryRow(ctx,
+		`SELECT id, block_real_money_purchases, updated_at FROM platform_settings WHERE id=1`).Scan(
+		&s.ID, &s.BlockRealMoneyPurchases, &s.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Return default settings if table is empty (shouldn't happen with migration)
+		return &domain.PlatformSettings{ID: 1, BlockRealMoneyPurchases: false, UpdatedAt: time.Now()}, nil
+	}
+	return s, err
+}
+
+// UpdatePlatformSettings updates the platform settings.
+func (r *UserRepo) UpdatePlatformSettings(ctx context.Context, settings *domain.PlatformSettings) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE platform_settings SET block_real_money_purchases=$1, updated_at=NOW() WHERE id=1`,
+		settings.BlockRealMoneyPurchases)
+	return err
+}

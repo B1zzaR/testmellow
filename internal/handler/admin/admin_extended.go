@@ -503,6 +503,52 @@ func (h *Handler) ListHighRiskUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"users": risky})
 }
 
+// ─── Platform Settings ────────────────────────────────────────────────────────
+
+// GET /admin/settings
+func (h *Handler) GetSettings(c *gin.Context) {
+	settings, err := h.repo.GetPlatformSettings(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load settings"})
+		return
+	}
+	c.JSON(http.StatusOK, settings)
+}
+
+type toggleBlockRealMoneyRequest struct {
+	BlockRealMoneyPurchases bool `json:"block_real_money_purchases" binding:"required"`
+}
+
+// POST /admin/settings/block-real-money-purchases
+func (h *Handler) ToggleBlockRealMoney(c *gin.Context) {
+	var req toggleBlockRealMoneyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	settings := &domain.PlatformSettings{
+		ID:                      1,
+		BlockRealMoneyPurchases: req.BlockRealMoneyPurchases,
+		UpdatedAt:               time.Now(),
+	}
+
+	if err := h.repo.UpdatePlatformSettings(c.Request.Context(), settings); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update settings"})
+		return
+	}
+
+	action := "settings.block_real_money_disable"
+	if req.BlockRealMoneyPurchases {
+		action = "settings.block_real_money_enable"
+	}
+	details := fmt.Sprintf("block_real_money_purchases=%v", req.BlockRealMoneyPurchases)
+	h.audit(c, action, nil, nil, &details)
+
+	h.log.Info("admin toggled block real money setting", zap.Bool("enabled", req.BlockRealMoneyPurchases))
+	c.JSON(http.StatusOK, settings)
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func queryInt(c *gin.Context, key string, def int) int {

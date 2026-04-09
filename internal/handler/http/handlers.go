@@ -532,12 +532,13 @@ func (h *BalanceHandler) History(c *gin.Context) {
 // ─── Subscription Handler ─────────────────────────────────────────────────────
 
 type SubscriptionHandler struct {
-	svc *service.SubscriptionService
-	log *zap.Logger
+	svc  *service.SubscriptionService
+	repo *postgres.UserRepo
+	log  *zap.Logger
 }
 
-func NewSubscriptionHandler(svc *service.SubscriptionService, log *zap.Logger) *SubscriptionHandler {
-	return &SubscriptionHandler{svc: svc, log: log}
+func NewSubscriptionHandler(svc *service.SubscriptionService, repo *postgres.UserRepo, log *zap.Logger) *SubscriptionHandler {
+	return &SubscriptionHandler{svc: svc, repo: repo, log: log}
 }
 
 // GET /api/subscriptions
@@ -587,6 +588,17 @@ func (h *SubscriptionHandler) Buy(c *gin.Context) {
 		return
 	}
 
+	// Check if real money purchases are blocked
+	settings, err := h.repo.GetPlatformSettings(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка server config"})
+		return
+	}
+	if settings != nil && settings.BlockRealMoneyPurchases {
+		c.JSON(http.StatusForbidden, gin.H{"error": "покупки за реальные деньги заблокированы администратором. используйте ЯД"})
+		return
+	}
+
 	userID := middleware.CurrentUserID(c)
 	plan := domain.SubscriptionPlan(req.Plan)
 
@@ -610,6 +622,17 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 	var req buySubscriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check if real money purchases are blocked
+	settings, err := h.repo.GetPlatformSettings(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка server config"})
+		return
+	}
+	if settings != nil && settings.BlockRealMoneyPurchases {
+		c.JSON(http.StatusForbidden, gin.H{"error": "покупки за реальные деньги заблокированы администратором. используйте ЯД"})
 		return
 	}
 

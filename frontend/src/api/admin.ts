@@ -20,6 +20,7 @@ import type {
   SetSubscriptionStatusRequest,
   ExtendSubscriptionRequest,
   CheckPaymentStatusResponse,
+  PlatformSettings,
 } from './types'
 
 export const adminApi = {
@@ -227,6 +228,20 @@ export const adminApi = {
       expires_at: string
       login: string
     }>('/api/admin/subscriptions/assign', data)
+    return res.data
+  },
+
+  // ─── Platform Settings ───────────────────────────────────────────────────
+  getSettings: async (): Promise<PlatformSettings> => {
+    const res = await apiClient.get<PlatformSettings>('/api/admin/settings')
+    return res.data
+  },
+
+  toggleBlockRealMoneyPurchases: async (blockRealMoneyPurchases: boolean): Promise<PlatformSettings> => {
+    const res = await apiClient.post<PlatformSettings>(
+      '/api/admin/settings/block-real-money-purchases',
+      { block_real_money_purchases: blockRealMoneyPurchases }
+    )
     return res.data
   },
 }

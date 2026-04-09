@@ -334,3 +334,11 @@ type TopReferrer struct {
 	ReferralCount  int64     `json:"referral_count"`
 	TotalRewardYAD int64     `json:"total_reward_yad"`
 }
+
+// ─── Platform Settings ────────────────────────────────────────────────────────
+
+type PlatformSettings struct {
+	ID                      int       `db:"id"                           json:"id"`
+	BlockRealMoneyPurchases bool      `db:"block_real_money_purchases"   json:"block_real_money_purchases"`
+	UpdatedAt               time.Time `db:"updated_at"                   json:"updated_at"`
+}

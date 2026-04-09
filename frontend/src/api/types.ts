@@ -282,3 +282,9 @@ export interface CheckPaymentStatusResponse {
   platega_status: string
   db_status: string
 }
+
+export interface PlatformSettings {
+  id: number
+  block_real_money_purchases: boolean
+  updated_at: string
+}

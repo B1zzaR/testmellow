@@ -8,6 +8,7 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import { Alert } from '@/components/ui/Alert'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import { Modal } from '@/components/ui/Modal'
 import { formatRubles, formatYAD } from '@/utils/formatters'
 
 const PLAN_OPTIONS = [
@@ -23,9 +24,15 @@ export function AdminDashboardPage() {
     refetchInterval: 30_000,
   })
 
+  const { data: settings, isLoading: settingsLoading } = useQuery({
+    queryKey: ['admin-settings'],
+    queryFn: adminApi.getSettings,
+  })
+
   const [assignLogin, setAssignLogin] = useState('')
   const [assignPlan, setAssignPlan] = useState('1month')
   const [assignMsg, setAssignMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
 
   const assignMutation = useMutation({
     mutationFn: () => adminApi.assignSubscription({ login: assignLogin.trim(), plan: assignPlan }),
@@ -38,7 +45,14 @@ export function AdminDashboardPage() {
     },
   })
 
-  if (isLoading) return <PageSpinner />
+  const toggleBlockRealMoneyMutation = useMutation({
+    mutationFn: (value: boolean) => adminApi.toggleBlockRealMoneyPurchases(value),
+    onSuccess: () => {
+      setShowConfirmModal(false)
+    },
+  })
+
+  if (isLoading || settingsLoading) return <PageSpinner />
   if (isError) return <Alert variant="error" message="Не удалось загрузить статистику" />
 
   return (
@@ -143,6 +157,72 @@ export function AdminDashboardPage() {
           </div>
         </div>
       </Card>
+
+      <Card title="Настройки платформы">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between rounded-lg border border-surface-700 bg-surface-900/50 p-4">
+            <div className="flex-1">
+              <h3 className="font-medium text-slate-100">Заблокировать покупки за реальные деньги</h3>
+              <p className="text-sm text-slate-400 mt-1">
+                {settings?.block_real_money_purchases
+                  ? '🔴 Активно — платежи за рубли отключены'
+                  : '🟢 Неактивно — платежи за рубли разрешены'}
+              </p>
+            </div>
+            <button
+              onClick={() => setShowConfirmModal(true)}
+              className={`ml-4 relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${
+                settings?.block_real_money_purchases
+                  ? 'bg-red-500/20 border border-red-500/50'
+                  : 'bg-green-500/20 border border-green-500/50'
+              }`}
+            >
+              <span
+                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                  settings?.block_real_money_purchases ? 'translate-x-9' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      <Modal
+        open={showConfirmModal}
+        onClose={() => setShowConfirmModal(false)}
+        title={settings?.block_real_money_purchases ? 'Разрешить покупки за деньги?' : 'Заблокировать покупки за деньги?'}
+        footer={
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setShowConfirmModal(false)}
+            >
+              Отмена
+            </Button>
+            <Button
+              variant={settings?.block_real_money_purchases ? 'success' : 'danger'}
+              loading={toggleBlockRealMoneyMutation.isPending}
+              onClick={() => toggleBlockRealMoneyMutation.mutate(!settings?.block_real_money_purchases)}
+            >
+              {settings?.block_real_money_purchases ? 'Разрешить' : 'Заблокировать'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-300">
+            {settings?.block_real_money_purchases
+              ? 'Вы собираетесь разрешить покупки подписок за реальные деньги. Платежи станут доступны.'
+              : 'Вы собираетесь заблокировать все платежи за реальные деньги. Пользователи смогут покупать подписку только за ЯД.'}
+          </p>
+          {settings?.block_real_money_purchases && (
+            <Alert variant="success" message="✅ Платежи будут восстановлены" />
+          )}
+          {!settings?.block_real_money_purchases && (
+            <Alert variant="warning" message="⚠️ Это действие остановит все платежи за рубли" />
+          )}
+        </div>
+      </Modal>
     </div>
   )
 }

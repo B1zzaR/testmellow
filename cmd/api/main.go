@@ -77,7 +77,7 @@ func main() {
 	authH := httpHandler.NewAuthHandler(authSvc, jwtMgr, rdb, log)
 	profileH := httpHandler.NewProfileHandler(userRepo, remnaClient, rdb, cfg.Telegram.BotUsername, log)
 	balanceH := httpHandler.NewBalanceHandler(userRepo, log)
-	subH := httpHandler.NewSubscriptionHandler(subSvc, log)
+	subH := httpHandler.NewSubscriptionHandler(subSvc, userRepo, log)
 	paymentH := httpHandler.NewPaymentHandler(subSvc, userRepo, log)
 	referralH := httpHandler.NewReferralHandler(userRepo, log)
 	promoH := httpHandler.NewPromoHandler(ecoSvc, userRepo, log)
@@ -219,6 +219,10 @@ func main() {
 
 		// Audit logs
 		adm.GET("/audit-logs", adminH.ListAuditLogs)
+
+		// Platform settings
+		adm.GET("/settings", adminH.GetSettings)
+		adm.POST("/settings/block-real-money-purchases", adminH.ToggleBlockRealMoney)
 	}
 
 	// ── HTTP Server ───────────────────────────────────────────────────────
