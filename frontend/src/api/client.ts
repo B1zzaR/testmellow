@@ -89,4 +89,14 @@ apiClient.interceptors.response.use(
   },
 )
 
+// ─── Public API methods (available for unauthenticated users) ───────────────
+import type { SystemNotification } from './types'
+
+export const publicApi = {
+  getActiveNotifications: async () => {
+    const res = await apiClient.get<{ notifications: SystemNotification[] }>('/api/notifications')
+    return res.data.notifications || []
+  },
+}
+
 export default apiClient

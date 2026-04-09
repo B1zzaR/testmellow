@@ -14,6 +14,7 @@ import (
 
 	"github.com/vpnplatform/internal/anticheat"
 	"github.com/vpnplatform/internal/config"
+	"github.com/vpnplatform/internal/domain"
 	adminHandler "github.com/vpnplatform/internal/handler/admin"
 	httpHandler "github.com/vpnplatform/internal/handler/http"
 	webhookHandler "github.com/vpnplatform/internal/handler/webhook"
@@ -162,6 +163,18 @@ func main() {
 
 		api.GET("/devices", deviceH.List)
 		api.POST("/devices/:id/disconnect", deviceH.Disconnect)
+
+		api.GET("/notifications", func(c *gin.Context) {
+			notifs, err := userRepo.GetActiveNotifications(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load notifications"})
+				return
+			}
+			if notifs == nil {
+				notifs = []*domain.SystemNotification{}
+			}
+			c.JSON(http.StatusOK, gin.H{"notifications": notifs})
+		})
 	}
 
 	// Admin endpoints (JWT required + is_admin flag, DB-verified on each request — H-4)
@@ -223,6 +236,13 @@ func main() {
 		// Platform settings
 		adm.GET("/settings", adminH.GetSettings)
 		adm.POST("/settings/block-real-money-purchases", adminH.ToggleBlockRealMoney)
+
+		// System notifications
+		adm.POST("/notifications", adminH.CreateNotification)
+		adm.GET("/notifications", adminH.ListNotifications)
+		adm.GET("/notifications/:id", adminH.GetNotification)
+		adm.PATCH("/notifications/:id", adminH.UpdateNotification)
+		adm.DELETE("/notifications/:id", adminH.DeleteNotification)
 	}
 
 	// ── HTTP Server ───────────────────────────────────────────────────────

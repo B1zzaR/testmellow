@@ -21,6 +21,9 @@ import type {
   ExtendSubscriptionRequest,
   CheckPaymentStatusResponse,
   PlatformSettings,
+  SystemNotification,
+  CreateNotificationRequest,
+  UpdateNotificationRequest,
 } from './types'
 
 export const adminApi = {
@@ -244,4 +247,31 @@ export const adminApi = {
     )
     return res.data
   },
-}
+  // ─── System Notifications ────────────────────────────────────────────────
+  createNotification: async (data: CreateNotificationRequest): Promise<SystemNotification> => {
+    const res = await apiClient.post<SystemNotification>('/api/admin/notifications', data)
+    return res.data
+  },
+
+  listNotifications: async (params?: {
+    limit?: number
+    offset?: number
+  }): Promise<{ notifications: SystemNotification[] }> => {
+    const res = await apiClient.get<{ notifications: SystemNotification[] }>('/api/admin/notifications', { params })
+    return res.data
+  },
+
+  getNotification: async (id: string): Promise<SystemNotification> => {
+    const res = await apiClient.get<SystemNotification>(`/api/admin/notifications/${id}`)
+    return res.data
+  },
+
+  updateNotification: async (id: string, data: UpdateNotificationRequest): Promise<SystemNotification> => {
+    const res = await apiClient.patch<SystemNotification>(`/api/admin/notifications/${id}`, data)
+    return res.data
+  },
+
+  deleteNotification: async (id: string): Promise<{ message: string }> => {
+    const res = await apiClient.delete<{ message: string }>(`/api/admin/notifications/${id}`)
+    return res.data
+  },}

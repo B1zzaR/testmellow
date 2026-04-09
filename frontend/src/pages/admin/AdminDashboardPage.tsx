@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { adminApi } from '@/api/admin'
+import { publicApi } from '@/api/client'
 import { StatCard, Card } from '@/components/ui/Card'
 import { Icon } from '@/components/ui/Icons'
 import { PageSpinner } from '@/components/ui/Spinner'
@@ -9,6 +10,7 @@ import { Alert } from '@/components/ui/Alert'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
+import { NotificationAlert } from '@/components/NotificationAlert'
 import { formatRubles, formatYAD } from '@/utils/formatters'
 
 const PLAN_OPTIONS = [
@@ -19,6 +21,8 @@ const PLAN_OPTIONS = [
 
 export function AdminDashboardPage() {
   const queryClient = useQueryClient()
+  const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set())
+  
   const { data, isLoading, isError } = useQuery({
     queryKey: ['admin-analytics'],
     queryFn: adminApi.getAnalytics,
@@ -28,6 +32,12 @@ export function AdminDashboardPage() {
   const { data: settings, isLoading: settingsLoading } = useQuery({
     queryKey: ['admin-settings'],
     queryFn: adminApi.getSettings,
+  })
+
+  const { data: notifications } = useQuery({
+    queryKey: ['activeNotifications'],
+    queryFn: publicApi.getActiveNotifications,
+    refetchInterval: 30_000,
   })
 
   const [assignLogin, setAssignLogin] = useState('')
@@ -65,6 +75,23 @@ export function AdminDashboardPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-slate-100">Обзор платформы</h1>
+
+      {/* System notifications */}
+      {notifications && notifications.length > 0 && (
+        <div>
+          {notifications
+            .filter((n) => !dismissedNotifications.has(n.id))
+            .map((notification) => (
+              <NotificationAlert
+                key={notification.id}
+                notification={notification}
+                onDismiss={() => {
+                  setDismissedNotifications((prev) => new Set([...prev, notification.id]))
+                }}
+              />
+            ))}
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard

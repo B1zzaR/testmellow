@@ -38,6 +38,7 @@ import { AdminPaymentsPage } from '@/pages/admin/AdminPaymentsPage'
 import { AdminSubscriptionsPage } from '@/pages/admin/AdminSubscriptionsPage'
 import { AdminReferralsPage } from '@/pages/admin/AdminReferralsPage'
 import { AdminYADPage } from '@/pages/admin/AdminYADPage'
+import { AdminNotificationsPage } from '@/pages/admin/AdminNotificationsPage'
 
 export const router = createBrowserRouter([
   // Public routes
@@ -88,6 +89,7 @@ export const router = createBrowserRouter([
           { path: '/admin/subscriptions', element: <ErrorBoundary><AdminSubscriptionsPage /></ErrorBoundary> },
           { path: '/admin/referrals', element: <ErrorBoundary><AdminReferralsPage /></ErrorBoundary> },
           { path: '/admin/yad', element: <ErrorBoundary><AdminYADPage /></ErrorBoundary> },
+          { path: '/admin/notifications', element: <ErrorBoundary><AdminNotificationsPage /></ErrorBoundary> },
         ],
       },
     ],

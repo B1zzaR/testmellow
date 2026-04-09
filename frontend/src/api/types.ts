@@ -288,3 +288,29 @@ export interface PlatformSettings {
   block_real_money_purchases: boolean
   updated_at: string
 }
+
+export type NotificationType = 'warning' | 'error' | 'info' | 'success'
+
+export interface SystemNotification {
+  id: string
+  type: NotificationType
+  title: string
+  message: string
+  is_active: boolean
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateNotificationRequest {
+  type: NotificationType
+  title: string
+  message: string
+}
+
+export interface UpdateNotificationRequest {
+  type?: NotificationType
+  title?: string
+  message?: string
+  is_active?: boolean
+}

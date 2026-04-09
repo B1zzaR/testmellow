@@ -4,11 +4,13 @@ import { Link } from 'react-router-dom'
 import { QRCodeSVG } from 'qrcode.react'
 import { profileApi, balanceApi } from '@/api/profile'
 import { subscriptionsApi } from '@/api/subscriptions'
+import { publicApi } from '@/api/client'
 import { StatCard, Card } from '@/components/ui/Card'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { Button } from '@/components/ui/Button'
 import { subscriptionStatusBadge } from '@/components/ui/Badge'
 import { Icon } from '@/components/ui/Icons'
+import { NotificationAlert } from '@/components/NotificationAlert'
 import { formatDate, formatYAD, daysUntil, planLabel } from '@/utils/formatters'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,6 +98,8 @@ function ConnectionRow() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function DashboardPage() {
+  const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set())
+  
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ['profile'],
     queryFn: profileApi.getProfile,
@@ -114,6 +118,11 @@ export function DashboardPage() {
     retry: false,
     refetchInterval: 60_000,
   })
+  const { data: notifications } = useQuery({
+    queryKey: ['activeNotifications'],
+    queryFn: publicApi.getActiveNotifications,
+    refetchInterval: 30_000,
+  })
 
   if (profileLoading) return <PageSpinner />
 
@@ -131,6 +140,23 @@ export function DashboardPage() {
           Ваша личная VPN-платформа
         </p>
       </div>
+
+      {/* System notifications */}
+      {notifications && notifications.length > 0 && (
+        <div>
+          {notifications
+            .filter((n) => !dismissedNotifications.has(n.id))
+            .map((notification) => (
+              <NotificationAlert
+                key={notification.id}
+                notification={notification}
+                onDismiss={() => {
+                  setDismissedNotifications((prev) => new Set([...prev, notification.id]))
+                }}
+              />
+            ))}
+        </div>
+      )}
 
       {/* Trial period notification banner */}
       {!profile?.trial_used && (

@@ -342,3 +342,25 @@ type PlatformSettings struct {
 	BlockRealMoneyPurchases bool      `db:"block_real_money_purchases"   json:"block_real_money_purchases"`
 	UpdatedAt               time.Time `db:"updated_at"                   json:"updated_at"`
 }
+
+// ─── System Notifications ─────────────────────────────────────────────────────
+
+type NotificationType string
+
+const (
+	NotificationWarning NotificationType = "warning"
+	NotificationError   NotificationType = "error"
+	NotificationInfo    NotificationType = "info"
+	NotificationSuccess NotificationType = "success"
+)
+
+type SystemNotification struct {
+	ID        uuid.UUID        `db:"id"         json:"id"`
+	Type      NotificationType `db:"type"       json:"type"`
+	Title     string           `db:"title"      json:"title"`
+	Message   string           `db:"message"    json:"message"`
+	IsActive  bool             `db:"is_active"  json:"is_active"`
+	CreatedBy *uuid.UUID       `db:"created_by" json:"created_by,omitempty"`
+	CreatedAt time.Time        `db:"created_at" json:"created_at"`
+	UpdatedAt time.Time        `db:"updated_at" json:"updated_at"`
+}

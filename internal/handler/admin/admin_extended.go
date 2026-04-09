@@ -550,6 +550,135 @@ func (h *Handler) ToggleBlockRealMoney(c *gin.Context) {
 	c.JSON(http.StatusOK, settings)
 }
 
+// ─── System Notifications ────────────────────────────────────────────────────────
+
+type createNotificationRequest struct {
+	Type    string `json:"type" binding:"required,oneof=warning error info success"`
+	Title   string `json:"title" binding:"required,min=3,max=255"`
+	Message string `json:"message" binding:"required,min=3,max=2000"`
+}
+
+// POST /admin/notifications
+func (h *Handler) CreateNotification(c *gin.Context) {
+	var req createNotificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	adminIDVal, _ := c.Get("user_id")
+	adminID, _ := adminIDVal.(uuid.UUID)
+
+	notif := &domain.SystemNotification{
+		ID:        uuid.New(),
+		Type:      domain.NotificationType(req.Type),
+		Title:     req.Title,
+		Message:   req.Message,
+		IsActive:  true,
+		CreatedBy: &adminID,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := h.repo.CreateNotification(c.Request.Context(), notif); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create notification"})
+		return
+	}
+
+	details := fmt.Sprintf("type=%s title=%s", req.Type, req.Title)
+	h.audit(c, "notification.create", strPtr("notification"), uidPtr(notif.ID), strPtr(details))
+	h.log.Info("admin created notification", zap.String("type", req.Type), zap.String("title", req.Title))
+
+	c.JSON(http.StatusCreated, notif)
+}
+
+// GET /admin/notifications?limit=&offset=
+func (h *Handler) ListNotifications(c *gin.Context) {
+	limit := queryInt(c, "limit", 50)
+	offset := queryInt(c, "offset", 0)
+
+	notifs, err := h.repo.ListAllNotifications(c.Request.Context(), limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load notifications"})
+		return
+	}
+	if notifs == nil {
+		notifs = []*domain.SystemNotification{}
+	}
+	c.JSON(http.StatusOK, gin.H{"notifications": notifs})
+}
+
+// GET /admin/notifications/:id
+func (h *Handler) GetNotification(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid notification id"})
+		return
+	}
+	notif, err := h.repo.GetNotificationByID(c.Request.Context(), id)
+	if err != nil || notif == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "notification not found"})
+		return
+	}
+	c.JSON(http.StatusOK, notif)
+}
+
+type updateNotificationRequest struct {
+	Type     string `json:"type" binding:"required,oneof=warning error info success"`
+	Title    string `json:"title" binding:"required,min=3,max=255"`
+	Message  string `json:"message" binding:"required,min=3,max=2000"`
+	IsActive bool   `json:"is_active"`
+}
+
+// PATCH /admin/notifications/:id
+func (h *Handler) UpdateNotification(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid notification id"})
+		return
+	}
+	var req updateNotificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	notif, err := h.repo.GetNotificationByID(c.Request.Context(), id)
+	if err != nil || notif == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "notification not found"})
+		return
+	}
+
+	notif.Type = domain.NotificationType(req.Type)
+	notif.Title = req.Title
+	notif.Message = req.Message
+	notif.IsActive = req.IsActive
+	notif.UpdatedAt = time.Now()
+
+	if err := h.repo.UpdateNotification(c.Request.Context(), notif); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update notification"})
+		return
+	}
+
+	h.audit(c, "notification.update", strPtr("notification"), uidPtr(id), nil)
+	c.JSON(http.StatusOK, notif)
+}
+
+// DELETE /admin/notifications/:id
+func (h *Handler) DeleteNotification(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid notification id"})
+		return
+	}
+	if err := h.repo.DeleteNotification(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete notification"})
+		return
+	}
+	h.audit(c, "notification.delete", strPtr("notification"), uidPtr(id), nil)
+	c.JSON(http.StatusOK, gin.H{"message": "notification deleted"})
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func queryInt(c *gin.Context, key string, def int) int {

@@ -365,6 +365,24 @@ VALUES (1, FALSE, NOW())
 ON CONFLICT (id) DO NOTHING;
 `,
 		},
+		{
+			version: "009_system_notifications",
+			sql: `
+CREATE TABLE IF NOT EXISTS system_notifications (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type        VARCHAR(16) NOT NULL DEFAULT 'warning' CHECK (type IN ('warning', 'error', 'info', 'success')),
+    title       VARCHAR(255) NOT NULL,
+    message     TEXT NOT NULL,
+    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_notifications_is_active ON system_notifications(is_active);
+CREATE INDEX idx_notifications_created_at ON system_notifications(created_at DESC);
+`,
+		},
 	}
 
 	for _, m := range migrations {

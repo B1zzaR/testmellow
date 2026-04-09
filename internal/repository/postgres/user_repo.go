@@ -1410,3 +1410,90 @@ func (r *UserRepo) UpdatePlatformSettings(ctx context.Context, settings *domain.
 		settings.BlockRealMoneyPurchases)
 	return err
 }
+
+// ─── System Notifications ────────────────────────────────────────────────────────
+
+// CreateNotification creates a new system notification.
+func (r *UserRepo) CreateNotification(ctx context.Context, notif *domain.SystemNotification) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO system_notifications (id, type, title, message, is_active, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		notif.ID, notif.Type, notif.Title, notif.Message, notif.IsActive, notif.CreatedBy, notif.CreatedAt, notif.UpdatedAt)
+	return err
+}
+
+// GetActiveNotifications returns all active system notifications ordered by creation time.
+func (r *UserRepo) GetActiveNotifications(ctx context.Context) ([]*domain.SystemNotification, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, type, title, message, is_active, created_by, created_at, updated_at
+		FROM system_notifications
+		WHERE is_active = TRUE
+		ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notifs []*domain.SystemNotification
+	for rows.Next() {
+		n := &domain.SystemNotification{}
+		if err := rows.Scan(&n.ID, &n.Type, &n.Title, &n.Message, &n.IsActive, &n.CreatedBy, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			return nil, err
+		}
+		notifs = append(notifs, n)
+	}
+	return notifs, rows.Err()
+}
+
+// ListAllNotifications returns all system notifications (admin only).
+func (r *UserRepo) ListAllNotifications(ctx context.Context, limit, offset int) ([]*domain.SystemNotification, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, type, title, message, is_active, created_by, created_at, updated_at
+		FROM system_notifications
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2`,
+		limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notifs []*domain.SystemNotification
+	for rows.Next() {
+		n := &domain.SystemNotification{}
+		if err := rows.Scan(&n.ID, &n.Type, &n.Title, &n.Message, &n.IsActive, &n.CreatedBy, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			return nil, err
+		}
+		notifs = append(notifs, n)
+	}
+	return notifs, rows.Err()
+}
+
+// GetNotificationByID returns a notification by ID.
+func (r *UserRepo) GetNotificationByID(ctx context.Context, id uuid.UUID) (*domain.SystemNotification, error) {
+	n := &domain.SystemNotification{}
+	err := r.db.QueryRow(ctx, `
+		SELECT id, type, title, message, is_active, created_by, created_at, updated_at
+		FROM system_notifications
+		WHERE id = $1`, id).Scan(&n.ID, &n.Type, &n.Title, &n.Message, &n.IsActive, &n.CreatedBy, &n.CreatedAt, &n.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return n, err
+}
+
+// UpdateNotification updates a system notification.
+func (r *UserRepo) UpdateNotification(ctx context.Context, notif *domain.SystemNotification) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE system_notifications
+		SET type = $1, title = $2, message = $3, is_active = $4, updated_at = NOW()
+		WHERE id = $5`,
+		notif.Type, notif.Title, notif.Message, notif.IsActive, notif.ID)
+	return err
+}
+
+// DeleteNotification deletes a notification by ID.
+func (r *UserRepo) DeleteNotification(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM system_notifications WHERE id = $1`, id)
+	return err
+}

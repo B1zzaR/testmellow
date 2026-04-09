@@ -19,6 +19,7 @@ const adminNavItems: NavItem[] = [
   { to: '/admin/yad',           label: 'ЯД-экономика',    icon: 'diamond'            },
   { to: '/admin/tickets',       label: 'Тикеты',           icon: 'ticket'             },
   { to: '/admin/promo',         label: 'Промокоды',        icon: 'tag'                },
+  { to: '/admin/notifications', label: 'Уведомления',      icon: 'bell'               },
 ]
 
 interface AdminSidebarProps {

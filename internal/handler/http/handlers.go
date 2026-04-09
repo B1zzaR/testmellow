@@ -595,7 +595,7 @@ func (h *SubscriptionHandler) Buy(c *gin.Context) {
 		return
 	}
 	if settings != nil && settings.BlockRealMoneyPurchases {
-		c.JSON(http.StatusForbidden, gin.H{"error": "покупки за реальные деньги заблокированы администратором. используйте ЯД"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Пока что покупки заблокированы администратором."})
 		return
 	}
 
@@ -632,7 +632,7 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 		return
 	}
 	if settings != nil && settings.BlockRealMoneyPurchases {
-		c.JSON(http.StatusForbidden, gin.H{"error": "покупки за реальные деньги заблокированы администратором. используйте ЯД"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Пока что покупки заблокированы администратором."})
 		return
 	}
 
