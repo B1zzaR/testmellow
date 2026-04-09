@@ -1396,8 +1396,12 @@ func (r *UserRepo) GetPlatformSettings(ctx context.Context) (*domain.PlatformSet
 
 // UpdatePlatformSettings updates the platform settings.
 func (r *UserRepo) UpdatePlatformSettings(ctx context.Context, settings *domain.PlatformSettings) error {
-	_, err := r.db.Exec(ctx,
-		`UPDATE platform_settings SET block_real_money_purchases=$1, updated_at=NOW() WHERE id=1`,
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO platform_settings (id, block_real_money_purchases, updated_at)
+		VALUES (1, $1, NOW())
+		ON CONFLICT (id) DO UPDATE SET
+			block_real_money_purchases = EXCLUDED.block_real_money_purchases,
+			updated_at = NOW()`,
 		settings.BlockRealMoneyPurchases)
 	return err
 }
