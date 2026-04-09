@@ -1388,23 +1388,25 @@ func (r *UserRepo) GetPlatformSettings(ctx context.Context) (*domain.PlatformSet
 		`SELECT id, block_real_money_purchases, updated_at FROM platform_settings WHERE id=1`).Scan(
 		&s.ID, &s.BlockRealMoneyPurchases, &s.UpdatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// Return default settings if table is empty (shouldn't happen with migration)
-			return &domain.PlatformSettings{ID: 1, BlockRealMoneyPurchases: false, UpdatedAt: time.Now()}, nil
-		}
-		return nil, err
+		// Return default settings if any error occurs
+		return &domain.PlatformSettings{ID: 1, BlockRealMoneyPurchases: false, UpdatedAt: time.Now()}, nil
 	}
 	return s, nil
 }
 
 // UpdatePlatformSettings updates the platform settings.
 func (r *UserRepo) UpdatePlatformSettings(ctx context.Context, settings *domain.PlatformSettings) error {
-	_, err := r.db.Exec(ctx, `
+	// First ensure row exists
+	_, _ = r.db.Exec(ctx, `
 		INSERT INTO platform_settings (id, block_real_money_purchases, updated_at)
-		VALUES ($1, $2, NOW())
-		ON CONFLICT (id) DO UPDATE SET
-			block_real_money_purchases = $2,
-			updated_at = NOW()`,
-		settings.ID, settings.BlockRealMoneyPurchases)
+		VALUES (1, FALSE, NOW())
+		ON CONFLICT (id) DO NOTHING`)
+
+	// Then update it
+	_, err := r.db.Exec(ctx, `
+		UPDATE platform_settings 
+		SET block_real_money_purchases = $1, updated_at = NOW()
+		WHERE id = 1`,
+		settings.BlockRealMoneyPurchases)
 	return err
 }

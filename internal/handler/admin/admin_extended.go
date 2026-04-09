@@ -534,7 +534,8 @@ func (h *Handler) ToggleBlockRealMoney(c *gin.Context) {
 	}
 
 	if err := h.repo.UpdatePlatformSettings(c.Request.Context(), settings); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update settings"})
+		h.log.Error("failed to update settings", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update settings: %v", err)})
 		return
 	}
 
