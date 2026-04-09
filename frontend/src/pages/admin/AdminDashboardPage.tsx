@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { adminApi } from '@/api/admin'
 import { StatCard, Card } from '@/components/ui/Card'
@@ -18,6 +18,7 @@ const PLAN_OPTIONS = [
 ]
 
 export function AdminDashboardPage() {
+  const queryClient = useQueryClient()
   const { data, isLoading, isError } = useQuery({
     queryKey: ['admin-analytics'],
     queryFn: adminApi.getAnalytics,
@@ -33,6 +34,7 @@ export function AdminDashboardPage() {
   const [assignPlan, setAssignPlan] = useState('1month')
   const [assignMsg, setAssignMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [toggleError, setToggleError] = useState<string | null>(null)
 
   const assignMutation = useMutation({
     mutationFn: () => adminApi.assignSubscription({ login: assignLogin.trim(), plan: assignPlan }),
@@ -49,6 +51,11 @@ export function AdminDashboardPage() {
     mutationFn: (value: boolean) => adminApi.toggleBlockRealMoneyPurchases(value),
     onSuccess: () => {
       setShowConfirmModal(false)
+      setToggleError(null)
+      queryClient.invalidateQueries({ queryKey: ['admin-settings'] })
+    },
+    onError: (e: Error) => {
+      setToggleError(e.message || 'Ошибка при изменении настроек')
     },
   })
 
@@ -210,6 +217,9 @@ export function AdminDashboardPage() {
         }
       >
         <div className="space-y-4">
+          {toggleError && (
+            <Alert variant="error" message={toggleError} />
+          )}
           <p className="text-sm text-slate-300">
             {settings?.block_real_money_purchases
               ? 'Вы собираетесь разрешить покупки подписок за реальные деньги. Платежи станут доступны.'
