@@ -215,6 +215,8 @@ export function PendingPayments({ onPaymentConfirmed }: PendingPaymentsProps) {
         // Invalidate subscriptions so the active sub appears immediately
         queryClient.invalidateQueries({ queryKey: ['subscriptions'] })
         queryClient.invalidateQueries({ queryKey: ['profile'] })
+        // Refresh the VPN connection link which is now available
+        queryClient.invalidateQueries({ queryKey: ['connection'] })
         onPaymentConfirmed?.()
       }
     },

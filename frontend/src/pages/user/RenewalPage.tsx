@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
 import { Icon } from '@/components/ui/Icons'
+import { PendingPayments } from '@/components/PendingPayments'
 import type { SubscriptionPlan } from '@/api/types'
 import { planLabel } from '@/utils/formatters'
 
@@ -40,8 +41,11 @@ export function RenewalPage() {
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['subscriptions'] })
       queryClient.invalidateQueries({ queryKey: ['active-discount'] })
-      if (res.redirect_url && res.redirect_url !== window.location.href) {
-        window.location.href = res.redirect_url
+      queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })
+      if (res.redirect_url) {
+        // Open Platega in a new tab so the user stays on this page
+        // and sees the pending payment card with the countdown.
+        window.open(res.redirect_url, '_blank', 'noopener,noreferrer')
       } else {
         navigate('/subscriptions')
       }
@@ -65,6 +69,9 @@ export function RenewalPage() {
       </div>
 
       {errorMsg && <Alert variant="error" message={errorMsg} />}
+
+      {/* Pending payments — appears immediately after clicking Оплатить */}
+      <PendingPayments />
 
       {/* Active discount banner */}
       {discount > 0 && (

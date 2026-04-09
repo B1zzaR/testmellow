@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button'
 import { subscriptionStatusBadge } from '@/components/ui/Badge'
 import { Icon } from '@/components/ui/Icons'
 import { NotificationAlert } from '@/components/NotificationAlert'
+import { PendingPayments } from '@/components/PendingPayments'
 import { formatDate, formatYAD, daysUntil, planLabel } from '@/utils/formatters'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -27,14 +28,15 @@ function formatBytes(bytes: number): string {
 function ConnectionRow() {
   const [copied, setCopied] = useState(false)
   const [showQR, setShowQR] = useState(false)
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['connection'],
     queryFn: profileApi.getConnection,
-    retry: false,
+    retry: 2,
+    retryDelay: 3000,
   })
 
   if (isLoading) return <p className="mt-4 text-xs text-slate-600">Загрузка ссылки...</p>
-  if (isError || !data?.subscribe_url) return null
+  if (!data?.subscribe_url) return null
 
   const url = data.subscribe_url
 
@@ -157,6 +159,9 @@ export function DashboardPage() {
             ))}
         </div>
       )}
+
+      {/* Pending payments — shown after returning from payment page */}
+      <PendingPayments />
 
       {/* Trial period notification banner */}
       {!profile?.trial_used && (

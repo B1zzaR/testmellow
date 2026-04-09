@@ -22,13 +22,14 @@ function discountedPrice(price: number, percent: number): number {
 function ConnectionBlock() {
   const [copied, setCopied] = useState(false)
   const [showQR, setShowQR] = useState(false)
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['connection'],
     queryFn: profileApi.getConnection,
-    retry: false,
+    retry: 2,
+    retryDelay: 3000,
   })
 
-  if (isLoading || isError || !data?.subscribe_url) return null
+  if (isLoading || !data?.subscribe_url) return null
 
   const url = data.subscribe_url
 
@@ -119,11 +120,13 @@ export function SubscriptionsPage() {
       queryClient.invalidateQueries({ queryKey: ['subscriptions'] })
       queryClient.invalidateQueries({ queryKey: ['active-discount'] })
       queryClient.invalidateQueries({ queryKey: ['profile'] })
-      if (res.redirect_url && res.redirect_url !== window.location.href) {
-        window.location.href = res.redirect_url
+      queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })
+      if (res.redirect_url) {
+        // Open Platega in a new tab so the user stays on this page
+        // and sees the pending payment card with the countdown.
+        window.open(res.redirect_url, '_blank', 'noopener,noreferrer')
       } else {
         setSuccessMsg('Подписка активирована!')
-        navigate('/subscriptions')
       }
     },
     onError: (e: Error) => setErrorMsg(e.message),

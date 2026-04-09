@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/vpnplatform/internal/domain"
+	"github.com/vpnplatform/internal/worker"
 )
 
 // ─── User sub-resources ───────────────────────────────────────────────────────
@@ -145,7 +146,8 @@ func (h *Handler) GetPayment(c *gin.Context) {
 	c.JSON(http.StatusOK, payment)
 }
 
-// POST /admin/payments/:id/check — calls Platega for current status and updates DB.
+// POST /admin/payments/:id/check — calls Platega for current status, updates DB, and
+// enqueues subscription activation if the payment is now CONFIRMED.
 func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -163,17 +165,48 @@ func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 		return
 	}
 
+	// Already in a terminal state — no need to query Platega.
+	if payment.Status != domain.PaymentStatusPending {
+		h.audit(c, "payment.check", strPtr("payment"), uidPtr(id), strPtr(string(payment.Status)))
+		c.JSON(http.StatusOK, gin.H{
+			"payment_id":     payment.ID,
+			"platega_status": payment.Status,
+			"db_status":      payment.Status,
+			"message":        "payment is already in terminal state",
+		})
+		return
+	}
+
 	resp, err := h.platega.GetPaymentStatus(c.Request.Context(), payment.ID.String())
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "platega check failed: " + err.Error()})
 		return
 	}
 
+	newStatus := domain.PaymentStatus(resp.Status)
+	if newStatus != payment.Status {
+		_ = h.repo.UpdatePaymentStatus(c.Request.Context(), nil, id, newStatus)
+	}
+
+	// If now confirmed, enqueue the same processing job the webhook would have sent.
+	if newStatus == domain.PaymentStatusConfirmed {
+		job := worker.PaymentProcessJob{
+			TransactionID: payment.ID.String(),
+			UserID:        payment.UserID.String(),
+			AmountKopecks: payment.AmountKopecks,
+			Plan:          string(payment.Plan),
+			Status:        string(newStatus),
+		}
+		if enqErr := worker.Enqueue(c.Request.Context(), h.rdb, worker.QueuePaymentProcess, job); enqErr != nil {
+			h.log.Error("admin: failed to enqueue payment activation", zap.Error(enqErr))
+		}
+	}
+
 	h.audit(c, "payment.check", strPtr("payment"), uidPtr(id), strPtr(string(resp.Status)))
 	c.JSON(http.StatusOK, gin.H{
 		"payment_id":     payment.ID,
 		"platega_status": resp.Status,
-		"db_status":      payment.Status,
+		"db_status":      newStatus,
 	})
 }
 

@@ -26,6 +26,11 @@ export function AdminSubscriptionsPage() {
   const [page, setPage] = useState(1)
   const limit = 50
 
+  // Assign modal
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [assignLogin, setAssignLogin] = useState('')
+  const [assignPlan, setAssignPlan] = useState('1month')
+
   // Extend modal
   const [extendId, setExtendId] = useState<string | null>(null)
   const [extendDays, setExtendDays] = useState('30')
@@ -43,6 +48,19 @@ export function AdminSubscriptionsPage() {
   })
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['admin-subscriptions'] })
+
+  const assignMutation = useMutation({
+    mutationFn: ({ login, plan }: { login: string; plan: string }) =>
+      adminApi.assignSubscription({ login, plan }),
+    onSuccess: (res) => {
+      setFlash({ type: 'success', msg: `${res.message} — ${res.login}, истекает ${new Date(res.expires_at).toLocaleString('ru-RU')}` })
+      setAssignOpen(false)
+      setAssignLogin('')
+      setAssignPlan('1month')
+      invalidate()
+    },
+    onError: (e: Error) => setFlash({ type: 'error', msg: e.message }),
+  })
 
   const extendMutation = useMutation({
     mutationFn: ({ id, days }: { id: string; days: number }) =>
@@ -72,7 +90,12 @@ export function AdminSubscriptionsPage() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-xl font-bold text-slate-100">Подписки</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold text-slate-100">Подписки</h1>
+        <Button onClick={() => { setAssignLogin(''); setAssignPlan('1month'); setAssignOpen(true) }}>
+          + Назначить подписку
+        </Button>
+      </div>
 
       {flash && <Alert variant={flash.type} message={flash.msg} />}
 
@@ -157,6 +180,51 @@ export function AdminSubscriptionsPage() {
           </div>
         )}
       </Card>
+
+      {/* Assign subscription modal */}
+      <Modal
+        open={assignOpen}
+        onClose={() => setAssignOpen(false)}
+        title="Назначить подписку"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setAssignOpen(false)}>Отмена</Button>
+            <Button
+              loading={assignMutation.isPending}
+              disabled={!assignLogin.trim()}
+              onClick={() => {
+                if (assignLogin.trim()) assignMutation.mutate({ login: assignLogin.trim(), plan: assignPlan })
+              }}
+            >
+              Назначить
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Input
+            label="Логин пользователя"
+            placeholder="username"
+            value={assignLogin}
+            onChange={(e) => setAssignLogin(e.target.value)}
+          />
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Тариф</label>
+            <select
+              value={assignPlan}
+              onChange={(e) => setAssignPlan(e.target.value)}
+              className="w-full rounded-lg border border-surface-600 bg-surface-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            >
+              <option value="1week">1 неделя (7 дней)</option>
+              <option value="1month">1 месяц (30 дней)</option>
+              <option value="3months">3 месяца (90 дней)</option>
+            </select>
+          </div>
+          <p className="text-xs text-slate-500">
+            Если у пользователя уже есть активная подписка — дни будут добавлены сверху.
+          </p>
+        </div>
+      </Modal>
 
       {/* Extend modal */}
       <Modal
