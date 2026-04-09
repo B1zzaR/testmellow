@@ -200,7 +200,7 @@ export function AdminDashboardPage() {
               Отмена
             </Button>
             <Button
-              variant={settings?.block_real_money_purchases ? 'success' : 'danger'}
+              variant="primary"
               loading={toggleBlockRealMoneyMutation.isPending}
               onClick={() => toggleBlockRealMoneyMutation.mutate(!settings?.block_real_money_purchases)}
             >
