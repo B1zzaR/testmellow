@@ -56,7 +56,7 @@ export function PaymentHistoryPage() {
         ) : (
           <div className="divide-y divide-gray-100 dark:divide-surface-700">
             {payments.map((p) => (
-              <div key={p.id} className="flex items-center justify-between px-1 py-3.5 hover:bg-gray-50 dark:hover:bg-surface-800/50 rounded-lg transition-colors">
+              <div key={p.id} className="flex flex-col gap-2 px-1 py-3.5 hover:bg-gray-50 dark:hover:bg-surface-800/50 rounded-lg transition-colors sm:flex-row sm:items-center sm:justify-between sm:gap-0">
                 <div className="space-y-0.5">
                   <p className="text-sm font-medium text-gray-800 dark:text-slate-200">
                     {planLabel(p.plan as SubscriptionPlan)}
@@ -64,7 +64,7 @@ export function PaymentHistoryPage() {
                   <p className="text-xs text-gray-400 dark:text-slate-600">{formatDateTime(p.created_at)}</p>
                   <p className="font-mono text-xs text-gray-300 dark:text-slate-700">#{p.id.slice(0, 8)}</p>
                 </div>
-                <div className="text-right space-y-0.5">
+                <div className="flex items-center justify-between sm:flex-col sm:items-end sm:text-right sm:space-y-0.5">
                   <p className="text-sm font-bold text-gray-900 dark:text-slate-100">
                     {p.amount_kopecks === 0 ? 'Бесплатно' : formatRubles(p.amount_kopecks)}
                   </p>

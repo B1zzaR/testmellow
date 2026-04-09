@@ -25,7 +25,7 @@ export function AppLayout() {
         )}
 
         {/* pb-16 on mobile to clear the bottom nav bar */}
-        <main className="flex-1 overflow-y-auto p-4 pb-20 text-gray-900 dark:text-slate-100 scrollbar-thin md:p-6 lg:pb-6">
+        <main className="flex-1 overflow-y-auto p-4 pb-20 text-gray-900 dark:text-slate-100 scrollbar-thin mobile-scroll md:p-6 lg:pb-6">
           <Outlet />
         </main>
       </div>

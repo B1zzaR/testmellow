@@ -163,7 +163,7 @@ func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.platega.GetPaymentStatus(c.Request.Context(), payment.PlategaPayload)
+	resp, err := h.platega.GetPaymentStatus(c.Request.Context(), payment.ID.String())
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "platega check failed: " + err.Error()})
 		return
@@ -181,7 +181,7 @@ func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 
 type assignSubscriptionRequest struct {
 	Login string `json:"login" binding:"required"`
-	Plan  string `json:"plan"  binding:"required,oneof=1week 1month 3months"`
+	Plan  string `json:"plan"  binding:"required,oneof=1week 1month 3months 99years"`
 }
 
 // POST /admin/subscriptions/assign — find user by login, activate subscription

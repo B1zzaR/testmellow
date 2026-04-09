@@ -22,7 +22,7 @@ export function Navbar() {
       <div className="hidden lg:block" />
 
       {/* Right: meta info */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {/* Install PWA button — Chrome/Android only, hidden when already installed */}
         {canInstall && (
           <button
