@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
 import { QRCodeSVG } from 'qrcode.react'
 import { subscriptionsApi } from '@/api/subscriptions'
 import { promoApi } from '@/api/promo'
@@ -97,7 +96,6 @@ const PLANS: { key: SubscriptionPlan; label: string; price: number; days: number
 ]
 
 export function SubscriptionsPage() {
-  const navigate = useNavigate()
   const { data, isLoading } = useQuery({
     queryKey: ['subscriptions'],
     queryFn: subscriptionsApi.list,
