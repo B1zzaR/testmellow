@@ -516,14 +516,15 @@ func (h *Handler) GetSettings(c *gin.Context) {
 }
 
 type toggleBlockRealMoneyRequest struct {
-	BlockRealMoneyPurchases bool `json:"block_real_money_purchases" binding:"required"`
+	BlockRealMoneyPurchases bool `json:"block_real_money_purchases"`
 }
 
 // POST /admin/settings/block-real-money-purchases
 func (h *Handler) ToggleBlockRealMoney(c *gin.Context) {
 	var req toggleBlockRealMoneyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.log.Error("failed to bind toggle real money request", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body: " + err.Error()})
 		return
 	}
 

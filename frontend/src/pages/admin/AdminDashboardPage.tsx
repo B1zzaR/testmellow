@@ -240,10 +240,14 @@ export function AdminDashboardPage() {
             <Button
               variant="primary"
               loading={toggleBlockRealMoneyMutation.isPending}
+              disabled={!settings || settingsLoading}
               onClick={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
-                toggleBlockRealMoneyMutation.mutate(!settings?.block_real_money_purchases)
+                if (settings) {
+                  const newValue = !settings.block_real_money_purchases
+                  toggleBlockRealMoneyMutation.mutate(newValue)
+                }
               }}
             >
               {settings?.block_real_money_purchases ? 'Разрешить' : 'Заблокировать'}
