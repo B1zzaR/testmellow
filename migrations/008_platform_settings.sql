@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
     CONSTRAINT only_one_row CHECK (id = 1)
 );
 
--- Insert or ensure default settings exist
+-- Ensure default settings row exists
 INSERT INTO platform_settings (id, block_real_money_purchases, updated_at)
 VALUES (1, FALSE, NOW())
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET updated_at = NOW();
