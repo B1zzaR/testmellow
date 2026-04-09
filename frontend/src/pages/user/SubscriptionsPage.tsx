@@ -5,7 +5,6 @@ import { QRCodeSVG } from 'qrcode.react'
 import { subscriptionsApi } from '@/api/subscriptions'
 import { promoApi } from '@/api/promo'
 import { profileApi } from '@/api/profile'
-import { devicesApi } from '@/api/devices'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
@@ -14,7 +13,6 @@ import { subscriptionStatusBadge } from '@/components/ui/Badge'
 import { Icon } from '@/components/ui/Icons'
 import { formatDate, formatRubles, planLabel, daysUntil } from '@/utils/formatters'
 import { PendingPayments } from '@/components/PendingPayments'
-import { DeviceList } from '@/components/DeviceList'
 import type { SubscriptionPlan } from '@/api/types'
 
 function discountedPrice(price: number, percent: number): number {
@@ -107,11 +105,6 @@ export function SubscriptionsPage() {
     queryKey: ['active-discount'],
     queryFn: promoApi.getActiveDiscount,
   })
-  const { data: devicesData, isLoading: devicesLoading, isError: devicesError, error: devicesErrorMsg } = useQuery({
-    queryKey: ['devices'],
-    queryFn: devicesApi.list,
-    retry: 2,
-  })
   const queryClient = useQueryClient()
   const discount = discountData?.active_discount_percent ?? 0
   const discountCode = discountData?.active_discount_code ?? ''
@@ -199,11 +192,6 @@ export function SubscriptionsPage() {
           <ConnectionBlock />
         </Card>
       )}
-
-      {/* Devices */}
-      {devicesLoading && <PageSpinner />}
-      {devicesError && <Alert variant="error" message={`Ошибка загрузки устройств: ${devicesErrorMsg instanceof Error ? devicesErrorMsg.message : 'Неизвестная ошибка'}`} />}
-      {devicesData && !devicesError && <DeviceList data={devicesData} />}
 
       {/* Plan selector */}
       <Card title="Выбрать тариф">

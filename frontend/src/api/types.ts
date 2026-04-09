@@ -2,7 +2,7 @@
 
 export type PaymentStatus = 'PENDING' | 'CONFIRMED' | 'CANCELED' | 'CHARGEBACKED' | 'EXPIRED'
 export type SubscriptionStatus = 'active' | 'expired' | 'trial' | 'canceled'
-export type SubscriptionPlan = '1week' | '1month' | '3months'
+export type SubscriptionPlan = '1week' | '1month' | '3months' | '99years';
 export type YADTxType = 'referral_reward' | 'bonus' | 'spent' | 'promo' | 'trial'
 export type TicketStatus = 'open' | 'answered' | 'closed'
 export type RewardSplitStatus = 'pending' | 'immediate' | 'deferred' | 'paid' | 'blocked'

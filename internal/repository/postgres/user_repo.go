@@ -321,17 +321,17 @@ func (r *UserRepo) GetLTV(ctx context.Context, userID uuid.UUID) (int64, error) 
 	return ltv, err
 }
 
-// GetPaymentHistory returns paginated payments for a user and the total count.
+// GetPaymentHistory returns paginated confirmed payments for a user and the total count.
 func (r *UserRepo) GetPaymentHistory(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.Payment, int, error) {
 	var total int
-	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE user_id = $1`, userID).Scan(&total); err != nil {
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE user_id = $1 AND status = 'CONFIRMED'`, userID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	rows, err := r.db.Query(ctx, `
 		SELECT id, user_id, amount_kopecks, currency, status, plan, payment_method,
 		       redirect_url, expires_at, created_at, updated_at
-		FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+		FROM payments WHERE user_id = $1 AND status = 'CONFIRMED' ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 		userID, limit, offset)
 	if err != nil {
 		return nil, 0, err

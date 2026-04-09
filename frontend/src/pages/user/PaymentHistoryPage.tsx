@@ -42,7 +42,7 @@ export function PaymentHistoryPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100">История платежей</h1>
-        <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">Все ваши транзакции</p>
+        <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">Ваши успешные транзакции</p>
       </div>
 
       <Card>

@@ -92,6 +92,7 @@ const (
 	PlanWeek       SubscriptionPlan = "1week"
 	PlanMonth      SubscriptionPlan = "1month"
 	PlanThreeMonth SubscriptionPlan = "3months"
+	Plan99Years    SubscriptionPlan = "99years"
 )
 
 // PlanPriceKopecks returns price in kopecks (rubles × 100)
@@ -103,6 +104,8 @@ func PlanPriceKopecks(plan SubscriptionPlan) int64 {
 		return 10000
 	case PlanThreeMonth:
 		return 27000
+	case Plan99Years:
+		return 0
 	}
 	return 0
 }
@@ -116,6 +119,8 @@ func PlanDurationDays(plan SubscriptionPlan) int {
 		return 30
 	case PlanThreeMonth:
 		return 90
+	case Plan99Years:
+		return 36135
 	}
 	return 0
 }
@@ -129,6 +134,8 @@ func PlanYADBonus(plan SubscriptionPlan) int64 {
 		return 25
 	case PlanThreeMonth:
 		return 75
+	case Plan99Years:
+		return 0
 	}
 	return 0
 }
@@ -142,6 +149,8 @@ func PlanYADPrice(plan SubscriptionPlan) int64 {
 		return 75
 	case PlanThreeMonth:
 		return 210
+	case Plan99Years:
+		return 0
 	}
 	return 0
 }

@@ -17,6 +17,7 @@ const PLAN_OPTIONS = [
   { value: '1week',   label: '1 неделя'  },
   { value: '1month',  label: '1 месяц'   },
   { value: '3months', label: '3 месяца'  },
+  { value: '99years', label: 'навсегда (99 лет)' },
 ]
 
 export function AdminDashboardPage() {

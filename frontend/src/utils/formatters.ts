@@ -52,6 +52,8 @@ export function planLabel(plan: string): string {
       return '1 месяц'
     case '3months':
       return '3 месяца'
+    case '99years':
+      return 'навсегда (99 лет)'
     default:
       return plan
   }
