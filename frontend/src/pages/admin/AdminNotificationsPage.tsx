@@ -1,19 +1,19 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { adminApi } from '../../api/admin'
-import type { SystemNotification, NotificationType } from '../../api/types'
-import { Card } from '../ui/Card'
-import { Button } from '../ui/Button'
-import { Input } from '../ui/Input'
-import { Modal } from '../ui/Modal'
-import { Spinner } from '../ui/Spinner'
-import { AlertTriangle, AlertCircle, Info, CheckCircle, Edit2, Trash2, Plus } from 'lucide-react'
+import { adminApi } from '@/api/admin'
+import type { SystemNotification, NotificationType } from '@/api/types'
+import { Card } from '@/components/ui/Card'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Modal } from '@/components/ui/Modal'
+import { Spinner } from '@/components/ui/Spinner'
+import { Icon } from '@/components/ui/Icons'
 
 const notificationTypeIcons = {
-  warning: AlertTriangle,
-  error: AlertCircle,
-  info: Info,
-  success: CheckCircle,
+  warning: 'tag' as const,
+  error: 'x-circle' as const,
+  info: 'message' as const,
+  success: 'check-circle' as const,
 }
 
 const notificationTypeColors = {
@@ -126,7 +126,7 @@ export function AdminNotificationsPage() {
           }}
           className="gap-2"
         >
-          <Plus className="h-4 w-4" />
+          <Icon name="bell" size={16} />
           Create Notification
         </Button>
       </div>
@@ -162,7 +162,7 @@ export function AdminNotificationsPage() {
             <label className="block text-sm font-medium mb-2">Message</label>
             <textarea
               value={formData.message}
-              onChange={(e) => setFormData({ ...formData, message: e.target.value })}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setFormData({ ...formData, message: e.target.value })}
               placeholder="Notification message"
               maxLength={500}
               rows={4}
@@ -204,12 +204,12 @@ export function AdminNotificationsPage() {
       ) : (
         <div className="space-y-3">
           {notifications.map((notif) => {
-            const Icon = notificationTypeIcons[notif.type]
+            const iconName = notificationTypeIcons[notif.type]
             return (
               <Card key={notif.id} className={`p-4 border ${notificationTypeColors[notif.type]}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <Icon className="h-5 w-5 mt-0.5 flex-shrink-0" />
+                    <Icon name={iconName} size={20} className="mt-0.5 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-sm">{notif.title}</h3>
                       <p className="text-sm mt-1 break-words">{notif.message}</p>
@@ -234,7 +234,7 @@ export function AdminNotificationsPage() {
                       onClick={() => handleEdit(notif)}
                       className="gap-1"
                     >
-                      <Edit2 className="h-3 w-3" />
+                      <Icon name="settings" size={12} />
                       Edit
                     </Button>
                     <Button
@@ -244,7 +244,7 @@ export function AdminNotificationsPage() {
                       disabled={deleteMutation.isPending}
                       className="gap-1 text-red-600 hover:text-red-700"
                     >
-                      <Trash2 className="h-3 w-3" />
+                      <Icon name="close" size={12} />
                       Delete
                     </Button>
                   </div>
