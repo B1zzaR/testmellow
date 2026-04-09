@@ -351,6 +351,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)
     WHERE username IS NOT NULL;
 `,
 		},
+		{
+			version: "008_platform_settings",
+			sql: `
+CREATE TABLE IF NOT EXISTS platform_settings (
+    id                          SMALLINT PRIMARY KEY,
+    block_real_money_purchases  BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO platform_settings (id, block_real_money_purchases, updated_at)
+VALUES (1, FALSE, NOW())
+ON CONFLICT (id) DO NOTHING;
+`,
+		},
 	}
 
 	for _, m := range migrations {
