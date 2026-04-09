@@ -49,7 +49,7 @@ function ConnectionBlock() {
         <button
           onClick={() => setShowQR((v) => !v)}
           title="Показать QR-код"
-          className={`hidden sm:flex shrink-0 items-center justify-center rounded-md border px-2 py-1 text-xs transition-all active:scale-95 ${
+          className={`flex shrink-0 items-center justify-center rounded-md border px-2 py-1 text-xs transition-all active:scale-95 ${
             showQR
               ? 'border-primary-500/50 bg-primary-500/10 text-primary-400'
               : 'border-gray-300 dark:border-surface-600 bg-white dark:bg-surface-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-surface-600'
@@ -59,10 +59,10 @@ function ConnectionBlock() {
         </button>
         <button
           onClick={copy}
-          className="flex shrink-0 items-center gap-1.5 rounded-md border border-gray-300 dark:border-surface-600 bg-white dark:bg-surface-700 px-3 py-1 text-xs font-medium whitespace-nowrap text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-surface-600 active:scale-95 transition-all"
+          className="flex shrink-0 items-center gap-1.5 rounded-md border border-gray-300 dark:border-surface-600 bg-white dark:bg-surface-700 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-surface-600 active:scale-95 transition-all"
         >
           <Icon name={copied ? 'check' : 'copy'} size={12} className={copied ? 'text-primary-500' : ''} />
-          {copied ? 'Скопировано' : 'Скопировать'}
+          <span className="hidden sm:inline whitespace-nowrap">{copied ? 'Скопировано' : 'Скопировать'}</span>
         </button>
       </div>
 
@@ -172,7 +172,7 @@ export function SubscriptionsPage() {
               </p>
             </div>
           )}
-          <div className="flex flex-wrap gap-6">
+          <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:gap-6">
             {[
               { label: 'Тариф',        value: planLabel(activeSub.plan) },
               { label: 'Осталось дней',   value: `${daysUntil(activeSub.expires_at)} дней` },
@@ -209,7 +209,7 @@ export function SubscriptionsPage() {
           </div>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {PLANS.map((plan) => {
             const isSelected = selectedPlan === plan.key
             const finalPrice = discountedPrice(plan.price, discount)

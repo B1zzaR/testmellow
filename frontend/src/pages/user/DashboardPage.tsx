@@ -55,7 +55,7 @@ function ConnectionRow() {
         <button
           onClick={() => setShowQR((v) => !v)}
           title="Показать QR-код"
-          className={`hidden sm:flex shrink-0 items-center justify-center rounded-md border px-2 py-1 text-xs transition-all active:scale-95 ${
+          className={`flex shrink-0 items-center justify-center rounded-md border px-2 py-1 text-xs transition-all active:scale-95 ${
             showQR
               ? 'border-primary-500/50 bg-primary-500/10 text-primary-400'
               : 'border-gray-300 dark:border-surface-600 bg-white dark:bg-surface-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-surface-600'
@@ -65,10 +65,10 @@ function ConnectionRow() {
         </button>
         <button
           onClick={copy}
-          className="flex shrink-0 items-center gap-1.5 rounded-md border border-gray-300 dark:border-surface-600 bg-white dark:bg-surface-700 px-3 py-1 text-xs font-medium whitespace-nowrap text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-surface-600 active:scale-95 transition-all"
+          className="flex shrink-0 items-center gap-1.5 rounded-md border border-gray-300 dark:border-surface-600 bg-white dark:bg-surface-700 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-surface-600 active:scale-95 transition-all"
         >
           <Icon name={copied ? 'check' : 'copy'} size={12} className={copied ? 'text-primary-500' : ''} />
-          {copied ? 'Скопировано' : 'Скопировать'}
+          <span className="hidden sm:inline whitespace-nowrap">{copied ? 'Скопировано' : 'Скопировать'}</span>
         </button>
       </div>
 
@@ -160,16 +160,18 @@ export function DashboardPage() {
 
       {/* Trial period notification banner */}
       {!profile?.trial_used && (
-        <div className="rounded-xl border border-primary-500/30 bg-primary-500/10 px-5 py-4 flex items-center gap-4">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-500/20 text-primary-500">
-            <Icon name="tag" size={18} />
-          </div>
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-primary-400">У вас доступен бесплатный пробный период!</p>
-            <p className="text-xs text-slate-400 mt-0.5">Активируйте 3 дня VPN-доступа прямо сейчас</p>
+        <div className="rounded-xl border border-primary-500/30 bg-primary-500/10 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-500/20 text-primary-500">
+              <Icon name="tag" size={18} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-primary-400">У вас доступен бесплатный пробный период!</p>
+              <p className="text-xs text-slate-400 mt-0.5">Активируйте 3 дня VPN-доступа прямо сейчас</p>
+            </div>
           </div>
           <Link to="/subscriptions">
-            <Button size="sm">Активировать</Button>
+            <Button size="sm" className="w-full sm:w-auto">Активировать</Button>
           </Link>
         </div>
       )}
@@ -201,7 +203,7 @@ export function DashboardPage() {
             </Link>
           }
         >
-          <div className="flex flex-wrap gap-6">
+          <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:gap-6">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-600">Тариф</p>
               <p className="mt-1 text-sm font-semibold text-gray-900 dark:text-slate-100">{planLabel(activeSub.plan)}</p>

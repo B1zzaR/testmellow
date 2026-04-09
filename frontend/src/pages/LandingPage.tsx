@@ -19,11 +19,11 @@ function LandingNav() {
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-surface-700/50 bg-surface-950/80 backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
+      <div className="mx-auto flex h-16 w-full max-w-6xl min-w-0 items-center justify-between gap-4 px-4 sm:px-6">
         {/* Logo */}
         <Link
           to="/"
-          className="flex items-center gap-2.5 font-bold text-slate-100 transition-colors hover:text-primary-400"
+          className="flex items-center gap-2.5 font-bold text-slate-100 transition-colors hover:text-primary-400 min-w-0"
         >
           <SnakeLogo size={28} />
           <span className="text-lg tracking-tight">
@@ -135,7 +135,7 @@ function HeroSection() {
   const handleStart = () => navigate('/register')
 
   return (
-    <section className="relative flex min-h-screen items-center overflow-hidden bg-surface-950 pt-16">
+    <section className="relative flex min-h-screen w-full items-center overflow-hidden bg-surface-950 pt-16">
       {/* Snake animation background — sits below all other content */}
       <SnakeBackground />
 
@@ -147,7 +147,7 @@ function HeroSection() {
         />
       </div>
 
-      <div className="relative mx-auto max-w-4xl px-4 py-28 text-center sm:px-6">
+      <div className="relative mx-auto w-full max-w-4xl px-4 py-28 text-center sm:px-6">
         {/* Logo mark */}
         <div className="mb-10 inline-flex items-center justify-center">
           <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-primary-900/60 bg-surface-900 shadow-glow-sm">
@@ -156,21 +156,21 @@ function HeroSection() {
         </div>
 
         {/* Headline */}
-        <h1 className="mx-auto max-w-4xl text-5xl font-extrabold leading-tight tracking-tight text-slate-100 sm:text-6xl md:text-7xl">
+        <h1 className="mx-auto max-w-4xl text-3xl font-extrabold leading-tight tracking-tight text-slate-100 sm:text-5xl md:text-7xl">
           Простой VPN.{' '}
           <span className="text-primary-500">Стабильное соединение.</span>
         </h1>
 
         {/* Subheadline */}
-        <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-slate-400 sm:text-xl">
+        <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-slate-400 sm:text-lg md:text-xl">
           Без маркетинговых обещаний. Рабочий VPN с понятными тарифами и честной политикой.
         </p>
 
         {/* CTAs */}
-        <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+        <div className="mt-9 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
           <button
             onClick={handleStart}
-            className="inline-flex items-center gap-2 rounded-xl bg-primary-500 px-8 py-3.5 text-base font-bold text-white shadow-glow-sm transition-all hover:bg-primary-400 hover:shadow-glow-md active:scale-95"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary-500 px-8 py-3.5 text-base font-bold text-white shadow-glow-sm transition-all hover:bg-primary-400 hover:shadow-glow-md active:scale-95 sm:w-auto"
           >
             Начать
           </button>
@@ -178,14 +178,14 @@ function HeroSection() {
             href="https://t.me/mellowpn_bot"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-xl border border-sky-500/40 bg-sky-500/10 px-8 py-3.5 text-base font-semibold text-sky-400 transition-all hover:bg-sky-500/20 hover:border-sky-500/60"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-500/40 bg-sky-500/10 px-8 py-3.5 text-base font-semibold text-sky-400 transition-all hover:bg-sky-500/20 hover:border-sky-500/60 sm:w-auto"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L8.32 14.347l-2.96-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.828.212z"/></svg>
             Открыть бота
           </a>
           <a
             href="#pricing"
-            className="inline-flex items-center gap-2 rounded-xl border border-surface-600 bg-surface-800 px-8 py-3.5 text-base font-semibold text-slate-300 transition-all hover:border-primary-500/40 hover:bg-surface-700 hover:text-slate-100"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-surface-600 bg-surface-800 px-8 py-3.5 text-base font-semibold text-slate-300 transition-all hover:border-primary-500/40 hover:bg-surface-700 hover:text-slate-100 sm:w-auto"
           >
             Смотреть цены
           </a>
@@ -207,7 +207,7 @@ function HeroSection() {
       </div>
 
       {/* Live monitoring badge — bottom-left corner, purely decorative */}
-      <div className="pointer-events-none absolute bottom-7 left-6 z-10 flex items-center gap-2.5 rounded-full border border-emerald-900/50 bg-surface-950/80 px-3.5 py-2 backdrop-blur-sm">
+      <div className="pointer-events-none absolute bottom-7 left-3 right-3 z-10 flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-2.5 rounded-full border border-emerald-900/50 bg-surface-950/80 px-3.5 py-2 backdrop-blur-sm sm:left-6 sm:right-auto sm:max-w-none">
         <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
@@ -331,7 +331,7 @@ function HowItWorksSection() {
           </p>
         </div>
 
-        <div className="mt-14 grid gap-6 md:grid-cols-3">
+        <div className="mt-14 grid gap-6 sm:grid-cols-2 md:grid-cols-3">
           {steps.map((s, i) => (
             <div key={s.step} className="relative">
               {/* Connector line */}
@@ -427,7 +427,7 @@ function PricingSection() {
           </p>
         </div>
 
-        <div className="mt-14 grid gap-6 md:grid-cols-3">
+        <div className="mt-14 grid gap-6 sm:grid-cols-2 md:grid-cols-3">
           {plans.map((plan) => {
             const isPopular = plan.badge === 'Популярный'
             return (
@@ -663,11 +663,11 @@ function FaqSection() {
 
 function FinalCtaSection() {
   return (
-    <section className="border-t border-surface-700/40 bg-surface-900 py-24">
+    <section className="relative overflow-hidden border-t border-surface-700/40 bg-surface-900 py-24">
       <div className="mx-auto max-w-4xl px-4 text-center sm:px-6">
         {/* Glow */}
         <div
-          className="pointer-events-none absolute left-1/2 -translate-x-1/2"
+          className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2"
           style={{
             width: '600px',
             height: '300px',
@@ -688,10 +688,10 @@ function FinalCtaSection() {
             Пробный период без оплаты. Посмотрите сами, как работает сервис, прежде чем платить.
           </p>
 
-          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <div className="mt-10 flex flex-col items-stretch justify-center gap-4 sm:flex-row sm:items-center">
             <Link
               to="/register"
-              className="inline-flex items-center gap-2 rounded-xl bg-primary-500 px-10 py-4 text-base font-bold text-white shadow-glow-sm transition-all hover:bg-primary-400 hover:shadow-glow-md active:scale-95"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary-500 px-10 py-4 text-base font-bold text-white shadow-glow-sm transition-all hover:bg-primary-400 hover:shadow-glow-md active:scale-95 sm:w-auto"
             >
               Начать
             </Link>
@@ -832,7 +832,7 @@ function LandingFooter() {
 
 export function LandingPage() {
   return (
-    <div className="min-h-screen bg-surface-950 text-slate-200">
+    <div className="min-h-screen w-full overflow-x-hidden bg-surface-950 text-slate-200">
       <LandingNav />
       <main>
         <HeroSection />

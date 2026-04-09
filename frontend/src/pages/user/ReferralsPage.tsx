@@ -58,7 +58,7 @@ export function ReferralsPage() {
         <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">Приглашайте друзей и получайте 15% от каждого их платежа</p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-2">
         <StatCard
           label="Всего рефералов"
           value={data?.referral_count ?? 0}
@@ -108,7 +108,7 @@ export function ReferralsPage() {
 
       {/* Referred users list */}
       {referrals.length > 0 ? (
-        <Card title={`Referred Users (${referrals.length})`}>
+        <Card title={`Приглашённые пользователи (${referrals.length})`}>
           <div className="space-y-2">
             {referrals.map((ref) => (
               <div

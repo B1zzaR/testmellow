@@ -711,6 +711,23 @@ func (h *PaymentHandler) Check(c *gin.Context) {
 	c.JSON(http.StatusOK, payment)
 }
 
+// POST /api/payments/:id/touch — refreshes expires_at to now+30 minutes when
+// the user returns to the app after visiting the Platega payment page.
+func (h *PaymentHandler) Touch(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	paymentID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный идентификатор платежа"})
+		return
+	}
+	payment, err := h.svc.TouchPayment(c.Request.Context(), userID, paymentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, payment)
+}
+
 // GET /api/payments/history?page=1&per_page=10
 func (h *PaymentHandler) ListHistory(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)

@@ -225,7 +225,7 @@ func (h *Handler) AssignSubscription(c *gin.Context) {
 		if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
 			remnaUser, err := h.remna.CreateUser(c.Request.Context(), user.ID.String(), newExpiry)
 			if err != nil {
-				c.JSON(http.StatusBadGateway, gin.H{"error": "remnawave create user: " + err.Error()})
+				c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 				return
 			}
 			remnaUUID = remnaUser.UUID

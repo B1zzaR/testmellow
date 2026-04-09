@@ -838,6 +838,21 @@ func (r *UserRepo) GetPendingPayments(ctx context.Context, userID uuid.UUID) ([]
 	return scanPayments(rows)
 }
 
+// TouchPayment resets the expires_at of a PENDING payment to now+30 minutes.
+// Only updates if the payment belongs to userID and is still PENDING.
+// Returns false (no error) if nothing matched (wrong user, not pending, etc.).
+func (r *UserRepo) TouchPayment(ctx context.Context, userID, paymentID uuid.UUID) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE payments
+		SET expires_at = NOW() + INTERVAL '30 minutes', updated_at = NOW()
+		WHERE id = $1 AND user_id = $2 AND status = 'PENDING'`,
+		paymentID, userID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // MarkExpiredPayments sets status=EXPIRED for all PENDING payments past their expires_at.
 func (r *UserRepo) MarkExpiredPayments(ctx context.Context) (int64, error) {
 	tag, err := r.db.Exec(ctx, `

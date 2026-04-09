@@ -314,7 +314,7 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 		PaymentMethod:  platega.MethodSBPQR,
 		PlategaPayload: userID.String(),
 		RedirectURL:    platResp.Redirect,
-		ExpiresAt:      func() *time.Time { t := time.Now().Add(15 * time.Minute); return &t }(),
+		ExpiresAt:      func() *time.Time { t := time.Now().Add(30 * time.Minute); return &t }(),
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
@@ -354,6 +354,21 @@ func (s *SubscriptionService) InitiateRenewal(ctx context.Context, userID uuid.U
 // GetPendingPayments returns non-expired PENDING payments for a user.
 func (s *SubscriptionService) GetPendingPayments(ctx context.Context, userID uuid.UUID) ([]*domain.Payment, error) {
 	return s.repo.GetPendingPayments(ctx, userID)
+}
+
+// TouchPayment resets the expiry of a PENDING payment to now+30 minutes,
+// called when the user returns to the app after visiting the payment page.
+// Returns the updated payment (with new expires_at) or an error.
+func (s *SubscriptionService) TouchPayment(ctx context.Context, userID, paymentID uuid.UUID) (*domain.Payment, error) {
+	ok, err := s.repo.TouchPayment(ctx, userID, paymentID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		// Payment not found or not PENDING — return current state from DB.
+		return s.GetPaymentByID(ctx, userID, paymentID)
+	}
+	return s.GetPaymentByID(ctx, userID, paymentID)
 }
 
 // GetPaymentByID returns a payment owned by the given user.

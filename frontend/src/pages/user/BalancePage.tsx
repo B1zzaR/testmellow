@@ -33,7 +33,7 @@ export function BalancePage() {
         <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">Внутренняя валюта платформы</p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-3">
         <StatCard
           label="Текущий баланс"
           value={formatYAD(balance?.yad_balance ?? 0)}

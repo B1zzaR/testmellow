@@ -77,7 +77,7 @@ export function ShopPage() {
       {successMsg && <Alert variant="success" message={successMsg} />}
       {errorMsg && <Alert variant="error" message={errorMsg} />}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {SUB_PLANS.map((plan) => (
           <div
             key={plan.key}

@@ -145,6 +145,7 @@ func main() {
 		api.GET("/payments/history", paymentH.ListHistory)
 		api.GET("/payments/:id", paymentH.GetByID)
 		api.POST("/payments/:id/check", paymentH.Check)
+		api.POST("/payments/:id/touch", paymentH.Touch)
 
 		api.GET("/referrals", referralH.List)
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { paymentsApi } from '@/api/payments'
 import type { Payment } from '@/api/types'
@@ -62,6 +62,8 @@ interface PaymentRowProps {
 function PaymentRow({ payment, onChecked, onRemove }: PaymentRowProps) {
   const countdown = useCountdown(payment.expires_at)
   const [dismissed, setDismissed] = useState(false)
+  // Track whether the user navigated to the payment URL so we know to touch on return.
+  const wentToPaymentRef = useRef(false)
 
   const checkMutation = useMutation({
     mutationFn: () => paymentsApi.check(payment.id),
@@ -69,6 +71,29 @@ function PaymentRow({ payment, onChecked, onRemove }: PaymentRowProps) {
       onChecked(updated)
     },
   })
+
+  const touchMutation = useMutation({
+    mutationFn: () => paymentsApi.touch(payment.id),
+    onSuccess: (updated) => {
+      onChecked(updated)
+    },
+  })
+
+  // When the tab becomes visible again after the user visited the payment page,
+  // call touch to give them 30 minutes from this moment.
+  useEffect(() => {
+    if (payment.status !== 'PENDING') return
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && wentToPaymentRef.current) {
+        wentToPaymentRef.current = false
+        touchMutation.mutate()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [payment.status, payment.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-remove on terminal states after a short delay so the user sees the result.
   useEffect(() => {
@@ -133,6 +158,7 @@ function PaymentRow({ payment, onChecked, onRemove }: PaymentRowProps) {
             href={payment.redirect_url}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => { wentToPaymentRef.current = true }}
             className="inline-flex items-center gap-1 rounded-lg border border-primary-500/60 px-3 py-1.5 text-xs font-medium text-primary-400 hover:bg-primary-500/10 transition-colors"
           >
             Оплатить ↗
