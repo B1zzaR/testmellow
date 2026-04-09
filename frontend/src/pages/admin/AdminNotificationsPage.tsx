@@ -132,7 +132,7 @@ export function AdminNotificationsPage() {
       </div>
 
       {/* Form Modal */}
-      <Modal isOpen={showForm} onClose={handleCancel} title={editingId ? 'Edit Notification' : 'Create Notification'}>
+      <Modal open={showForm} onClose={handleCancel} title={editingId ? 'Edit Notification' : 'Create Notification'}>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2">Type</label>
