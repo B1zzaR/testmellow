@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { QRCodeSVG } from 'qrcode.react'
 import { subscriptionsApi } from '@/api/subscriptions'
+import { devicesApi } from '@/api/devices'
 import { promoApi } from '@/api/promo'
 import { profileApi } from '@/api/profile'
 import { Card } from '@/components/ui/Card'
@@ -12,6 +13,7 @@ import { subscriptionStatusBadge } from '@/components/ui/Badge'
 import { Icon } from '@/components/ui/Icons'
 import { formatDate, formatRubles, planLabel, daysUntil } from '@/utils/formatters'
 import { PendingPayments } from '@/components/PendingPayments'
+import { DeviceList } from '@/components/DeviceList'
 import type { SubscriptionPlan } from '@/api/types'
 
 function discountedPrice(price: number, percent: number): number {
@@ -104,6 +106,10 @@ export function SubscriptionsPage() {
     queryKey: ['active-discount'],
     queryFn: promoApi.getActiveDiscount,
   })
+  const { data: devicesData } = useQuery({
+    queryKey: ['devices'],
+    queryFn: devicesApi.list,
+  })
   const queryClient = useQueryClient()
   const discount = discountData?.active_discount_percent ?? 0
   const discountCode = discountData?.active_discount_code ?? ''
@@ -193,6 +199,9 @@ export function SubscriptionsPage() {
           <ConnectionBlock />
         </Card>
       )}
+
+      {/* Devices */}
+      {activeSub && devicesData && <DeviceList data={devicesData} />}
 
       {/* Plan selector */}
       <Card title="Выбрать тариф">

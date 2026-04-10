@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { QRCodeSVG } from 'qrcode.react'
 import { profileApi, balanceApi } from '@/api/profile'
 import { subscriptionsApi } from '@/api/subscriptions'
+import { devicesApi } from '@/api/devices'
 import { publicApi } from '@/api/client'
 import { StatCard, Card } from '@/components/ui/Card'
 import { PageSpinner } from '@/components/ui/Spinner'
@@ -12,6 +13,7 @@ import { subscriptionStatusBadge } from '@/components/ui/Badge'
 import { Icon } from '@/components/ui/Icons'
 import { NotificationAlert } from '@/components/NotificationAlert'
 import { PendingPayments } from '@/components/PendingPayments'
+import { DeviceList } from '@/components/DeviceList'
 import { formatDate, formatYAD, daysUntil, planLabel } from '@/utils/formatters'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -124,6 +126,10 @@ export function DashboardPage() {
     queryKey: ['activeNotifications'],
     queryFn: publicApi.getActiveNotifications,
     refetchInterval: 30_000,
+  })
+  const { data: devicesData } = useQuery({
+    queryKey: ['devices'],
+    queryFn: devicesApi.list,
   })
 
   if (profileLoading) return <PageSpinner />
@@ -241,6 +247,9 @@ export function DashboardPage() {
           <ConnectionRow />
         </Card>
       )}
+
+      {/* Devices */}
+      {activeSub && devicesData && <DeviceList data={devicesData} />}
 
       {/* No subscription prompt */}
       {!activeSub && (
