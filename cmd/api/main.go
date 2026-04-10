@@ -58,7 +58,14 @@ func main() {
 
 	// ── External clients ──────────────────────────────────────────────────
 	platClient := platega.NewClient(cfg.Platega, log)
-	remnaClient := remnawave.NewClient(cfg.Remna)
+	remnaClient := remnawave.NewClient(cfg.Remna, log)
+
+	// ── Remnawave connectivity check ──────────────────────────────────────
+	if err := remnaClient.Ping(ctx); err != nil {
+		log.Error("remnawave panel unreachable — subscriptions/connections will fail", zap.Error(err))
+	} else {
+		log.Info("remnawave panel connected", zap.String("url", cfg.Remna.BaseURL))
+	}
 
 	// ── Repositories & services ───────────────────────────────────────────
 	userRepo := dbpkg.NewUserRepo(db)
@@ -109,7 +116,15 @@ func main() {
 
 	// Health check (no auth)
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "ts": time.Now().Unix()})
+		remnaOK := "ok"
+		if err := remnaClient.Ping(c.Request.Context()); err != nil {
+			remnaOK = err.Error()
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"status":    "ok",
+			"ts":        time.Now().Unix(),
+			"remnawave": remnaOK,
+		})
 	})
 
 	// Webhook (no JWT — authenticated by Platega headers)

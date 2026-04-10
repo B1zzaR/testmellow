@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/vpnplatform/internal/config"
 )
@@ -39,13 +42,47 @@ type UpdateUserRequest struct {
 type Client struct {
 	httpClient *http.Client
 	cfg        config.RemnaConfig
+	log        *zap.Logger
 }
 
-func NewClient(cfg config.RemnaConfig) *Client {
+func NewClient(cfg config.RemnaConfig, log *zap.Logger) *Client {
+	// Strip trailing slash to prevent double-slash in URLs.
+	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+
 	return &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		cfg:        cfg,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+			// Do not follow redirects — API calls should never redirect.
+			// If the panel is behind a CDN/proxy that redirects, we want to
+			// know about it immediately rather than silently getting HTML.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		cfg: cfg,
+		log: log,
 	}
+}
+
+// Ping performs a lightweight connectivity check against the Remnawave panel.
+// Returns nil if the panel is reachable and authenticates the API token.
+func (c *Client) Ping(ctx context.Context) error {
+	// GET /api/users is a low-cost endpoint that requires auth.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.BaseURL+"/api/system/health", nil)
+	if err != nil {
+		return fmt.Errorf("remnawave ping: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("remnawave ping: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("remnawave ping: HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 // GetSquadInbounds returns the inbound UUIDs belonging to the configured squad.
@@ -193,39 +230,60 @@ func (c *Client) do(ctx context.Context, method, path string, body, out interfac
 		}
 		bodyReader = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.cfg.BaseURL+path, bodyReader)
+	url := c.cfg.BaseURL + path
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.log.Error("remnawave request failed",
+			zap.String("method", method),
+			zap.String("url", url),
+			zap.Error(err))
 		return err
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
+		c.log.Warn("remnawave error response",
+			zap.String("method", method),
+			zap.String("url", url),
+			zap.Int("status", resp.StatusCode),
+			zap.String("body", string(respBody)))
 		return fmt.Errorf("remnawave: %s %s returned %d: %s", method, path, resp.StatusCode, string(respBody))
 	}
 	if out == nil || len(respBody) == 0 {
 		return nil
 	}
-	// Try direct unmarshal first; if the target field is zero, try the common
-	// Remnawave envelope formats: {"response":{...}} and {"data":{...}}.
-	if err := json.Unmarshal(respBody, out); err != nil {
-		return err
-	}
-	// Check if the result looks empty by trying wrapped variants.
-	// We do this by checking a raw map for an "response" or "data" key.
+	// Remnawave wraps responses in {"response": {...}} envelope.
+	// Try to unwrap first; if no envelope, unmarshal directly.
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(respBody, &envelope); err == nil {
 		for _, key := range []string{"response", "data"} {
 			if inner, ok := envelope[key]; ok {
-				_ = json.Unmarshal(inner, out)
-				break
+				if err := json.Unmarshal(inner, out); err != nil {
+					c.log.Warn("remnawave: failed to decode envelope inner",
+						zap.String("key", key),
+						zap.String("url", url),
+						zap.Error(err))
+					return fmt.Errorf("remnawave decode %s envelope: %w", key, err)
+				}
+				return nil
 			}
 		}
+	}
+	// No envelope — unmarshal directly.
+	if err := json.Unmarshal(respBody, out); err != nil {
+		c.log.Warn("remnawave: failed to decode response",
+			zap.String("url", url),
+			zap.String("body", string(respBody)),
+			zap.Error(err))
+		return fmt.Errorf("remnawave decode response: %w", err)
 	}
 	return nil
 }

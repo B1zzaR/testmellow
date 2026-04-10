@@ -40,7 +40,7 @@ func main() {
 	defer rdb.Close()
 
 	userRepo := dbpkg.NewUserRepo(db)
-	remnaClient := remnawave.NewClient(cfg.Remna)
+	remnaClient := remnawave.NewClient(cfg.Remna, log)
 	platClient := platega.NewClient(cfg.Platega, log)
 	antiEngine := anticheat.NewEngine(rdb, log)
 

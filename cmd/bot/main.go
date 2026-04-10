@@ -43,7 +43,7 @@ func main() {
 
 	userRepo := dbpkg.NewUserRepo(db)
 	platClient := platega.NewClient(cfg.Platega, log)
-	remnaClient := remnawave.NewClient(cfg.Remna)
+	remnaClient := remnawave.NewClient(cfg.Remna, log)
 	antiEngine := anticheat.NewEngine(rdb, log)
 
 	authSvc := service.NewAuthService(userRepo, antiEngine, log, cfg.App.AdminLogin)
@@ -54,9 +54,9 @@ func main() {
 	jwtMgr := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTLHours)
 
 	botCfg := bot.BotConfig{
-		Token:      cfg.Telegram.Token,
-		AdminID:    cfg.Telegram.AdminID,
-		WebAppURL:  cfg.Telegram.WebAppURL,
+		Token:     cfg.Telegram.Token,
+		AdminID:   cfg.Telegram.AdminID,
+		WebAppURL: cfg.Telegram.WebAppURL,
 	}
 	b, err := bot.New(botCfg, userRepo, authSvc, subSvc, ecoSvc, trialSvc, remnaClient, jwtMgr, rdb, log)
 	if err != nil {
