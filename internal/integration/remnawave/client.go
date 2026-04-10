@@ -13,14 +13,10 @@ import (
 )
 
 type CreateUserRequest struct {
-	Username           string       `json:"username"`
-	TrafficLimitBytes  int64        `json:"trafficLimitBytes"`
-	ExpireAt           time.Time    `json:"expireAt"`
-	ActiveUserInbounds []InboundRef `json:"activeUserInbounds"`
-}
-
-type InboundRef struct {
-	UUID string `json:"uuid"`
+	Username             string    `json:"username"`
+	TrafficLimitBytes    int64     `json:"trafficLimitBytes"`
+	ExpireAt             time.Time `json:"expireAt"`
+	ActiveInternalSquads []string  `json:"activeInternalSquads,omitempty"`
 }
 
 type UserResponse struct {
@@ -34,10 +30,10 @@ type UserResponse struct {
 }
 
 type UpdateUserRequest struct {
-	UUID               string       `json:"uuid,omitempty"`
-	ExpireAt           *time.Time   `json:"expireAt,omitempty"`
-	Status             *string      `json:"status,omitempty"`
-	ActiveUserInbounds []InboundRef `json:"activeUserInbounds,omitempty"`
+	UUID                 string     `json:"uuid,omitempty"`
+	ExpireAt             *time.Time `json:"expireAt,omitempty"`
+	Status               *string    `json:"status,omitempty"`
+	ActiveInternalSquads []string   `json:"activeInternalSquads,omitempty"`
 }
 
 type Client struct {
@@ -54,7 +50,7 @@ func NewClient(cfg config.RemnaConfig) *Client {
 
 // GetSquadInbounds returns the inbound UUIDs belonging to the configured squad.
 // Returns nil if no squad UUID is configured.
-func (c *Client) GetSquadInbounds(ctx context.Context) ([]InboundRef, error) {
+func (c *Client) GetSquadInbounds(ctx context.Context) ([]string, error) {
 	if c.cfg.SquadUUID == "" {
 		return nil, nil
 	}
@@ -99,19 +95,19 @@ func (c *Client) GetSquadInbounds(ctx context.Context) ([]InboundRef, error) {
 	}
 	for _, s := range list.InternalSquads {
 		if s.UUID == c.cfg.SquadUUID {
-			refs := make([]InboundRef, len(s.Inbounds))
+			uuids := make([]string, len(s.Inbounds))
 			for i, ib := range s.Inbounds {
-				refs[i] = InboundRef{UUID: ib.UUID}
+				uuids[i] = ib.UUID
 			}
-			return refs, nil
+			return uuids, nil
 		}
 	}
 	return nil, fmt.Errorf("remnawave: squad %q not found", c.cfg.SquadUUID)
 }
 
 func (c *Client) CreateUser(ctx context.Context, username string, expireAt time.Time) (*UserResponse, error) {
-	inbounds, _ := c.GetSquadInbounds(ctx)
-	req := CreateUserRequest{Username: username, TrafficLimitBytes: 0, ExpireAt: expireAt, ActiveUserInbounds: inbounds}
+	squads, _ := c.GetSquadInbounds(ctx)
+	req := CreateUserRequest{Username: username, TrafficLimitBytes: 0, ExpireAt: expireAt, ActiveInternalSquads: squads}
 	var resp UserResponse
 	if err := c.do(ctx, http.MethodPost, "/api/users", req, &resp); err != nil {
 		return nil, fmt.Errorf("remnawave create user: %w", err)
@@ -145,9 +141,9 @@ func (c *Client) GetUserByUsername(ctx context.Context, username string) (*UserR
 	return &resp, nil
 }
 
-// SetUserInbounds updates the user's activeUserInbounds, which assigns squad membership.
-func (c *Client) SetUserInbounds(ctx context.Context, remnaUUID string, inbounds []InboundRef) error {
-	req := UpdateUserRequest{UUID: remnaUUID, ActiveUserInbounds: inbounds}
+// SetUserInbounds updates the user's activeInternalSquads, which assigns squad membership.
+func (c *Client) SetUserInbounds(ctx context.Context, remnaUUID string, squads []string) error {
+	req := UpdateUserRequest{UUID: remnaUUID, ActiveInternalSquads: squads}
 	if err := c.do(ctx, http.MethodPatch, "/api/users", req, nil); err != nil {
 		return fmt.Errorf("remnawave set inbounds: %w", err)
 	}
@@ -173,7 +169,7 @@ func (c *Client) UpdateExpiry(ctx context.Context, remnaUUID string, newExpiry t
 }
 
 func (c *Client) DisableUser(ctx context.Context, remnaUUID string) error {
-	status := "disabled"
+	status := "DISABLED"
 	if err := c.do(ctx, http.MethodPatch, "/api/users", UpdateUserRequest{UUID: remnaUUID, Status: &status}, nil); err != nil {
 		return fmt.Errorf("remnawave disable user: %w", err)
 	}
@@ -181,7 +177,7 @@ func (c *Client) DisableUser(ctx context.Context, remnaUUID string) error {
 }
 
 func (c *Client) EnableUser(ctx context.Context, remnaUUID string) error {
-	status := "active"
+	status := "ACTIVE"
 	if err := c.do(ctx, http.MethodPatch, "/api/users", UpdateUserRequest{UUID: remnaUUID, Status: &status}, nil); err != nil {
 		return fmt.Errorf("remnawave enable user: %w", err)
 	}

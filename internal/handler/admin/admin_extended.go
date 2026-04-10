@@ -258,11 +258,20 @@ func (h *Handler) AssignSubscription(c *gin.Context) {
 		if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
 			remnaUser, err := h.remna.CreateUser(c.Request.Context(), user.ID.String(), newExpiry)
 			if err != nil {
-				c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-				return
+				// Fallback: if the user already exists in Remnawave, recover UUID.
+				existing, lookupErr := h.remna.GetUserByUsername(c.Request.Context(), user.ID.String())
+				if lookupErr != nil || existing == nil {
+					c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+					return
+				}
+				remnaUUID = existing.UUID
+				_ = h.repo.UpdateRemnaUUID(c.Request.Context(), user.ID, remnaUUID)
+				_ = h.remna.UpdateExpiry(c.Request.Context(), remnaUUID, newExpiry)
+				_ = h.remna.EnableUser(c.Request.Context(), remnaUUID)
+			} else {
+				remnaUUID = remnaUser.UUID
+				_ = h.repo.UpdateRemnaUUID(c.Request.Context(), user.ID, remnaUUID)
 			}
-			remnaUUID = remnaUser.UUID
-			_ = h.repo.UpdateRemnaUUID(c.Request.Context(), user.ID, remnaUUID)
 		} else {
 			remnaUUID = *user.RemnaUserUUID
 			if err := h.remna.UpdateExpiry(c.Request.Context(), remnaUUID, newExpiry); err != nil {

@@ -359,12 +359,24 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
 		remnaUser, err := w.remna.CreateUser(ctx, userID.String(), newExpiry)
 		if err != nil {
-			return fmt.Errorf("create remna user: %w", err)
+			// Fallback: if the user already exists in Remnawave (e.g. remna_user_uuid
+			// was lost from DB), look them up by username and recover.
+			existing, lookupErr := w.remna.GetUserByUsername(ctx, userID.String())
+			if lookupErr != nil || existing == nil {
+				return fmt.Errorf("create remna user: %w", err)
+			}
+			w.log.Info("recovered existing remnawave user",
+				zap.String("user_id", userID.String()),
+				zap.String("remna_uuid", existing.UUID))
+			remnaUser = existing
 		}
 		remnaUUID = remnaUser.UUID
 		if err := w.repo.UpdateRemnaUUID(ctx, userID, remnaUUID); err != nil {
 			w.log.Error("update remna uuid", zap.Error(err))
 		}
+		// Ensure the user is enabled and expiry is correct.
+		_ = w.remna.UpdateExpiry(ctx, remnaUUID, newExpiry)
+		_ = w.remna.EnableUser(ctx, remnaUUID)
 	} else {
 		remnaUUID = *user.RemnaUserUUID
 		if err := w.remna.UpdateExpiry(ctx, remnaUUID, newExpiry); err != nil {

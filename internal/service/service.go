@@ -719,8 +719,17 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
 		remnaUser, err := s.remna.CreateUser(ctx, userID.String(), newExpiry)
 		if err != nil {
-			s.log.Error("remnawave create user failed after YAD deduction — manual retry needed",
-				zap.String("user_id", userID.String()), zap.Error(err))
+			// Fallback: if the user already exists in Remnawave (e.g. remna_user_uuid
+			// was lost from DB), look them up by username and recover.
+			existing, lookupErr := s.remna.GetUserByUsername(ctx, userID.String())
+			if lookupErr != nil || existing == nil {
+				s.log.Error("remnawave create user failed after YAD deduction — manual retry needed",
+					zap.String("user_id", userID.String()), zap.Error(err))
+			} else {
+				_ = s.repo.UpdateRemnaUUID(ctx, userID, existing.UUID)
+				_ = s.remna.UpdateExpiry(ctx, existing.UUID, newExpiry)
+				_ = s.remna.EnableUser(ctx, existing.UUID)
+			}
 		} else {
 			_ = s.repo.UpdateRemnaUUID(ctx, userID, remnaUser.UUID)
 		}
@@ -811,8 +820,17 @@ func (s *TrialService) ActivateTrial(ctx context.Context, userID uuid.UUID) (*do
 	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
 		remnaUser, err := s.remna.CreateUser(ctx, userID.String(), expiry)
 		if err != nil {
-			s.log.Error("remnawave create user failed after trial commit — manual activation needed",
-				zap.String("user_id", userID.String()), zap.Error(err))
+			// Fallback: if the user already exists in Remnawave, recover UUID.
+			existing, lookupErr := s.remna.GetUserByUsername(ctx, userID.String())
+			if lookupErr != nil || existing == nil {
+				s.log.Error("remnawave create user failed after trial commit — manual activation needed",
+					zap.String("user_id", userID.String()), zap.Error(err))
+			} else {
+				_ = s.repo.UpdateRemnaUUID(ctx, userID, existing.UUID)
+				_ = s.repo.UpdateSubscriptionRemna(ctx, sub.ID, existing.UUID)
+				_ = s.remna.UpdateExpiry(ctx, existing.UUID, expiry)
+				_ = s.remna.EnableUser(ctx, existing.UUID)
+			}
 		} else {
 			_ = s.repo.UpdateRemnaUUID(ctx, userID, remnaUser.UUID)
 			_ = s.repo.UpdateSubscriptionRemna(ctx, sub.ID, remnaUser.UUID)
@@ -820,6 +838,11 @@ func (s *TrialService) ActivateTrial(ctx context.Context, userID uuid.UUID) (*do
 	} else {
 		if err := s.remna.UpdateExpiry(ctx, remnaUUID, expiry); err != nil {
 			s.log.Error("remnawave update expiry failed after trial commit",
+				zap.String("user_id", userID.String()), zap.Error(err))
+		}
+		// Re-enable user in case they were previously disabled (expired subscription).
+		if err := s.remna.EnableUser(ctx, remnaUUID); err != nil {
+			s.log.Warn("remnawave enable user failed after trial commit",
 				zap.String("user_id", userID.String()), zap.Error(err))
 		}
 	}
