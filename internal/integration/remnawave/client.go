@@ -85,65 +85,12 @@ func (c *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
-// GetSquadInbounds returns the inbound UUIDs belonging to the configured squad.
-// Returns nil if no squad UUID is configured.
-func (c *Client) GetSquadInbounds(ctx context.Context) ([]string, error) {
-	if c.cfg.SquadUUID == "" {
-		return nil, nil
-	}
-	type squadInbound struct {
-		UUID string `json:"uuid"`
-	}
-	type squadEntry struct {
-		UUID     string         `json:"uuid"`
-		Inbounds []squadInbound `json:"inbounds"`
-	}
-	type squadList struct {
-		Total          int          `json:"total"`
-		InternalSquads []squadEntry `json:"internalSquads"`
-	}
-	var raw struct {
-		Response *squadList `json:"response"`
-		Data     *squadList `json:"data"`
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.BaseURL+"/api/internal-squads", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("remnawave: GET /api/internal-squads returned %d", resp.StatusCode)
-	}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("remnawave get squads decode: %w", err)
-	}
-	list := raw.Response
-	if list == nil {
-		list = raw.Data
-	}
-	if list == nil {
-		return nil, fmt.Errorf("remnawave: empty squads response")
-	}
-	for _, s := range list.InternalSquads {
-		if s.UUID == c.cfg.SquadUUID {
-			uuids := make([]string, len(s.Inbounds))
-			for i, ib := range s.Inbounds {
-				uuids[i] = ib.UUID
-			}
-			return uuids, nil
-		}
-	}
-	return nil, fmt.Errorf("remnawave: squad %q not found", c.cfg.SquadUUID)
-}
-
 func (c *Client) CreateUser(ctx context.Context, username string, expireAt time.Time) (*UserResponse, error) {
-	squads, _ := c.GetSquadInbounds(ctx)
+	// activeInternalSquads expects SQUAD UUIDs, not inbound UUIDs.
+	var squads []string
+	if c.cfg.SquadUUID != "" {
+		squads = []string{c.cfg.SquadUUID}
+	}
 	req := CreateUserRequest{Username: username, TrafficLimitBytes: 0, ExpireAt: expireAt, ActiveInternalSquads: squads}
 	var resp UserResponse
 	if err := c.do(ctx, http.MethodPost, "/api/users", req, &resp); err != nil {
@@ -176,15 +123,6 @@ func (c *Client) GetUserByUsername(ctx context.Context, username string) (*UserR
 		return nil, fmt.Errorf("remnawave: user %q not found", username)
 	}
 	return &resp, nil
-}
-
-// SetUserInbounds updates the user's activeInternalSquads, which assigns squad membership.
-func (c *Client) SetUserInbounds(ctx context.Context, remnaUUID string, squads []string) error {
-	req := UpdateUserRequest{UUID: remnaUUID, ActiveInternalSquads: squads}
-	if err := c.do(ctx, http.MethodPatch, "/api/users", req, nil); err != nil {
-		return fmt.Errorf("remnawave set inbounds: %w", err)
-	}
-	return nil
 }
 
 // AddAllUsersToSquad triggers Remnawave to add ALL users to the given squad (async event).
