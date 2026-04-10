@@ -11,7 +11,7 @@ import { Alert } from '@/components/ui/Alert'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { subscriptionStatusBadge } from '@/components/ui/Badge'
 import { Icon } from '@/components/ui/Icons'
-import { formatDate, formatRubles, planLabel, daysUntil } from '@/utils/formatters'
+import { formatDate, formatRubles, planLabel, daysUntil, formatBytes } from '@/utils/formatters'
 import { PendingPayments } from '@/components/PendingPayments'
 import { DeviceList } from '@/components/DeviceList'
 import type { SubscriptionPlan } from '@/api/types'
@@ -110,6 +110,10 @@ export function SubscriptionsPage() {
     queryKey: ['devices'],
     queryFn: devicesApi.list,
   })
+  const { data: trafficData } = useQuery({
+    queryKey: ['traffic'],
+    queryFn: profileApi.getTraffic,
+  })
   const queryClient = useQueryClient()
   const discount = discountData?.active_discount_percent ?? 0
   const discountCode = discountData?.active_discount_code ?? ''
@@ -196,6 +200,37 @@ export function SubscriptionsPage() {
               <div className="mt-1">{subscriptionStatusBadge(activeSub.status)}</div>
             </div>
           </div>
+
+          {/* Traffic usage */}
+          {trafficData && (
+            <div className="mt-5 border-t border-gray-100 dark:border-surface-700 pt-4">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-600">
+                Трафик
+              </p>
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm font-semibold text-gray-900 dark:text-slate-100">
+                  {formatBytes(trafficData.used_bytes)}
+                </span>
+                {trafficData.limit_bytes > 0 && (
+                  <span className="text-xs text-gray-400 dark:text-slate-500">
+                    / {formatBytes(trafficData.limit_bytes)}
+                  </span>
+                )}
+                {trafficData.limit_bytes === 0 && (
+                  <span className="text-xs text-gray-400 dark:text-slate-500">/ ∞</span>
+                )}
+              </div>
+              {trafficData.limit_bytes > 0 && (
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-surface-700">
+                  <div
+                    className="h-full rounded-full bg-primary-500 transition-all"
+                    style={{ width: `${Math.min(100, (trafficData.used_bytes / trafficData.limit_bytes) * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           <ConnectionBlock />
         </Card>
       )}

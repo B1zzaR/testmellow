@@ -313,7 +313,7 @@ type AdminAuditLog struct {
 // ─── Device ───────────────────────────────────────────────────────────────────
 
 const DeviceMaxPerUser = 4
-const DeviceInactiveDays = 3
+const DeviceInactiveDays = 2
 
 type Device struct {
 	ID         uuid.UUID `db:"id"          json:"id"`

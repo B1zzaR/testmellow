@@ -66,3 +66,14 @@ export function daysUntil(iso: string): number {
   const diff = new Date(iso).getTime() - Date.now()
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
 }
+
+/**
+ * Format bytes to human-readable string (KB, MB, GB, TB).
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes <= 0) return '0 Б'
+  const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ']
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const val = bytes / Math.pow(1024, i)
+  return `${val.toFixed(i === 0 ? 0 : 2)} ${units[i]}`
+}
