@@ -76,7 +76,7 @@ func main() {
 	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log)
 	ecoSvc := service.NewEconomyService(userRepo, remnaClient, antiEngine, log)
 	trialSvc := service.NewTrialService(userRepo, remnaClient, log)
-	deviceSvc := service.NewDeviceService(deviceRepo, userRepo, log)
+	deviceSvc := service.NewDeviceService(deviceRepo, userRepo, remnaClient, log)
 
 	// ── JWT ───────────────────────────────────────────────────────────────
 	jwtMgr := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTLHours)

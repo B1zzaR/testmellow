@@ -39,6 +39,28 @@ type UpdateUserRequest struct {
 	ActiveInternalSquads []string   `json:"activeInternalSquads,omitempty"`
 }
 
+// HwidDevice represents a single HWID device from the Remnawave panel.
+type HwidDevice struct {
+	Hwid        string  `json:"hwid"`
+	UserUUID    string  `json:"userUuid"`
+	Platform    *string `json:"platform"`
+	OsVersion   *string `json:"osVersion"`
+	DeviceModel *string `json:"deviceModel"`
+	UserAgent   *string `json:"userAgent"`
+	CreatedAt   string  `json:"createdAt"`
+	UpdatedAt   string  `json:"updatedAt"`
+}
+
+type HwidDevicesResponse struct {
+	Total   int          `json:"total"`
+	Devices []HwidDevice `json:"devices"`
+}
+
+type DeleteHwidDeviceRequest struct {
+	Hwid     string `json:"hwid"`
+	UserUUID string `json:"userUuid"`
+}
+
 type Client struct {
 	httpClient *http.Client
 	cfg        config.RemnaConfig
@@ -155,6 +177,24 @@ func (c *Client) EnableUser(ctx context.Context, remnaUUID string) error {
 	status := "ACTIVE"
 	if err := c.do(ctx, http.MethodPatch, "/api/users", UpdateUserRequest{UUID: remnaUUID, Status: &status}, nil); err != nil {
 		return fmt.Errorf("remnawave enable user: %w", err)
+	}
+	return nil
+}
+
+// GetUserHwidDevices returns the list of HWID-tracked devices for the given Remnawave user.
+func (c *Client) GetUserHwidDevices(ctx context.Context, remnaUUID string) (*HwidDevicesResponse, error) {
+	var resp HwidDevicesResponse
+	if err := c.do(ctx, http.MethodGet, "/api/hwid/devices/"+remnaUUID, nil, &resp); err != nil {
+		return nil, fmt.Errorf("remnawave get user hwid devices: %w", err)
+	}
+	return &resp, nil
+}
+
+// DeleteUserHwidDevice removes a specific HWID device for a user.
+func (c *Client) DeleteUserHwidDevice(ctx context.Context, hwid, remnaUUID string) error {
+	req := DeleteHwidDeviceRequest{Hwid: hwid, UserUUID: remnaUUID}
+	if err := c.do(ctx, http.MethodPost, "/api/hwid/devices/delete", req, nil); err != nil {
+		return fmt.Errorf("remnawave delete user hwid device: %w", err)
 	}
 	return nil
 }

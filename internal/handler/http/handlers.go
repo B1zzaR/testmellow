@@ -1115,18 +1115,22 @@ func (h *DeviceHandler) List(c *gin.Context) {
 	}
 
 	type deviceResponse struct {
-		ID         uuid.UUID `json:"id"`
-		DeviceName string    `json:"device_name"`
-		LastActive string    `json:"last_active"`
-		IsActive   bool      `json:"is_active"`
-		IsInactive bool      `json:"is_inactive"`
+		ID         string `json:"id"`
+		DeviceName string `json:"device_name"`
+		LastActive string `json:"last_active"`
+		IsActive   bool   `json:"is_active"`
+		IsInactive bool   `json:"is_inactive"`
 	}
 
 	result := make([]deviceResponse, 0, len(devices))
 	activeCount := 0
 	for _, d := range devices {
+		id := d.HwidID
+		if id == "" {
+			id = d.ID.String()
+		}
 		result = append(result, deviceResponse{
-			ID:         d.ID,
+			ID:         id,
 			DeviceName: d.DeviceName,
 			LastActive: d.LastActive.Format(time.RFC3339),
 			IsActive:   d.IsActive,
@@ -1148,13 +1152,13 @@ func (h *DeviceHandler) List(c *gin.Context) {
 func (h *DeviceHandler) Disconnect(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 
-	deviceID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
+	hwidID := c.Param("id")
+	if hwidID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "некорректный ID устройства"})
 		return
 	}
 
-	if err := h.svc.DisconnectDevice(c.Request.Context(), userID, deviceID); err != nil {
+	if err := h.svc.DisconnectDevice(c.Request.Context(), userID, hwidID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

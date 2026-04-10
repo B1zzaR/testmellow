@@ -866,87 +866,81 @@ func generateReferralCode() (string, error) {
 type DeviceService struct {
 	devices *postgres.DeviceRepo
 	users   *postgres.UserRepo
+	remna   *remnawave.Client
 	log     *zap.Logger
 }
 
-func NewDeviceService(devices *postgres.DeviceRepo, users *postgres.UserRepo, log *zap.Logger) *DeviceService {
-	return &DeviceService{devices: devices, users: users, log: log}
+func NewDeviceService(devices *postgres.DeviceRepo, users *postgres.UserRepo, remna *remnawave.Client, log *zap.Logger) *DeviceService {
+	return &DeviceService{devices: devices, users: users, remna: remna, log: log}
 }
 
-// ListDevices returns all active devices for the requesting user.
+// ListDevices fetches the user's connected devices from the Remnawave HWID system.
+// Falls back to local DB if the user has no remna_user_uuid.
 func (s *DeviceService) ListDevices(ctx context.Context, userID uuid.UUID) ([]*domain.Device, error) {
-	return s.devices.ListByUser(ctx, userID)
-}
-
-// RegisterDevice adds a new device for the user, enforcing the 4-device limit.
-// If deviceID already exists the record is touched (last_active updated).
-// Returns the upserted device.
-func (s *DeviceService) RegisterDevice(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, deviceName string) (*domain.Device, error) {
-	// Check if device already tracked for this user
-	existing, err := s.devices.GetByID(ctx, deviceID)
+	user, err := s.users.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil && existing.UserID == userID {
-		// Device known — just refresh activity
-		if err := s.devices.Touch(ctx, deviceID); err != nil {
-			return nil, err
+	if user == nil || user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
+		// No Remnawave user — return empty list.
+		return nil, nil
+	}
+
+	resp, err := s.remna.GetUserHwidDevices(ctx, *user.RemnaUserUUID)
+	if err != nil {
+		s.log.Warn("failed to fetch HWID devices from Remnawave, falling back to local DB",
+			zap.String("user_id", userID.String()),
+			zap.Error(err))
+		return s.devices.ListByUser(ctx, userID)
+	}
+
+	devices := make([]*domain.Device, 0, len(resp.Devices))
+	for _, d := range resp.Devices {
+		name := "Unknown"
+		if d.DeviceModel != nil && *d.DeviceModel != "" {
+			name = *d.DeviceModel
+		} else if d.Platform != nil && *d.Platform != "" {
+			name = *d.Platform
 		}
-		existing.IsActive = true
-		existing.LastActive = time.Now().UTC()
-		return existing, nil
-	}
+		if d.OsVersion != nil && *d.OsVersion != "" {
+			name += " (" + *d.OsVersion + ")"
+		}
 
-	// New device — enforce limit
-	count, err := s.devices.CountActive(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	if count >= domain.DeviceMaxPerUser {
-		return nil, fmt.Errorf("достигнут лимит устройств (%d)", domain.DeviceMaxPerUser)
-	}
+		createdAt, _ := time.Parse(time.RFC3339, d.CreatedAt)
+		updatedAt, _ := time.Parse(time.RFC3339, d.UpdatedAt)
+		if updatedAt.IsZero() {
+			updatedAt = createdAt
+		}
 
-	now := time.Now().UTC()
-	d := &domain.Device{
-		ID:         deviceID,
-		UserID:     userID,
-		DeviceName: deviceName,
-		LastActive: now,
-		CreatedAt:  now,
-		IsActive:   true,
+		devices = append(devices, &domain.Device{
+			ID:         uuid.NewSHA1(uuid.NameSpaceURL, []byte(d.Hwid)),
+			UserID:     userID,
+			DeviceName: name,
+			LastActive: updatedAt,
+			CreatedAt:  createdAt,
+			IsActive:   true,
+			HwidID:     d.Hwid,
+		})
 	}
-	if err := s.devices.Upsert(ctx, d); err != nil {
-		return nil, err
-	}
-	s.log.Info("device registered", zap.String("user_id", userID.String()), zap.String("device_id", deviceID.String()))
-	return d, nil
+	return devices, nil
 }
 
-// DisconnectDevice deactivates a device. Only allowed when device is inactive.
-// Validates that the device belongs to the requesting user.
-func (s *DeviceService) DisconnectDevice(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) error {
-	device, err := s.devices.GetByID(ctx, deviceID)
+// DisconnectDevice removes a device via the Remnawave HWID API.
+func (s *DeviceService) DisconnectDevice(ctx context.Context, userID uuid.UUID, hwidID string) error {
+	user, err := s.users.GetByID(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if device == nil {
+	if user == nil || user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
 		return errors.New("устройство не найдено")
 	}
-	if device.UserID != userID {
-		return errors.New("доступ запрещён")
+
+	if err := s.remna.DeleteUserHwidDevice(ctx, hwidID, *user.RemnaUserUUID); err != nil {
+		return fmt.Errorf("не удалось отключить устройство: %w", err)
 	}
-	if !device.IsActive {
-		return errors.New("устройство уже отключено")
-	}
-	if !device.IsInactive() {
-		return errors.New("нельзя отключить активное устройство — оно было в сети менее 3 дней назад")
-	}
-	if err := s.devices.Disconnect(ctx, deviceID); err != nil {
-		return err
-	}
-	s.log.Info("device disconnected",
+	s.log.Info("device disconnected via Remnawave",
 		zap.String("user_id", userID.String()),
-		zap.String("device_id", deviceID.String()),
+		zap.String("hwid", hwidID),
 	)
 	return nil
 }

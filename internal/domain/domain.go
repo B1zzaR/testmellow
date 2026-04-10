@@ -322,6 +322,7 @@ type Device struct {
 	LastActive time.Time `db:"last_active" json:"last_active"`
 	CreatedAt  time.Time `db:"created_at"  json:"created_at"`
 	IsActive   bool      `db:"is_active"   json:"is_active"`
+	HwidID     string    `db:"-"           json:"-"` // Remnawave HWID identifier (not persisted)
 }
 
 func (d *Device) IsInactive() bool {
