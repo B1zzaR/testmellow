@@ -9,6 +9,17 @@ import { Icon } from '@/components/ui/Icons'
 import { formatDateTime } from '@/utils/formatters'
 import type { Device, DeviceListResponse } from '@/api/types'
 
+function timeUntilDeletion(canDeleteAfter: string): string | null {
+  const diff = new Date(canDeleteAfter).getTime() - Date.now()
+  if (diff <= 0) return null // already can delete
+  const hours = Math.ceil(diff / (1000 * 60 * 60))
+  if (hours >= 24) {
+    const days = Math.ceil(hours / 24)
+    return `${days} дн.`
+  }
+  return `${hours} ч.`
+}
+
 interface DeviceListProps {
   data: DeviceListResponse
 }
@@ -85,6 +96,9 @@ export function DeviceList({ data }: DeviceListProps) {
         <p className="text-sm text-gray-400 dark:text-slate-500">Нет подключённых устройств</p>
       ) : (
         <div className="space-y-4">
+          <p className="text-xs text-gray-400 dark:text-slate-600">
+            Устройство можно удалить после 2 дней неактивности, чтобы привязать новое.
+          </p>
           {/* Active devices */}
           {activeDevices.length > 0 && (
             <div className="space-y-2">
@@ -138,6 +152,7 @@ interface DeviceRowProps {
 
 function DeviceRow({ device, onDisconnect, loading }: DeviceRowProps) {
   const inactive = device.is_inactive
+  const remaining = timeUntilDeletion(device.can_delete_after)
 
   return (
     <div
@@ -164,6 +179,16 @@ function DeviceRow({ device, onDisconnect, loading }: DeviceRowProps) {
           <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">
             Последняя активность: {formatDateTime(device.last_active)}
           </p>
+          {!inactive && remaining && (
+            <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-600">
+              Удаление доступно через {remaining}
+            </p>
+          )}
+          {inactive && (
+            <p className="mt-0.5 text-xs text-primary-500">
+              Можно удалить
+            </p>
+          )}
         </div>
       </div>
 

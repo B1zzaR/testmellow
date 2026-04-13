@@ -20,8 +20,8 @@ export const profileApi = {
     return res.data
   },
 
-  setTelegramID: async (telegramID: number | null): Promise<{ message: string; merged: boolean; transferred_yad?: number; transferred_subs?: number }> => {
-    const res = await apiClient.put<{ message: string; merged: boolean; transferred_yad?: number; transferred_subs?: number }>('/api/profile/telegram', { telegram_id: telegramID })
+  setTelegramID: async (telegramID: number | null, password?: string): Promise<{ message: string; merged: boolean; transferred_yad?: number; transferred_subs?: number }> => {
+    const res = await apiClient.put<{ message: string; merged: boolean; transferred_yad?: number; transferred_subs?: number }>('/api/profile/telegram', { telegram_id: telegramID, password: password ?? '' })
     return res.data
   },
 

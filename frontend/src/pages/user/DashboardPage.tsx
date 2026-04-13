@@ -239,7 +239,7 @@ export function DashboardPage() {
           {trafficData && (
             <div className="mt-3 border-t border-gray-100 dark:border-surface-700 pt-3">
               <p className="text-xs text-gray-500 dark:text-slate-500">
-                Израсходовано: <span className="font-medium">{formatBytes(trafficData.used_bytes)}</span>
+                Трафик: <span className="font-medium">{formatBytes(trafficData.used_bytes)}</span>
               </p>
             </div>
           )}

@@ -387,11 +387,14 @@ func (h *ProfileHandler) ChangePassword(c *gin.Context) {
 // PUT /api/profile/telegram
 // This endpoint only allows UNLINKING (sending null telegram_id).
 // Linking is performed exclusively via the Telegram bot /link CODE flow (C-1).
+// Unlinking requires the current password to prevent attackers with a stolen
+// session from disabling Telegram-based password recovery.
 func (h *ProfileHandler) UpdateTelegram(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 
 	var req struct {
 		TelegramID *int64 `json:"telegram_id"`
+		Password   string `json:"password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -402,6 +405,22 @@ func (h *ProfileHandler) UpdateTelegram(c *gin.Context) {
 	// Telegram linking must go through the verified bot flow.
 	if req.TelegramID != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "привязка Telegram возможна только через бот"})
+		return
+	}
+
+	// Require password to unlink Telegram — protects password recovery channel.
+	if req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "для отвязки Telegram необходимо указать пароль"})
+		return
+	}
+
+	user, err := h.repo.GetByID(c.Request.Context(), userID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
+		return
+	}
+	if user.PasswordHash == nil || !password.Verify(*user.PasswordHash, req.Password) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "неверный пароль"})
 		return
 	}
 
@@ -433,7 +452,7 @@ func (h *ProfileHandler) GetTraffic(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"used_bytes":  remnaUser.UsedTrafficBytes,
+		"used_bytes":  remnaUser.UserTraffic.UsedTrafficBytes,
 		"limit_bytes": remnaUser.TrafficLimitBytes,
 	})
 }
@@ -1115,11 +1134,12 @@ func (h *DeviceHandler) List(c *gin.Context) {
 	}
 
 	type deviceResponse struct {
-		ID         string `json:"id"`
-		DeviceName string `json:"device_name"`
-		LastActive string `json:"last_active"`
-		IsActive   bool   `json:"is_active"`
-		IsInactive bool   `json:"is_inactive"`
+		ID             string `json:"id"`
+		DeviceName     string `json:"device_name"`
+		LastActive     string `json:"last_active"`
+		IsActive       bool   `json:"is_active"`
+		IsInactive     bool   `json:"is_inactive"`
+		CanDeleteAfter string `json:"can_delete_after"`
 	}
 
 	result := make([]deviceResponse, 0, len(devices))
@@ -1129,12 +1149,14 @@ func (h *DeviceHandler) List(c *gin.Context) {
 		if id == "" {
 			id = d.ID.String()
 		}
+		canDeleteAfter := d.LastActive.Add(time.Duration(domain.DeviceInactiveDays) * 24 * time.Hour)
 		result = append(result, deviceResponse{
-			ID:         id,
-			DeviceName: d.DeviceName,
-			LastActive: d.LastActive.Format(time.RFC3339),
-			IsActive:   d.IsActive,
-			IsInactive: d.IsInactive(),
+			ID:             id,
+			DeviceName:     d.DeviceName,
+			LastActive:     d.LastActive.Format(time.RFC3339),
+			IsActive:       d.IsActive,
+			IsInactive:     d.IsInactive(),
+			CanDeleteAfter: canDeleteAfter.Format(time.RFC3339),
 		})
 		if d.IsActive {
 			activeCount++

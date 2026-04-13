@@ -16,12 +16,16 @@ function TelegramSection() {
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const [linkCode, setLinkCode] = useState<{ code: string; bot_username: string } | null>(null)
   const [copied, setCopied] = useState(false)
+  const [unlinkPassword, setUnlinkPassword] = useState('')
+  const [showUnlinkForm, setShowUnlinkForm] = useState(false)
 
   const unlinkMutation = useMutation({
-    mutationFn: () => profileApi.setTelegramID(null),
+    mutationFn: () => profileApi.setTelegramID(null, unlinkPassword),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['profile'] })
       setFlash({ type: 'success', msg: 'Telegram отвязан' })
+      setUnlinkPassword('')
+      setShowUnlinkForm(false)
     },
     onError: (e: Error) => setFlash({ type: 'error', msg: e.message }),
   })
@@ -73,13 +77,50 @@ function TelegramSection() {
               </p>
             </div>
           </div>
-          <Button
-            variant="secondary"
-            onClick={() => { setFlash(null); unlinkMutation.mutate() }}
-            loading={unlinkMutation.isPending}
-          >
-            Отвязать Telegram
-          </Button>
+          <p className="text-xs text-gray-400 dark:text-slate-600">
+            🔑 Привязанный Telegram позволяет восстановить пароль через бота командой /resetpassword
+          </p>
+          {showUnlinkForm ? (
+            <div className="space-y-3">
+              <Input
+                label="Пароль для подтверждения"
+                type="password"
+                value={unlinkPassword}
+                onChange={(e) => setUnlinkPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setFlash(null)
+                    if (!unlinkPassword) {
+                      setFlash({ type: 'error', msg: 'Введите пароль для подтверждения' })
+                      return
+                    }
+                    unlinkMutation.mutate()
+                  }}
+                  loading={unlinkMutation.isPending}
+                >
+                  Подтвердить отвязку
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => { setShowUnlinkForm(false); setUnlinkPassword(''); setFlash(null) }}
+                >
+                  Отмена
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button
+              variant="secondary"
+              onClick={() => { setFlash(null); setShowUnlinkForm(true) }}
+            >
+              Отвязать Telegram
+            </Button>
+          )}
         </div>
       ) : linkCode ? (
         <div className="space-y-3">
@@ -150,6 +191,9 @@ function TelegramSection() {
               @mellowpn_bot
             </a>
             , и аккаунты свяжутся автоматически.
+          </p>
+          <p className="text-xs text-gray-400 dark:text-slate-600">
+            🔑 После привязки вы сможете восстановить пароль через бота командой /resetpassword
           </p>
         </div>
       )}

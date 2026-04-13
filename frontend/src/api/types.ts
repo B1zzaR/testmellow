@@ -128,6 +128,7 @@ export interface Device {
   last_active: string
   is_active: boolean
   is_inactive: boolean
+  can_delete_after: string
 }
 
 export interface DeviceListResponse {

@@ -22,14 +22,20 @@ type CreateUserRequest struct {
 	ActiveInternalSquads []string  `json:"activeInternalSquads,omitempty"`
 }
 
+// UserTraffic holds per-user traffic counters returned inside the user response.
+type UserTraffic struct {
+	UsedTrafficBytes         int64 `json:"usedTrafficBytes"`
+	LifetimeUsedTrafficBytes int64 `json:"lifetimeUsedTrafficBytes"`
+}
+
 type UserResponse struct {
-	UUID              string    `json:"uuid"`
-	Username          string    `json:"username"`
-	Status            string    `json:"status"`
-	ExpireAt          time.Time `json:"expireAt"`
-	SubscribeURL      string    `json:"subscriptionUrl"`
-	UsedTrafficBytes  int64     `json:"usedTraffic"`
-	TrafficLimitBytes int64     `json:"trafficLimitBytes"`
+	UUID              string      `json:"uuid"`
+	Username          string      `json:"username"`
+	Status            string      `json:"status"`
+	ExpireAt          time.Time   `json:"expireAt"`
+	SubscribeURL      string      `json:"subscriptionUrl"`
+	TrafficLimitBytes int64       `json:"trafficLimitBytes"`
+	UserTraffic       UserTraffic `json:"userTraffic"`
 }
 
 type UpdateUserRequest struct {

@@ -82,6 +82,17 @@ export function LoginPage() {
               Зарегистрироваться
             </Link>
           </p>
+          <p className="mt-3 text-center text-sm text-gray-500 dark:text-slate-500">
+            Забыли пароль?{' '}
+            <a
+              href="https://t.me/mellowpn_bot"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-primary-500 hover:text-primary-400 transition-colors"
+            >
+              Восстановите через Telegram-бота
+            </a>
+          </p>
         </div>
 
         <p className="mt-6 text-center text-xs text-gray-400 dark:text-slate-600">

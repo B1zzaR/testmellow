@@ -54,8 +54,8 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 		return nil, errors.New("пароль должен содержать не менее 8 символов")
 	}
 
-	// Rate limit registration by IP
-	if err := s.anti.CheckIPRateLimit(ctx, input.IP, "register", 5, time.Hour); err != nil {
+	// Rate limit registration by IP (max 3 per hour)
+	if err := s.anti.CheckIPRateLimit(ctx, input.IP, "register", 3, time.Hour); err != nil {
 		return nil, err
 	}
 
@@ -71,6 +71,19 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 	newUserID := uuid.New()
 	sameIPCount, _ := s.repo.CountUsersFromIP(ctx, input.IP, newUserID)
 	sameFPCount, _ := s.repo.CountUsersFromFingerprint(ctx, input.DeviceFingerprint, newUserID)
+
+	// Hard block: max 3 accounts per IP, max 2 per device fingerprint
+	if sameIPCount >= 3 {
+		s.log.Warn("registration blocked: too many accounts from IP",
+			zap.String("ip", input.IP), zap.Int("count", sameIPCount))
+		return nil, errors.New("превышен лимит регистраций")
+	}
+	if input.DeviceFingerprint != "" && sameFPCount >= 2 {
+		s.log.Warn("registration blocked: too many accounts from fingerprint",
+			zap.String("fp", input.DeviceFingerprint), zap.Int("count", sameFPCount))
+		return nil, errors.New("превышен лимит регистраций")
+	}
+
 	riskDelta := s.anti.ScopeRegistrationRisk(ctx, input.IP, input.DeviceFingerprint, sameIPCount, sameFPCount)
 
 	hash, err := password.Hash(input.Password)
@@ -336,14 +349,50 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 	return platResp.Redirect, payment, nil
 }
 
-// GetUserSubscriptions returns all subscriptions for a user
+// GetUserSubscriptions returns all subscriptions for a user.
+// For the active subscription the expiry date is refreshed from the
+// Remnawave panel so the UI always shows the authoritative value.
 func (s *SubscriptionService) GetUserSubscriptions(ctx context.Context, userID uuid.UUID) ([]*domain.Subscription, error) {
-	return s.repo.ListSubscriptions(ctx, userID)
+	subs, err := s.repo.ListSubscriptions(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try to fetch the authoritative expiry from Remnawave.
+	user, uErr := s.repo.GetByID(ctx, userID)
+	if uErr == nil && user != nil && user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
+		remnaUser, rErr := s.remna.GetUser(ctx, *user.RemnaUserUUID)
+		if rErr == nil && remnaUser != nil {
+			for _, sub := range subs {
+				if sub.Status == domain.SubStatusActive || sub.Status == domain.SubStatusTrial {
+					if !remnaUser.ExpireAt.IsZero() {
+						sub.ExpiresAt = remnaUser.ExpireAt
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return subs, nil
 }
 
-// GetUserActiveSubscription returns the current active subscription, if any
+// GetUserActiveSubscription returns the current active subscription, if any.
+// The expiry date is refreshed from the Remnawave panel.
 func (s *SubscriptionService) GetUserActiveSubscription(ctx context.Context, userID uuid.UUID) (*domain.Subscription, error) {
-	return s.repo.GetActiveSubscription(ctx, userID)
+	sub, err := s.repo.GetActiveSubscription(ctx, userID)
+	if err != nil || sub == nil {
+		return sub, err
+	}
+
+	user, uErr := s.repo.GetByID(ctx, userID)
+	if uErr == nil && user != nil && user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
+		remnaUser, rErr := s.remna.GetUser(ctx, *user.RemnaUserUUID)
+		if rErr == nil && remnaUser != nil && !remnaUser.ExpireAt.IsZero() {
+			sub.ExpiresAt = remnaUser.ExpireAt
+		}
+	}
+	return sub, nil
 }
 
 // InitiateRenewal creates a payment for renewing an active or recently expired subscription.

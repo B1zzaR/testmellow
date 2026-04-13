@@ -133,7 +133,7 @@ func main() {
 	// Public auth endpoints
 	auth := r.Group("/api/auth")
 	{
-		auth.POST("/register", middleware.IPRateLimit(rdb, "register", 5, time.Hour), authH.Register)
+		auth.POST("/register", middleware.IPRateLimit(rdb, "register", 3, time.Hour), authH.Register)
 		auth.POST("/login", middleware.IPRateLimit(rdb, "login", 10, 15*time.Minute), authH.Login)
 		auth.POST("/refresh", authH.Refresh)
 		auth.POST("/logout", authH.Logout)

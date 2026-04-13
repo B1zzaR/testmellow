@@ -34,6 +34,7 @@ import (
 	redisrepo "github.com/vpnplatform/internal/repository/redis"
 	"github.com/vpnplatform/internal/service"
 	jwtpkg "github.com/vpnplatform/pkg/jwt"
+	"github.com/vpnplatform/pkg/password"
 )
 
 // ─── Bot struct ───────────────────────────────────────────────────────────────
@@ -143,6 +144,7 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle("/help", b.handleHelp)
 	b.bot.Handle("/link", b.handleLink)
 	b.bot.Handle("/info", b.handleInfo)
+	b.bot.Handle("/resetpassword", b.handleResetPassword)
 }
 
 // ─── Link handler ─────────────────────────────────────────────────────────────
@@ -211,6 +213,70 @@ func (b *Bot) handleLink(c tele.Context) error {
 
 	return c.Send(
 		"✅ *Telegram успешно привязан!*\n\nТеперь вы можете управлять подпиской прямо из бота.",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+	)
+}
+
+// ─── Reset password handler ───────────────────────────────────────────────────
+
+// handleResetPassword generates a new random password for the account linked to
+// this Telegram user and sends it privately. Rate-limited to 3 per hour.
+func (b *Bot) handleResetPassword(c tele.Context) error {
+	ctx := context.Background()
+	tgID := int64(c.Sender().ID)
+
+	// Rate limit: max 3 resets per hour per Telegram user.
+	rlKey := fmt.Sprintf("rl:resetpw:%d", tgID)
+	count, rlErr := redisrepo.Increment(ctx, b.rdb, rlKey, time.Hour)
+	if rlErr == nil && count > 3 {
+		return c.Send("⏳ Слишком много попыток. Повторите через час.")
+	}
+
+	user, err := b.repo.GetByTelegramID(ctx, tgID)
+	if err != nil {
+		b.log.Error("handleResetPassword: get user by tg id", zap.Error(err))
+		return c.Send("⚠️ Временная ошибка. Попробуйте позже.")
+	}
+	if user == nil {
+		return c.Send("❌ К этому Telegram не привязан аккаунт.\n\nПривяжите аккаунт на сайте в разделе Настройки → Telegram.")
+	}
+	if user.IsBanned {
+		return c.Send("🚫 Ваш аккаунт заблокирован.")
+	}
+
+	newPw, err := botRandPassword()
+	if err != nil {
+		b.log.Error("handleResetPassword: generate password", zap.Error(err))
+		return c.Send("⚠️ Внутренняя ошибка. Попробуйте позже.")
+	}
+
+	hash, err := password.Hash(newPw)
+	if err != nil {
+		b.log.Error("handleResetPassword: hash password", zap.Error(err))
+		return c.Send("⚠️ Внутренняя ошибка. Попробуйте позже.")
+	}
+
+	if err := b.repo.SetPassword(ctx, user.ID, hash); err != nil {
+		b.log.Error("handleResetPassword: set password", zap.Error(err))
+		return c.Send("⚠️ Не удалось сбросить пароль. Попробуйте позже.")
+	}
+
+	// Invalidate all existing sessions.
+	if vErr := redisrepo.SetPasswordVersion(ctx, b.rdb, user.ID.String(), time.Now()); vErr != nil {
+		b.log.Warn("handleResetPassword: set password version", zap.Error(vErr))
+	}
+
+	loginName := "—"
+	if user.Username != nil {
+		loginName = *user.Username
+	}
+
+	return c.Send(
+		"🔑 *Пароль сброшен!*\n\n"+
+			"Логин: `"+loginName+"`\n"+
+			"Новый пароль: `"+newPw+"`\n\n"+
+			"_Рекомендуем сменить пароль в настройках после входа._\n"+
+			"_Все активные сессии завершены._",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 	)
 }
@@ -689,7 +755,8 @@ func (b *Bot) handleHelp(c tele.Context) error {
 			"🆓 /trial — пробный период\n"+
 			"👥 /referral — реферальная программа\n"+
 			"🔧 /ticket — поддержка\n"+
-			"🎟 /promo КОД — активировать промокод\n\n"+
+			"🎟 /promo КОД — активировать промокод\n"+
+			"🔑 /resetpassword — сбросить пароль\n\n"+
 			"_По всем вопросам обращайтесь через /ticket_",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 		rm,
