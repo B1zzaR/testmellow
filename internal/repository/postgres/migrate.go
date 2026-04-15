@@ -423,6 +423,10 @@ CREATE INDEX IF NOT EXISTS idx_device_expansions_user_expires ON device_expansio
 CREATE INDEX IF NOT EXISTS idx_device_expansions_expires      ON device_expansions(expires_at);
 `,
 		},
+		{
+			version: "013_tfa_enabled",
+			sql:     `ALTER TABLE users ADD COLUMN IF NOT EXISTS tfa_enabled BOOLEAN NOT NULL DEFAULT FALSE;`,
+		},
 	}
 
 	for _, m := range migrations {
