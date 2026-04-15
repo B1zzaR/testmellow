@@ -1216,6 +1216,15 @@ func (r *UserRepo) CreateAccountActivity(ctx context.Context, a *domain.AccountA
 	return err
 }
 
+// HasSeenUserAgent checks whether a login from this user_agent was recorded before.
+func (r *UserRepo) HasSeenUserAgent(ctx context.Context, userID uuid.UUID, ua string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM account_activity WHERE user_id=$1 AND event_type='login' AND user_agent=$2)`,
+		userID, ua).Scan(&exists)
+	return exists, err
+}
+
 func (r *UserRepo) ListAccountActivity(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.AccountActivity, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -1559,5 +1568,85 @@ func (r *UserRepo) UpdateNotification(ctx context.Context, notif *domain.SystemN
 // DeleteNotification deletes a notification by ID.
 func (r *UserRepo) DeleteNotification(ctx context.Context, id uuid.UUID) error {
 	_, err := r.db.Exec(ctx, `DELETE FROM system_notifications WHERE id = $1`, id)
+	return err
+}
+
+// ─── Device Expansion ─────────────────────────────────────────────────────────
+
+// CreateDeviceExpansion inserts a new device expansion record inside the given transaction.
+func (r *UserRepo) CreateDeviceExpansion(ctx context.Context, tx pgx.Tx, de *domain.DeviceExpansion) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO device_expansions (id, user_id, extra_devices, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5)`,
+		de.ID, de.UserID, de.ExtraDevices, de.ExpiresAt, de.CreatedAt)
+	return err
+}
+
+// GetActiveDeviceExpansion returns the active (non-expired) device expansion for a user, or nil.
+func (r *UserRepo) GetActiveDeviceExpansion(ctx context.Context, userID uuid.UUID) (*domain.DeviceExpansion, error) {
+	de := &domain.DeviceExpansion{}
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_id, extra_devices, expires_at, created_at
+		FROM device_expansions
+		WHERE user_id = $1 AND expires_at > NOW()
+		ORDER BY expires_at DESC
+		LIMIT 1`, userID).Scan(&de.ID, &de.UserID, &de.ExtraDevices, &de.ExpiresAt, &de.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return de, nil
+}
+
+// GetEffectiveDeviceLimit returns the current device limit for a user (base + active expansion).
+func (r *UserRepo) GetEffectiveDeviceLimit(ctx context.Context, userID uuid.UUID) (int, error) {
+	de, err := r.GetActiveDeviceExpansion(ctx, userID)
+	if err != nil {
+		return domain.DeviceMaxPerUser, err
+	}
+	if de == nil {
+		return domain.DeviceMaxPerUser, nil
+	}
+	return domain.DeviceMaxPerUser + de.ExtraDevices, nil
+}
+
+// ExpireDeviceExpansions returns user IDs whose device expansions just expired (within the last sweep window).
+func (r *UserRepo) ExpireDeviceExpansions(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT user_id FROM device_expansions
+		WHERE expires_at <= NOW()
+		  AND user_id NOT IN (
+		    SELECT user_id FROM device_expansions WHERE expires_at > NOW()
+		  )`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// DeleteExpiredDeviceExpansions removes all expired device expansion records.
+func (r *UserRepo) DeleteExpiredDeviceExpansions(ctx context.Context) (int64, error) {
+	tag, err := r.db.Exec(ctx, `DELETE FROM device_expansions WHERE expires_at <= NOW()`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ExtendDeviceExpansion extends an existing active device expansion's expiry.
+func (r *UserRepo) ExtendDeviceExpansion(ctx context.Context, tx pgx.Tx, expansionID uuid.UUID, newExpiry time.Time) error {
+	_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1 WHERE id = $2`, newExpiry, expansionID)
 	return err
 }

@@ -135,6 +135,15 @@ export interface DeviceListResponse {
   devices: Device[]
   count: number
   limit: number
+  expansion: DeviceExpansion | null
+}
+
+export interface DeviceExpansion {
+  id: string
+  user_id: string
+  extra_devices: number
+  expires_at: string
+  created_at: string
 }
 
 export interface AccountActivity {

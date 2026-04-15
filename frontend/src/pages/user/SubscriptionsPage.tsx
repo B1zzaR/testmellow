@@ -174,7 +174,7 @@ export function SubscriptionsPage() {
 
       {/* Active subscription */}
       {activeSub && (
-        <Card title="Активная подписка" glow>
+        <Card title={daysUntil(activeSub.expires_at) > 0 ? 'Активная подписка' : 'Подписка закончилась'} glow>
           {daysUntil(activeSub.expires_at) === 0 && (
             <div className="mb-4 flex items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3">
               <span className="shrink-0 text-red-500">⏰</span>
@@ -247,7 +247,7 @@ export function SubscriptionsPage() {
       {activeSub && devicesData && <DeviceList data={devicesData} />}
 
       {/* Plan selector */}
-      <Card title="Выбрать тариф">
+      <Card title={activeSub ? 'Продлить подписку' : 'Выбрать тариф'}>
 
         {/* Active discount banner */}
         {discount > 0 && (
@@ -315,7 +315,9 @@ export function SubscriptionsPage() {
           >
             {selectedPlan && discountedPrice(PLANS.find(p => p.key === selectedPlan)!.price, discount) === 0
               ? 'Активировать бесплатно'
-              : <><Icon name="external" size={14} />Оплатить</>
+              : activeSub
+                ? <><Icon name="external" size={14} />Продлить</>
+                : <><Icon name="external" size={14} />Оплатить</>
             }
           </Button>
 

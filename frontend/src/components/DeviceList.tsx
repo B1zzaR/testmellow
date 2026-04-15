@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { devicesApi } from '@/api/devices'
+import { shopApi } from '@/api/shop'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
 import { Modal } from '@/components/ui/Modal'
 import { Icon } from '@/components/ui/Icons'
-import { formatDateTime } from '@/utils/formatters'
+import { formatDateTime, formatYAD } from '@/utils/formatters'
 import type { Device, DeviceListResponse } from '@/api/types'
 
 function timeUntilDeletion(canDeleteAfter: string): string | null {
@@ -25,12 +26,13 @@ interface DeviceListProps {
 }
 
 export function DeviceList({ data }: DeviceListProps) {
-  const { devices, count, limit } = data
+  const { devices, count, limit, expansion } = data
   const queryClient = useQueryClient()
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [showInactive, setShowInactive] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [buyTier, setBuyTier] = useState<number | null>(null)
 
   const disconnectMutation = useMutation({
     mutationFn: (id: string) => devicesApi.disconnect(id),
@@ -46,6 +48,27 @@ export function DeviceList({ data }: DeviceListProps) {
       setConfirmId(null)
     },
   })
+
+  const buyExpansionMutation = useMutation({
+    mutationFn: (extraDevices: number) => shopApi.buyDeviceExpansion(extraDevices),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      queryClient.invalidateQueries({ queryKey: ['balance'] })
+      setSuccessMsg('Расширение устройств активировано!')
+      setErrorMsg('')
+      setBuyTier(null)
+    },
+    onError: (e: Error) => {
+      setErrorMsg(e.message)
+      setSuccessMsg('')
+      setBuyTier(null)
+    },
+  })
+
+  const EXPANSION_TIERS = [
+    { extra: 1, total: 5, yad: 25, rub: '39₽', days: 30 },
+    { extra: 2, total: 6, yad: 60, rub: '79₽', days: 30 },
+  ]
 
   const activeDevices = devices.filter(d => d.is_active)
   const inactiveDevices = devices.filter(d => !d.is_active)
@@ -140,6 +163,104 @@ export function DeviceList({ data }: DeviceListProps) {
           )}
         </div>
       )}
+
+      {/* Device Expansion Section */}
+      <div className="mt-6 border-t border-gray-200 dark:border-surface-700 pt-5">
+        <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-1">Расширение лимита устройств</p>
+        {expansion ? (
+          <div className="mb-3 flex items-center gap-3 rounded-xl border border-primary-500/30 bg-primary-500/5 px-4 py-3">
+            <Icon name="shield" size={16} className="shrink-0 text-primary-500" />
+            <div>
+              <p className="text-sm text-primary-500 font-medium">
+                +{expansion.extra_devices} устройств (до {4 + expansion.extra_devices})
+              </p>
+              <p className="text-xs text-gray-400 dark:text-slate-500">
+                Действует до {formatDateTime(expansion.expires_at)}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
+            Добавьте устройства на 30 дней. Максимум +2.
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {EXPANSION_TIERS.map((tier) => {
+            const isCurrentTier = expansion?.extra_devices === tier.extra
+            const hasOtherTier = expansion != null && expansion.extra_devices !== tier.extra
+            return (
+              <div
+                key={tier.extra}
+                className={`flex flex-col rounded-xl border p-4 transition-all ${
+                  isCurrentTier
+                    ? 'border-primary-500 dark:border-primary-500 bg-primary-500/5'
+                    : 'border-gray-200 dark:border-surface-700'
+                } ${hasOtherTier ? 'opacity-50' : ''}`}
+              >
+                <p className="text-base font-bold text-gray-900 dark:text-slate-100">
+                  {tier.total} устройств
+                </p>
+                <p className="text-xs text-gray-400 dark:text-slate-500">
+                  +{tier.extra} к базовому лимиту · {tier.days} дней
+                </p>
+                <p className="mt-2 text-xl font-extrabold text-primary-500">
+                  {formatYAD(tier.yad)}
+                </p>
+                <p className="text-[11px] text-gray-400 dark:text-slate-600">или {tier.rub}</p>
+                <Button
+                  className="mt-3 w-full"
+                  size="sm"
+                  variant={isCurrentTier ? 'primary' : 'secondary'}
+                  disabled={hasOtherTier}
+                  onClick={() => setBuyTier(tier.extra)}
+                >
+                  {isCurrentTier ? 'Продлить' : 'Купить'}
+                </Button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Buy expansion confirmation modal */}
+      <Modal
+        open={buyTier !== null}
+        onClose={() => setBuyTier(null)}
+        title="Расширение устройств"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setBuyTier(null)}>
+              Отмена
+            </Button>
+            <Button
+              size="sm"
+              loading={buyExpansionMutation.isPending}
+              onClick={() => buyTier && buyExpansionMutation.mutate(buyTier)}
+            >
+              Подтвердить
+            </Button>
+          </>
+        }
+      >
+        {buyTier && (() => {
+          const tier = EXPANSION_TIERS.find((t) => t.extra === buyTier)!
+          const isExtend = expansion?.extra_devices === buyTier
+          return (
+            <>
+              <p className="text-sm text-gray-600 dark:text-slate-400">
+                {isExtend ? 'Продлить' : 'Активировать'} расширение до{' '}
+                <strong className="text-gray-900 dark:text-slate-100">{tier.total} устройств</strong>{' '}
+                на {tier.days} дней за{' '}
+                <strong className="text-primary-500">{formatYAD(tier.yad)}</strong>?
+              </p>
+              <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
+                Сумма будет списана с баланса ЯД. Максимальная продолжительность — 90 дней.
+              </p>
+            </>
+          )
+        })()}
+      </Modal>
     </Card>
   )
 }

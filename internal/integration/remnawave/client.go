@@ -42,6 +42,7 @@ type UpdateUserRequest struct {
 	UUID                 string     `json:"uuid,omitempty"`
 	ExpireAt             *time.Time `json:"expireAt,omitempty"`
 	Status               *string    `json:"status,omitempty"`
+	HwidDeviceLimit      *int       `json:"hwidDeviceLimit,omitempty"`
 	ActiveInternalSquads []string   `json:"activeInternalSquads,omitempty"`
 }
 
@@ -183,6 +184,14 @@ func (c *Client) EnableUser(ctx context.Context, remnaUUID string) error {
 	status := "ACTIVE"
 	if err := c.do(ctx, http.MethodPatch, "/api/users", UpdateUserRequest{UUID: remnaUUID, Status: &status}, nil); err != nil {
 		return fmt.Errorf("remnawave enable user: %w", err)
+	}
+	return nil
+}
+
+// UpdateHwidDeviceLimit sets the HWID device limit for a user in the Remnawave panel.
+func (c *Client) UpdateHwidDeviceLimit(ctx context.Context, remnaUUID string, limit int) error {
+	if err := c.do(ctx, http.MethodPatch, "/api/users", UpdateUserRequest{UUID: remnaUUID, HwidDeviceLimit: &limit}, nil); err != nil {
+		return fmt.Errorf("remnawave update hwid device limit: %w", err)
 	}
 	return nil
 }

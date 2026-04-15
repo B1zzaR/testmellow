@@ -241,13 +241,30 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User
 		CreatedAt: time.Now(),
 	})
 
-	// Notify in Telegram on new IP (best-effort, via worker queue).
-	if isNewIP && s.rdb != nil && user.TelegramID != nil && *user.TelegramID != 0 {
-		msg := fmt.Sprintf("⚠️ <b>Вход с нового IP</b>\n\nIP: %s\nЕсли это были не вы — срочно смените пароль.", input.IP)
-		_ = worker.Enqueue(ctx, s.rdb, worker.QueueNotifyTelegram, worker.NotifyTelegramJob{
-			TelegramID: *user.TelegramID,
-			Message:    msg,
-		})
+	// Detect new device (user-agent never seen before).
+	isNewDevice := false
+	if ua != "" {
+		if seen, err := s.repo.HasSeenUserAgent(ctx, user.ID, ua); err == nil && !seen {
+			isNewDevice = true
+		}
+	}
+
+	// Notify in Telegram on new IP or new device (best-effort, via worker queue).
+	if s.rdb != nil && user.TelegramID != nil && *user.TelegramID != 0 {
+		if isNewIP {
+			msg := fmt.Sprintf("⚠️ <b>Вход с нового IP</b>\n\nIP: %s\nЕсли это были не вы — срочно смените пароль.", input.IP)
+			_ = worker.Enqueue(ctx, s.rdb, worker.QueueNotifyTelegram, worker.NotifyTelegramJob{
+				TelegramID: *user.TelegramID,
+				Message:    msg,
+			})
+		}
+		if isNewDevice {
+			msg := fmt.Sprintf("🖥 <b>Вход с нового устройства</b>\n\nIP: %s\nУстройство: %s\n\nЕсли это были не вы — срочно смените пароль.", input.IP, ua)
+			_ = worker.Enqueue(ctx, s.rdb, worker.QueueNotifyTelegram, worker.NotifyTelegramJob{
+				TelegramID: *user.TelegramID,
+				Message:    msg,
+			})
+		}
 	}
 
 	return user, nil
@@ -859,6 +876,109 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 		zap.Int64("yad_spent", yadPrice),
 	)
 	return sub, nil
+}
+
+// BuyDeviceExpansion purchases a device limit expansion for the user using ЯД.
+func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUID, extraDevices int) (*domain.DeviceExpansion, error) {
+	yadPrice := domain.DeviceExpansionYADPrice(extraDevices)
+	if yadPrice == 0 {
+		return nil, errors.New("недопустимое количество устройств")
+	}
+
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("пользователь не найден")
+	}
+
+	// Must have an active subscription
+	activeSub, err := s.repo.GetActiveSubscription(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
+		return nil, errors.New("у вас нет активной подписки")
+	}
+
+	if user.YADBalance < yadPrice {
+		return nil, errors.New("недостаточно ЯД на балансе")
+	}
+
+	now := time.Now()
+	newExpiry := now.Add(time.Duration(domain.DeviceExpansionDurationDays) * 24 * time.Hour)
+
+	// Check existing active expansion
+	existing, err := s.repo.GetActiveDeviceExpansion(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if existing != nil {
+		// If trying to buy a different tier than existing, reject
+		if existing.ExtraDevices != extraDevices {
+			return nil, errors.New("у вас уже есть расширение на другое количество устройств; дождитесь окончания")
+		}
+		// Extend existing expansion
+		newExpiry = existing.ExpiresAt.Add(time.Duration(domain.DeviceExpansionDurationDays) * 24 * time.Hour)
+		// Check max 90 days forward
+		if newExpiry.After(now.Add(time.Duration(domain.DeviceExpansionMaxForwardDays) * 24 * time.Hour)) {
+			return nil, errors.New("нельзя продлить расширение более чем на 90 дней вперёд")
+		}
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	ref := uuid.New()
+	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref, fmt.Sprintf("Расширение устройств: +%d", extraDevices)); err != nil {
+		return nil, err
+	}
+
+	var expansion *domain.DeviceExpansion
+	if existing != nil {
+		// Extend
+		if err := s.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, newExpiry); err != nil {
+			return nil, err
+		}
+		existing.ExpiresAt = newExpiry
+		expansion = existing
+	} else {
+		expansion = &domain.DeviceExpansion{
+			ID:           ref,
+			UserID:       userID,
+			ExtraDevices: extraDevices,
+			ExpiresAt:    newExpiry,
+			CreatedAt:    now,
+		}
+		if err := s.repo.CreateDeviceExpansion(ctx, tx, expansion); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	// Update Remnawave panel device limit
+	if user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
+		newLimit := domain.DeviceMaxPerUser + extraDevices
+		if err := s.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, newLimit); err != nil {
+			s.log.Error("failed to update remnawave hwid device limit after purchase",
+				zap.String("user_id", userID.String()),
+				zap.Int("new_limit", newLimit),
+				zap.Error(err))
+		}
+	}
+
+	s.log.Info("device expansion purchased",
+		zap.String("user_id", userID.String()),
+		zap.Int("extra_devices", extraDevices),
+		zap.Int64("yad_spent", yadPrice),
+		zap.Time("expires_at", expansion.ExpiresAt),
+	)
+	return expansion, nil
 }
 
 // ─── Trial Service ────────────────────────────────────────────────────────────

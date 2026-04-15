@@ -1246,15 +1246,43 @@ func (h *ShopHandler) BuySubscription(c *gin.Context) {
 	})
 }
 
+type buyDeviceExpansionRequest struct {
+	ExtraDevices int `json:"extra_devices" binding:"required,min=1,max=2"`
+}
+
+// POST /api/shop/buy-device-expansion
+func (h *ShopHandler) BuyDeviceExpansion(c *gin.Context) {
+	var req buyDeviceExpansionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	expansion, err := h.eco.BuyDeviceExpansion(c.Request.Context(), userID, req.ExtraDevices)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "Расширение устройств активировано",
+		"extra_devices": expansion.ExtraDevices,
+		"expires_at":    expansion.ExpiresAt,
+		"total_limit":   domain.DeviceMaxPerUser + expansion.ExtraDevices,
+	})
+}
+
 // ─── Device Handler ───────────────────────────────────────────────────────────
 
 type DeviceHandler struct {
-	svc *service.DeviceService
-	log *zap.Logger
+	svc  *service.DeviceService
+	repo *postgres.UserRepo
+	log  *zap.Logger
 }
 
-func NewDeviceHandler(svc *service.DeviceService, log *zap.Logger) *DeviceHandler {
-	return &DeviceHandler{svc: svc, log: log}
+func NewDeviceHandler(svc *service.DeviceService, repo *postgres.UserRepo, log *zap.Logger) *DeviceHandler {
+	return &DeviceHandler{svc: svc, repo: repo, log: log}
 }
 
 // GET /api/devices
@@ -1265,6 +1293,12 @@ func (h *DeviceHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера"})
 		return
 	}
+
+	// Dynamic device limit based on active expansion
+	limit, _ := h.repo.GetEffectiveDeviceLimit(c.Request.Context(), userID)
+
+	// Get expansion info for the response
+	expansion, _ := h.repo.GetActiveDeviceExpansion(c.Request.Context(), userID)
 
 	type deviceResponse struct {
 		ID             string `json:"id"`
@@ -1297,9 +1331,10 @@ func (h *DeviceHandler) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"devices": result,
-		"count":   activeCount,
-		"limit":   domain.DeviceMaxPerUser,
+		"devices":   result,
+		"count":     activeCount,
+		"limit":     limit,
+		"expansion": expansion,
 	})
 }
 

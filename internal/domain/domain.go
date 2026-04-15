@@ -325,6 +325,47 @@ type AdminAuditLog struct {
 const DeviceMaxPerUser = 4
 const DeviceInactiveDays = 2
 
+// ─── Device Expansion ─────────────────────────────────────────────────────────
+
+const (
+	DeviceExpansionMaxExtra       = 2 // base 4 → max 6
+	DeviceExpansionDurationDays   = 30
+	DeviceExpansionMaxForwardDays = 90
+)
+
+// DeviceExpansionTier represents a purchasable device-limit upgrade tier.
+type DeviceExpansionTier struct {
+	ExtraDevices int   // how many devices above base (1 or 2)
+	TotalDevices int   // resulting device limit
+	YADPrice     int64 // cost in ЯД
+	RubKopecks   int64 // cost in kopecks (for display)
+}
+
+// DeviceExpansionTiers lists the available tiers.
+var DeviceExpansionTiers = []DeviceExpansionTier{
+	{ExtraDevices: 1, TotalDevices: 5, YADPrice: 25, RubKopecks: 3900},
+	{ExtraDevices: 2, TotalDevices: 6, YADPrice: 60, RubKopecks: 7900},
+}
+
+// DeviceExpansionYADPrice returns the ЯД price for a given extra-devices count, or 0 if invalid.
+func DeviceExpansionYADPrice(extraDevices int) int64 {
+	for _, t := range DeviceExpansionTiers {
+		if t.ExtraDevices == extraDevices {
+			return t.YADPrice
+		}
+	}
+	return 0
+}
+
+// DeviceExpansion tracks an active device-limit expansion purchase.
+type DeviceExpansion struct {
+	ID           uuid.UUID `db:"id"            json:"id"`
+	UserID       uuid.UUID `db:"user_id"       json:"user_id"`
+	ExtraDevices int       `db:"extra_devices" json:"extra_devices"`
+	ExpiresAt    time.Time `db:"expires_at"    json:"expires_at"`
+	CreatedAt    time.Time `db:"created_at"    json:"created_at"`
+}
+
 type Device struct {
 	ID         uuid.UUID `db:"id"          json:"id"`
 	UserID     uuid.UUID `db:"user_id"      json:"user_id"`

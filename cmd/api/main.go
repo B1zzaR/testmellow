@@ -90,7 +90,7 @@ func main() {
 	referralH := httpHandler.NewReferralHandler(userRepo, log)
 	promoH := httpHandler.NewPromoHandler(ecoSvc, userRepo, log)
 	trialH := httpHandler.NewTrialHandler(trialSvc, log)
-	deviceH := httpHandler.NewDeviceHandler(deviceSvc, log)
+	deviceH := httpHandler.NewDeviceHandler(deviceSvc, userRepo, log)
 	ticketH := httpHandler.NewTicketHandler(userRepo, log)
 	shopH := httpHandler.NewShopHandler(userRepo, ecoSvc, log)
 	webhookH := webhookHandler.NewPlategalHandler(platClient, userRepo, rdb, log)
@@ -178,6 +178,7 @@ func main() {
 		api.GET("/shop", shopH.List)
 		api.POST("/shop/buy", shopH.Buy)
 		api.POST("/shop/buy-subscription", shopH.BuySubscription)
+		api.POST("/shop/buy-device-expansion", shopH.BuyDeviceExpansion)
 
 		api.GET("/devices", deviceH.List)
 		api.POST("/devices/:id/disconnect", deviceH.Disconnect)

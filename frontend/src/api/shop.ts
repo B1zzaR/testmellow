@@ -16,4 +16,9 @@ export const shopApi = {
     const res = await apiClient.post<{ message: string; expires_at: string }>('/api/shop/buy-subscription', { plan })
     return res.data
   },
+
+  buyDeviceExpansion: async (extraDevices: number): Promise<{ message: string; extra_devices: number; expires_at: string; total_limit: number }> => {
+    const res = await apiClient.post<{ message: string; extra_devices: number; expires_at: string; total_limit: number }>('/api/shop/buy-device-expansion', { extra_devices: extraDevices })
+    return res.data
+  },
 }

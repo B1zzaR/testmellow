@@ -198,7 +198,7 @@ export function DashboardPage() {
         <StatCard
           label="Текущий тариф"
           value={activeSub ? planLabel(activeSub.plan) : 'Нет'}
-          sub={activeSub ? `${daysLeft} дней осталось` : 'Нет активной подписки'}
+          sub={activeSub ? (daysLeft > 0 ? `${daysLeft} дней осталось` : 'Подписка закончилась') : 'Нет активной подписки'}
           icon={<Icon name="shield" size={28} />}
         />
       </div>
@@ -206,14 +206,22 @@ export function DashboardPage() {
       {/* Active subscription card */}
       {activeSub && (
         <Card
-          title="Активная подписка"
+          title={daysLeft > 0 ? 'Активная подписка' : 'Подписка закончилась'}
           glow
           action={
-            <Link to="/subscriptions/renew">
-              <Button size="sm" variant="secondary">Продлить</Button>
+            <Link to="/subscriptions">
+              <Button size="sm" variant="secondary">{daysLeft > 0 ? 'Продлить' : 'Продлить подписку'}</Button>
             </Link>
           }
         >
+          {daysLeft === 0 && (
+            <div className="mb-4 flex items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3">
+              <span className="shrink-0 text-red-500">⏰</span>
+              <p className="text-sm text-red-600 dark:text-red-400">
+                Подписка закончилась — продлите для продолжения доступа.
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:gap-6">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-600">Тариф</p>
@@ -229,8 +237,8 @@ export function DashboardPage() {
             </div>
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-600">Осталось дней</p>
-              <p className={`mt-1 text-sm font-bold ${daysLeft <= 3 ? 'text-red-500' : daysLeft <= 7 ? 'text-yellow-500' : 'text-primary-500'}`}>
-                {daysLeft}
+              <p className={`mt-1 text-sm font-bold ${daysLeft === 0 ? 'text-red-500' : daysLeft <= 3 ? 'text-red-500' : daysLeft <= 7 ? 'text-yellow-500' : 'text-primary-500'}`}>
+                {daysLeft > 0 ? daysLeft : 'Закончилась'}
               </p>
             </div>
           </div>

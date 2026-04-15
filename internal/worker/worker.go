@@ -124,6 +124,7 @@ func (w *Worker) Run(ctx context.Context) {
 	go w.periodicRewardSweep(ctx)
 	go w.periodicPaymentExpirySweep(ctx)
 	go w.periodicExpiryWarnings(ctx)
+	go w.periodicDeviceExpansionSweep(ctx)
 
 	<-ctx.Done()
 	w.log.Info("worker shutting down")
@@ -921,5 +922,50 @@ func (w *Worker) sendExpiryWarnings(ctx context.Context) {
 		daysLeft := int(time.Until(sub.ExpiresAt).Hours() / 24)
 		msg := fmt.Sprintf("⚠️ <b>Ваша подписка истекает через %d дн.</b>\n\nПродлите её в личном кабинете, чтобы не потерять доступ к VPN.", daysLeft)
 		w.enqueueNotify(ctx, *user.TelegramID, msg)
+	}
+}
+
+// periodicDeviceExpansionSweep resets device limits in Remnawave when expansions expire.
+func (w *Worker) periodicDeviceExpansionSweep(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			userIDs, err := w.repo.ExpireDeviceExpansions(ctx)
+			if err != nil {
+				w.log.Error("device expansion sweep: get expired", zap.Error(err))
+				continue
+			}
+			for _, uid := range userIDs {
+				user, err := w.repo.GetByID(ctx, uid)
+				if err != nil || user == nil || user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
+					continue
+				}
+				if err := w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, domain.DeviceMaxPerUser); err != nil {
+					w.log.Error("device expansion sweep: reset remnawave limit",
+						zap.String("user_id", uid.String()), zap.Error(err))
+					continue
+				}
+				w.log.Info("device expansion expired, limit reset",
+					zap.String("user_id", uid.String()),
+					zap.Int("limit", domain.DeviceMaxPerUser))
+
+				// Notify user via Telegram
+				if user.TelegramID != nil {
+					w.enqueueNotify(ctx, *user.TelegramID,
+						"📱 <b>Расширение устройств истекло</b>\n\nЛимит устройств сброшен до стандартного (4). Вы можете приобрести расширение снова в личном кабинете.")
+				}
+			}
+			// Clean up expired records
+			n, err := w.repo.DeleteExpiredDeviceExpansions(ctx)
+			if err != nil {
+				w.log.Error("device expansion sweep: cleanup", zap.Error(err))
+			} else if n > 0 {
+				w.log.Info("cleaned up expired device expansions", zap.Int64("count", n))
+			}
+		}
 	}
 }

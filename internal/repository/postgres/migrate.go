@@ -383,6 +383,46 @@ CREATE INDEX idx_notifications_is_active ON system_notifications(is_active);
 CREATE INDEX idx_notifications_created_at ON system_notifications(created_at DESC);
 `,
 		},
+		{
+			version: "010_telegram_info",
+			sql: `
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_username VARCHAR(64);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_first_name VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_last_name VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_photo_url TEXT;
+`,
+		},
+		{
+			version: "011_account_activity",
+			sql: `
+CREATE TABLE IF NOT EXISTS account_activity (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_type  VARCHAR(64) NOT NULL,
+    ip          INET,
+    user_agent  TEXT,
+    details     JSONB,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_activity_user_created ON account_activity(user_id, created_at DESC);
+`,
+		},
+		{
+			version: "012_device_expansions",
+			sql: `
+CREATE TABLE IF NOT EXISTS device_expansions (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    extra_devices SMALLINT NOT NULL CHECK (extra_devices BETWEEN 1 AND 2),
+    expires_at    TIMESTAMPTZ NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_expansions_user_expires ON device_expansions(user_id, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_device_expansions_expires      ON device_expansions(expires_at);
+`,
+		},
 	}
 
 	for _, m := range migrations {
