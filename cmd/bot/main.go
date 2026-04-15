@@ -66,6 +66,7 @@ func main() {
 	b.RegisterBuyCallbacks()
 
 	log.Info("telegram bot starting")
+	go b.StartQueues(ctx)
 	go b.Start()
 
 	<-ctx.Done()

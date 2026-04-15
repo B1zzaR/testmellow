@@ -18,8 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -132,8 +130,6 @@ func (w *Worker) Run(ctx context.Context) {
 	go w.loop(ctx, QueueDeviceExpansionActivate, w.handleDeviceExpansionActivate)
 	go w.loop(ctx, QueueReferralReward, w.handleReferralReward)
 	go w.loop(ctx, QueueReferralPayout, w.handleReferralPayout)
-	go w.loop(ctx, QueueNotifyTelegram, w.handleNotifyTelegram)
-	go w.loop(ctx, QueueTFAChallenge, w.handleTFAChallenge)
 
 	// Periodic tasks
 	go w.periodicExpirySweep(ctx)
@@ -993,75 +989,6 @@ func (w *Worker) enqueueNotify(ctx context.Context, tgID int64, msg string) {
 		TelegramID: tgID,
 		Message:    msg,
 	})
-}
-
-// handleNotifyTelegram sends a Telegram message via Bot API HTTP call.
-func (w *Worker) handleNotifyTelegram(ctx context.Context, payload string) error {
-	if w.tgToken == "" {
-		return nil
-	}
-	var job NotifyTelegramJob
-	if err := json.Unmarshal([]byte(payload), &job); err != nil {
-		return err
-	}
-
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", w.tgToken)
-	body := fmt.Sprintf(`{"chat_id":%d,"text":%q,"parse_mode":"HTML"}`, job.TelegramID, job.Message)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("telegram send: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		w.log.Warn("telegram send failed", zap.Int("status", resp.StatusCode), zap.Int64("tg_id", job.TelegramID))
-	}
-	return nil
-}
-
-// handleTFAChallenge sends a 2FA confirmation message with inline buttons via Telegram Bot API.
-func (w *Worker) handleTFAChallenge(ctx context.Context, payload string) error {
-	if w.tgToken == "" {
-		return nil
-	}
-	var job TFAChallengeJob
-	if err := json.Unmarshal([]byte(payload), &job); err != nil {
-		return err
-	}
-
-	keyboard := fmt.Sprintf(
-		`{"inline_keyboard":[[{"text":"✅ Подтвердить","callback_data":"tfa_approve_%s"},{"text":"❌ Отклонить","callback_data":"tfa_deny_%s"}]]}`,
-		job.ChallengeID, job.ChallengeID,
-	)
-	body := fmt.Sprintf(
-		`{"chat_id":%d,"text":%q,"parse_mode":"HTML","reply_markup":%s}`,
-		job.TelegramID, job.Message, keyboard,
-	)
-
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", w.tgToken)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("telegram send 2FA: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		w.log.Warn("telegram 2FA send failed", zap.Int("status", resp.StatusCode), zap.Int64("tg_id", job.TelegramID))
-	}
-	return nil
 }
 
 // periodicExpiryWarnings sends Telegram notifications 3 days before subscription expires.

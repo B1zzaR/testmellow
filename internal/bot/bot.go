@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -116,6 +117,76 @@ func (b *Bot) Start() {
 
 func (b *Bot) Stop() {
 	b.bot.Stop()
+}
+
+// StartQueues listens to Redis queues for outgoing Telegram messages
+// (notifications and 2FA challenges) and sends them via the bot instance.
+// Should be called as a goroutine: go b.StartQueues(ctx)
+func (b *Bot) StartQueues(ctx context.Context) {
+	go b.queueLoop(ctx, "queue:notify:telegram", b.handleNotifyTelegramQueue)
+	go b.queueLoop(ctx, "queue:tfa:challenge", b.handleTFAChallengeQueue)
+	<-ctx.Done()
+}
+
+func (b *Bot) queueLoop(ctx context.Context, queue string, handler func(ctx context.Context, payload string) error) {
+	b.log.Info("bot queue loop started", zap.String("queue", queue))
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		result, err := b.rdb.BRPop(ctx, 5*time.Second, queue).Result()
+		if err != nil {
+			if err != redis.Nil && ctx.Err() == nil {
+				b.log.Error("bot brpop error", zap.String("queue", queue), zap.Error(err))
+				time.Sleep(time.Second)
+			}
+			continue
+		}
+		if len(result) < 2 {
+			continue
+		}
+		if err := handler(ctx, result[1]); err != nil {
+			b.log.Error("bot queue handler error",
+				zap.String("queue", queue),
+				zap.Error(err),
+			)
+		}
+	}
+}
+
+func (b *Bot) handleNotifyTelegramQueue(_ context.Context, payload string) error {
+	var job struct {
+		TelegramID int64  `json:"telegram_id"`
+		Message    string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(payload), &job); err != nil {
+		return err
+	}
+	_, err := b.bot.Send(&tele.User{ID: job.TelegramID}, job.Message, &tele.SendOptions{ParseMode: tele.ModeHTML})
+	return err
+}
+
+func (b *Bot) handleTFAChallengeQueue(_ context.Context, payload string) error {
+	var job struct {
+		TelegramID  int64  `json:"telegram_id"`
+		ChallengeID string `json:"challenge_id"`
+		Message     string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(payload), &job); err != nil {
+		return err
+	}
+	approveBtn := tele.InlineButton{Text: "✅ Подтвердить", Data: "tfa_approve_" + job.ChallengeID}
+	denyBtn := tele.InlineButton{Text: "❌ Отклонить", Data: "tfa_deny_" + job.ChallengeID}
+	markup := &tele.ReplyMarkup{
+		InlineKeyboard: [][]tele.InlineButton{{approveBtn, denyBtn}},
+	}
+	_, err := b.bot.Send(&tele.User{ID: job.TelegramID}, job.Message, &tele.SendOptions{
+		ParseMode:   tele.ModeHTML,
+		ReplyMarkup: markup,
+	})
+	return err
 }
 
 func (b *Bot) registerHandlers() {
