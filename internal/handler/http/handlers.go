@@ -1029,6 +1029,17 @@ func (h *TicketHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Limit: 1 open ticket per user.
+	openCount, err := h.repo.CountOpenTickets(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера"})
+		return
+	}
+	if openCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "У вас уже есть открытый тикет. Дождитесь его закрытия или закройте вручную."})
+		return
+	}
+
 	now := time.Now()
 	ticket := &domain.Ticket{
 		ID:        uuid.New(),

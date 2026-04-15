@@ -1052,6 +1052,13 @@ func (r *UserRepo) ClearActiveDiscount(ctx context.Context, userID uuid.UUID) er
 
 // ─── Tickets ──────────────────────────────────────────────────────────────────
 
+func (r *UserRepo) CountOpenTickets(ctx context.Context, userID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM tickets WHERE user_id=$1 AND status IN ('open','answered')`, userID).Scan(&count)
+	return count, err
+}
+
 func (r *UserRepo) CreateTicket(ctx context.Context, t *domain.Ticket) error {
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO tickets (id, user_id, subject, status, created_at, updated_at)

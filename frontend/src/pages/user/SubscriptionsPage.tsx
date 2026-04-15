@@ -175,7 +175,15 @@ export function SubscriptionsPage() {
       {/* Active subscription */}
       {activeSub && (
         <Card title="Активная подписка" glow>
-          {daysUntil(activeSub.expires_at) <= 7 && daysUntil(activeSub.expires_at) >= 0 && (
+          {daysUntil(activeSub.expires_at) === 0 && (
+            <div className="mb-4 flex items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3">
+              <span className="shrink-0 text-red-500">⏰</span>
+              <p className="text-sm text-red-600 dark:text-red-400">
+                Подписка закончилась — продлите для продолжения доступа.
+              </p>
+            </div>
+          )}
+          {daysUntil(activeSub.expires_at) > 0 && daysUntil(activeSub.expires_at) <= 7 && (
             <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
               <span className="shrink-0 text-yellow-500">⚠</span>
               <p className="text-sm text-yellow-600 dark:text-yellow-400">
@@ -186,7 +194,7 @@ export function SubscriptionsPage() {
           <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:gap-6">
             {[
               { label: 'Тариф',        value: planLabel(activeSub.plan) },
-              { label: 'Осталось дней',   value: `${daysUntil(activeSub.expires_at)} дней` },
+              { label: 'Осталось дней',   value: daysUntil(activeSub.expires_at) > 0 ? `${daysUntil(activeSub.expires_at)} дней` : 'Подписка закончилась' },
               { label: 'Истекает',     value: formatDate(activeSub.expires_at) },
               ...(activeSub.paid_kopecks > 0 ? [{ label: 'Оплачено', value: formatRubles(activeSub.paid_kopecks) }] : []),
             ].map(({ label, value }) => (

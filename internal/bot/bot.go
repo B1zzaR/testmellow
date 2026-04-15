@@ -660,8 +660,12 @@ func (b *Bot) handleMySubs(c tele.Context) error {
 		}
 		daysLeft := int(time.Until(sub.ExpiresAt).Hours() / 24)
 		daysStr := ""
-		if (sub.Status == domain.SubStatusActive || sub.Status == domain.SubStatusTrial) && daysLeft >= 0 {
-			daysStr = fmt.Sprintf(" · *%d дн.*", daysLeft)
+		if sub.Status == domain.SubStatusActive || sub.Status == domain.SubStatusTrial {
+			if daysLeft > 0 {
+				daysStr = fmt.Sprintf(" · *%d дн.*", daysLeft)
+			} else {
+				daysStr = " · ⏰ _Подписка закончилась_"
+			}
 		}
 		msg += fmt.Sprintf(
 			"\n%d. %s *%s* — %s%s\n   📅 до `%s`",
