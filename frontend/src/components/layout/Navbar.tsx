@@ -3,6 +3,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useThemeStore } from '@/store/themeStore'
 import { Icon, SnakeLogo } from '@/components/ui/Icons'
 import { useInstallPrompt } from '@/hooks/useInstallPrompt'
+import { Link } from 'react-router-dom'
 
 export function Navbar() {
   const { data: profile } = useProfile()
@@ -51,12 +52,16 @@ export function Navbar() {
           </span>
         )}
 
-        {/* YAD balance */}
+        {/* YAD balance — clickable, links to shop */}
         {profile && (
-          <div className="flex items-center gap-1.5 rounded-lg border border-primary-900/40 bg-primary-500/5 px-3 py-1.5">
+          <Link
+            to="/shop"
+            className="flex items-center gap-1.5 rounded-lg border border-primary-900/40 bg-primary-500/5 px-3 py-1.5 transition-colors hover:bg-primary-500/10"
+            title="Перейти в магазин ЯД"
+          >
             <Icon name="skull" size={16} className="text-primary-500" />
             <span className="text-sm font-semibold text-primary-400">{profile.yad_balance} ЯД</span>
-          </div>
+          </Link>
         )}
 
         {/* User email — desktop only */}

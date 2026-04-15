@@ -371,14 +371,19 @@ func mainMenuText(user *domain.User, tgID int64, username string) string {
 	}
 	adminLine := ""
 	if user.IsAdmin {
-		adminLine = "\n⚙️ _режим администратора_"
+		adminLine = "\n⚙️ _Режим администратора_"
 	}
 	return fmt.Sprintf(
-		"🛡 *VPN Платформа*\n\n"+
-			"Привет, *%s*! 👋\n\n"+
-			"🏆 Баланс: *%d ЯД*  ·  🪪 ID: `%d`%s",
+		"🐍 *MelloWPN*\n\n"+
+			"Привет, *%s*! 👋\n"+
+			"━━━━━━━━━━━━━━━━━\n"+
+			"💎 Баланс: *%d ЯД* (~%.0f ₽)\n"+
+			"🪪 ID: `%d`%s\n"+
+			"━━━━━━━━━━━━━━━━━\n"+
+			"Выберите действие 👇",
 		name,
 		user.YADBalance,
+		float64(user.YADBalance)*2.5,
 		tgID,
 		adminLine,
 	)
@@ -387,21 +392,22 @@ func mainMenuText(user *domain.User, tgID int64, username string) string {
 func (b *Bot) mainMenuMarkup(user *domain.User) *tele.ReplyMarkup {
 	rm := &tele.ReplyMarkup{}
 
-	btnTrial := rm.Data("🆓 Пробный период", "menu_trial")
 	btnBuy := rm.Data("💎 Купить VPN", "menu_buy")
 	btnMySubs := rm.Data("📋 Мои подписки", "menu_mysubs")
+	btnTrial := rm.Data("🆓 Пробный период", "menu_trial")
 	btnPromo := rm.Data("🎟 Промокод", "menu_promo")
 	btnRef := rm.Data("👥 Рефералы", "menu_referrals")
-	btnYad := rm.Data("🛒 Магазин яда", "menu_yadshop")
+	btnYad := rm.Data("🛒 Магазин ЯД", "menu_yadshop")
 	btnHelp := rm.Data("❓ Помощь", "menu_help")
 	btnSupport := rm.Data("🔧 Поддержка", "menu_support")
+	btnInfo := rm.Data("ℹ️ О сервисе", "menu_info")
 
 	rows := []tele.Row{
-		rm.Row(btnTrial),
 		rm.Row(btnBuy, btnMySubs),
-		rm.Row(btnPromo, btnRef),
-		rm.Row(btnYad, btnHelp),
-		rm.Row(btnSupport),
+		rm.Row(btnTrial, btnPromo),
+		rm.Row(btnRef, btnYad),
+		rm.Row(btnHelp, btnSupport),
+		rm.Row(btnInfo),
 	}
 	if user.IsAdmin {
 		btnAdmin := rm.Data("⚙️ Админ-панель", "menu_admin")
@@ -506,9 +512,12 @@ func (b *Bot) handleStart(c tele.Context) error {
 	}
 	_ = c.Send(
 		fmt.Sprintf(
-			"🎉 *Добро пожаловать, %s!*\n\n"+
-				"✅ Аккаунт создан\n\n"+
-				"Попробуйте VPN бесплатно или сразу выберите подходящий тариф 👇",
+			"🎉 *Добро пожаловать в MelloWPN!*\n\n"+
+				"Привет, *%s*! Аккаунт создан ✅\n\n"+
+				"🆓 Попробуйте VPN бесплатно — активируйте пробный период\n"+
+				"💎 Или выберите тариф от *40 ₽/неделю*\n"+
+				"👥 Приглашайте друзей — получайте *15%%* бонус с каждого платежа\n\n"+
+				"Выберите действие в меню ниже 👇",
 			name,
 		),
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
@@ -539,14 +548,19 @@ func (b *Bot) handleBalance(c tele.Context) error {
 	)
 
 	return c.Send(fmt.Sprintf(
-		"💰 *Кошелёк*\n\n"+
+		"💰 *Кошелёк*\n"+
+			"━━━━━━━━━━━━━━━━━\n\n"+
+			"🏆 Баланс: *%d ЯД* (~%.0f ₽)\n"+
+			"📊 Курс: 1 ЯД ≈ 2.5 ₽\n\n"+
 			"🪪 Telegram ID: `%d`\n\n"+
-			"🏆 Яд-баланс: *%d ЯД*\n"+
-			"💸 Эквивалент: *%.0f ₽*\n\n"+
-			"📊 Курс: 1 ЯД = 2.5 ₽",
-		tgID,
+			"━━━━━━━━━━━━━━━━━\n"+
+			"💡 *Как заработать ЯД:*\n"+
+			"• 👥 Приглашайте друзей — *15%%* с платежей\n"+
+			"• 💎 Покупайте подписки — бонус ЯД\n"+
+			"• 🎟 Используйте промокоды",
 		user.YADBalance,
 		float64(user.YADBalance)*2.5,
+		tgID,
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
@@ -571,12 +585,17 @@ func (b *Bot) handleBuy(c tele.Context) error {
 	)
 
 	return c.Send(
-		"💎 *Купить VPN*\n\n"+
-			"Выберите период подписки:\n\n"+
-			"📅 *1 неделя* — 40 ₽ _(5.7 ₽/день)_\n"+
-			"📆 *1 месяц* — 100 ₽ _(3.3 ₽/день)_\n"+
-			"🗓 *3 месяца* — 270 ₽ _(3.0 ₽/день)_ 🔥 Выгоднее всего\n\n"+
-			"💡 _Оплата через безопасную платёжную систему_",
+		"💎 *Купить VPN*\n"+
+			"━━━━━━━━━━━━━━━━━\n\n"+
+			"📅 *1 неделя* — 40 ₽\n"+
+			"    ↳ 5.7 ₽/день · +5 ЯД бонус\n\n"+
+			"📆 *1 месяц* — 100 ₽  ⭐️\n"+
+			"    ↳ 3.3 ₽/день · +15 ЯД бонус\n\n"+
+			"🗓 *3 месяца* — 270 ₽  🔥\n"+
+			"    ↳ 3.0 ₽/день · +50 ЯД бонус\n\n"+
+			"━━━━━━━━━━━━━━━━━\n"+
+			"💳 Оплата через СБП\n"+
+			"🔄 Без автопродления",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 		rm,
 	)
@@ -604,11 +623,13 @@ func (b *Bot) handleBuyCallback(plan domain.SubscriptionPlan) tele.HandlerFunc {
 		)
 
 		return c.Send(fmt.Sprintf(
-			"💳 *Оплата подписки*\n\n"+
+			"💳 *Оплата подписки*\n"+
+				"━━━━━━━━━━━━━━━━━\n\n"+
 				"📋 Тариф: *%s*\n"+
 				"💰 Сумма: *%.0f ₽*\n"+
-				"🆔 ID платежа: `%s`\n\n"+
-				"_Ссылка действительна 15 минут_",
+				"🆔 Платёж: `%s`\n\n"+
+				"Нажмите кнопку ниже для перехода к оплате.\n"+
+				"_Ссылка действительна 15 минут._",
 			planName(plan),
 			float64(payment.AmountKopecks)/100,
 			payment.ID.String(),
@@ -643,34 +664,34 @@ func (b *Bot) handleMySubs(c tele.Context) error {
 		)
 	}
 
-	msg := "📋 *Мои подписки*\n"
+	msg := "📋 *Мои подписки*\n━━━━━━━━━━━━━━━━━\n"
 	for i, sub := range subs {
-		statusEmoji := "✅"
+		statusEmoji := "🟢"
 		statusText := "Активна"
 		switch sub.Status {
 		case domain.SubStatusExpired:
-			statusEmoji = "❌"
+			statusEmoji = "🔴"
 			statusText = "Истекла"
 		case domain.SubStatusTrial:
 			statusEmoji = "🆓"
 			statusText = "Пробная"
 		case domain.SubStatusCanceled:
-			statusEmoji = "🚫"
+			statusEmoji = "⚫"
 			statusText = "Отменена"
 		}
 		daysLeft := int(time.Until(sub.ExpiresAt).Hours() / 24)
 		daysStr := ""
 		if sub.Status == domain.SubStatusActive || sub.Status == domain.SubStatusTrial {
 			if daysLeft > 0 {
-				daysStr = fmt.Sprintf(" · *%d дн.*", daysLeft)
+				daysStr = fmt.Sprintf("\n   ⏳ Осталось: *%d дн.*", daysLeft)
 			} else {
-				daysStr = " · ⏰ _Подписка закончилась_"
+				daysStr = "\n   ⏰ _Подписка закончилась_"
 			}
 		}
 		msg += fmt.Sprintf(
-			"\n%d. %s *%s* — %s%s\n   📅 до `%s`",
-			i+1, statusEmoji, planName(sub.Plan), statusText, daysStr,
-			sub.ExpiresAt.Format("02.01.2006"),
+			"\n%s %d. *%s* — %s\n   📅 До: `%s`%s\n",
+			statusEmoji, i+1, planName(sub.Plan), statusText,
+			sub.ExpiresAt.Format("02.01.2006"), daysStr,
 		)
 	}
 
@@ -751,15 +772,16 @@ func (b *Bot) handleReferral(c tele.Context) error {
 	)
 
 	return c.Send(fmt.Sprintf(
-		"👥 *Реферальная программа*\n\n"+
+		"👥 *Реферальная программа*\n"+
+			"━━━━━━━━━━━━━━━━━\n\n"+
 			"🔗 Ваша ссылка:\n`%s`\n\n"+
-			"📊 *Статистика:*\n"+
-			"👤 Приглашено: *%d* чел.\n"+
-			"💎 Бонус: *15%%* от каждого платежа\n\n"+
-			"💡 *Условия выплаты:*\n"+
-			"• 30%% — начисляется сразу\n"+
-			"• 70%% — через 30 дней\n"+
-			"• Выплаты в ЯД",
+			"📊 Приглашено: *%d* чел.\n\n"+
+			"💎 *Как это работает:*\n"+
+			"Друг покупает подписку → вы получаете *15%%* в ЯД\n\n"+
+			"💰 *Выплата бонуса:*\n"+
+			"• 30%% — сразу после оплаты\n"+
+			"• 70%% — через 30 дней\n\n"+
+			"📤 _Поделитесь ссылкой через кнопку ниже_",
 		referralLink,
 		len(refs),
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
@@ -781,13 +803,14 @@ func (b *Bot) handleTrial(c tele.Context) error {
 	)
 
 	return c.Send(
-		"🆓 *Пробный период*\n\n"+
-			"Попробуйте VPN бесплатно перед покупкой!\n\n"+
-			"*Как получить:*\n"+
+		"🆓 *Пробный период*\n"+
+			"━━━━━━━━━━━━━━━━━\n\n"+
+			"Попробуйте VPN бесплатно!\n\n"+
+			"📌 *Что нужно сделать:*\n"+
 			"1️⃣ Зарегистрируйтесь на сайте\n"+
-			"2️⃣ Перейдите в раздел *«Подписки»*\n"+
-			"3️⃣ Нажмите *«Получить пробный период»*\n\n"+
-			"_После регистрации привяжите Telegram в настройках_",
+			"2️⃣ Перейдите в *«Подписки»*\n"+
+			"3️⃣ Нажмите *«Активировать пробный период»*\n\n"+
+			"✅ Без оплаты · Без привязки карты",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 		rm,
 	)
@@ -808,15 +831,17 @@ func (b *Bot) handleTicketMenu(c tele.Context) error {
 
 	if len(tickets) == 0 {
 		return c.Send(
-			"🔧 *Поддержка*\n\n"+
-				"📭 Открытых тикетов нет.\n\n"+
-				"Для создания обращения перейдите на сайт в раздел *«Поддержка»*.",
+			"🔧 *Поддержка*\n"+
+				"━━━━━━━━━━━━━━━━━\n\n"+
+				"📭 Открытых обращений нет.\n\n"+
+				"Создать тикет → перейдите на сайт в раздел *«Поддержка»*.\n"+
+				"Или напишите: @Mellow\\_support",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 			rm,
 		)
 	}
 
-	msg := "🔧 *Ваши тикеты:*\n\n"
+	msg := "🔧 *Поддержка*\n━━━━━━━━━━━━━━━━━\n\n"
 	for _, t := range tickets {
 		statusEmoji := "🟢"
 		if t.Status == "closed" {
@@ -840,18 +865,24 @@ func (b *Bot) handleHelp(c tele.Context) error {
 		rm.Row(backBtn(rm)),
 	)
 	return c.Send(
-		"❓ *Помощь*\n\n"+
-			"*Основные команды:*\n"+
-			"💰 /balance — баланс и Telegram ID\n"+
-			"📋 /mysubs — мои подписки\n"+
-			"💎 /buy — купить подписку\n"+
-			"🆓 /trial — пробный период\n"+
-			"👥 /referral — реферальная программа\n"+
-			"🔧 /ticket — поддержка\n"+
-			"🎟 /promo КОД — активировать промокод\n"+
-			"🔑 /resetpassword — сбросить пароль\n"+
-			"🔓 /unlink — отвязать Telegram\n\n"+
-			"_По всем вопросам обращайтесь через /ticket_",
+		"❓ *Помощь*\n"+
+			"━━━━━━━━━━━━━━━━━\n\n"+
+			"🔹 *Подписка и VPN:*\n"+
+			"  /buy — купить подписку\n"+
+			"  /mysubs — список подписок\n"+
+			"  /trial — бесплатный пробный период\n\n"+
+			"🔹 *Кошелёк и бонусы:*\n"+
+			"  /balance — баланс ЯД\n"+
+			"  /referral — реферальная программа\n"+
+			"  /promo КОД — активировать промокод\n\n"+
+			"🔹 *Аккаунт:*\n"+
+			"  /resetpassword — сбросить пароль\n"+
+			"  /link КОД — привязать Telegram\n"+
+			"  /unlink — отвязать Telegram\n\n"+
+			"🔹 *Прочее:*\n"+
+			"  /ticket — поддержка\n"+
+			"  /info — документы и контакты\n\n"+
+			"_Вопросы? Пишите в /ticket или @Mellow\\_support_",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 		rm,
 	)
@@ -875,10 +906,13 @@ func (b *Bot) handleInfo(c tele.Context) error {
 	)
 
 	return c.Send(
-		"ℹ️ *Информация*\n\n"+
-			"Поддержка: @Mellow_support\n"+
-			"Личный кабинет: управление подпиской, балансом и устройствами\n\n"+
-			"Документы доступны по кнопкам ниже.",
+		"ℹ️ *О сервисе MelloWPN*\n"+
+			"━━━━━━━━━━━━━━━━━\n\n"+
+			"🛡 Протокол: VLESS/Reality\n"+
+			"📱 Все платформы: iOS, Android, Windows, macOS, Linux\n"+
+			"🚫 Без рекламы и трекеров\n\n"+
+			"💬 Поддержка: @Mellow\\_support\n\n"+
+			"Документы доступны по кнопкам ниже:",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 		rm,
 	)
@@ -973,6 +1007,10 @@ func (b *Bot) RegisterBuyCallbacks() {
 		_ = c.Respond()
 		return b.handleReferral(c)
 	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_info"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleInfo(c)
+	})
 	b.bot.Handle(&tele.Btn{Unique: "menu_yadshop"}, func(c tele.Context) error {
 		_ = c.Respond()
 		ctx := context.Background()
@@ -991,13 +1029,14 @@ func (b *Bot) RegisterBuyCallbacks() {
 			rm.Row(backBtn(rm)),
 		)
 		return c.Send(fmt.Sprintf(
-			"🛒 *Магазин яда*\n\n"+
-				"🏆 Ваш баланс: *%d ЯД* (%.0f ₽)\n\n"+
-				"Покупайте подписки за ЯД — это выгоднее!\n\n"+
+			"🛒 *Магазин ЯД*\n"+
+				"━━━━━━━━━━━━━━━━━\n\n"+
+				"💎 Ваш баланс: *%d ЯД* (~%.0f ₽)\n\n"+
+				"Покупайте подписки за ЯД — дешевле, чем за рубли!\n\n"+
 				"📅 1 неделя — *%d ЯД*\n"+
-				"📆 1 месяц — *%d ЯД*\n"+
-				"🗓 3 месяца — *%d ЯД* 🔥\n\n"+
-				"_Для покупки перейдите на сайт:_",
+				"📆 1 месяц — *%d ЯД*  ⭐️\n"+
+				"🗓 3 месяца — *%d ЯД*  🔥\n\n"+
+				"_Откройте магазин на сайте:_",
 			user.YADBalance,
 			float64(user.YADBalance)*2.5,
 			domain.PlanYADPrice(domain.PlanWeek),

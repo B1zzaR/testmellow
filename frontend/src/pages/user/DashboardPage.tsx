@@ -190,8 +190,9 @@ export function DashboardPage() {
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-4">
         <StatCard
-          label="Баланс ЯДА"
+          label="Баланс ЯД"
           value={formatYAD(balance?.yad_balance ?? profile?.yad_balance ?? 0)}
+          sub={`~${((balance?.yad_balance ?? profile?.yad_balance ?? 0) * 2.5).toFixed(0)} ₽`}
           icon={<Icon name="skull" size={28} />}
           accent
         />
@@ -246,9 +247,29 @@ export function DashboardPage() {
           {/* Traffic stats */}
           {trafficData && (
             <div className="mt-3 border-t border-gray-100 dark:border-surface-700 pt-3">
-              <p className="text-xs text-gray-500 dark:text-slate-500">
-                Трафик: <span className="font-medium">{formatBytes(trafficData.used_bytes)}</span>
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-600">
+                Трафик
               </p>
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm font-semibold text-gray-900 dark:text-slate-100">
+                  {formatBytes(trafficData.used_bytes)}
+                </span>
+                {trafficData.limit_bytes > 0 ? (
+                  <span className="text-xs text-gray-400 dark:text-slate-500">
+                    / {formatBytes(trafficData.limit_bytes)}
+                  </span>
+                ) : (
+                  <span className="text-xs text-gray-400 dark:text-slate-500">/ ∞</span>
+                )}
+              </div>
+              {trafficData.limit_bytes > 0 && (
+                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-surface-700">
+                  <div
+                    className="h-full rounded-full bg-primary-500 transition-all"
+                    style={{ width: `${Math.min(100, (trafficData.used_bytes / trafficData.limit_bytes) * 100)}%` }}
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -294,7 +315,7 @@ export function DashboardPage() {
           {[
             { to: '/subscriptions', icon: 'shield'  as const, label: 'Подписки',  description: 'Купить или продлить' },
             { to: '/referrals',     icon: 'users'   as const, label: 'Рефералы',    description: 'Пригласить друзей' },
-            { to: '/shop',          icon: 'shop'    as const, label: 'Магазин',     description: 'Потратить ЯД' },
+            { to: '/shop',          icon: 'shop'    as const, label: 'Магазин ЯД',  description: 'Потратить ЯД' },
             { to: '/promo',         icon: 'tag'     as const, label: 'Промокод',   description: 'Активировать код' },
           ].map((action) => (
             <Link

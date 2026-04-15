@@ -17,7 +17,7 @@ const navItems: NavItem[] = [
   { to: '/dashboard',        label: 'Обзор',           icon: 'dashboard',  end: true },
   { to: '/subscriptions',    label: 'Подписки',        icon: 'shield'               },
   { to: '/referrals',        label: 'Рефералы',        icon: 'users'                },
-  { to: '/shop',             label: 'Магазин',         icon: 'shop'                 },
+  { to: '/shop',             label: 'Магазин ЯД',      icon: 'shop'                 },
   { to: '/tickets',          label: 'Поддержка',       icon: 'message'              },
   { to: '/promo',            label: 'Промокод',        icon: 'tag'                  },
   { to: '/payments/history', label: 'Платежи',         icon: 'coins'                },
