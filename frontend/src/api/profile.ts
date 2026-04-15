@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { User, BalanceResponse, YADTransaction, TrafficStats } from './types'
+import type { User, BalanceResponse, YADTransaction, TrafficStats, AccountActivity } from './types'
 
 export const profileApi = {
   getProfile: async (): Promise<User> => {
@@ -21,7 +21,7 @@ export const profileApi = {
   },
 
   setTelegramID: async (telegramID: number | null, password?: string): Promise<{ message: string; merged: boolean; transferred_yad?: number; transferred_subs?: number }> => {
-    const res = await apiClient.put<{ message: string; merged: boolean; transferred_yad?: number; transferred_subs?: number }>('/api/profile/telegram', { telegram_id: telegramID, password: password ?? '' })
+    const res = await apiClient.put<{ message: string; merged: boolean; transferred_yad?: number; transferred_subs?: number }>('/api/profile/telegram', { telegram_id: telegramID, code: password ?? '' })
     return res.data
   },
 
@@ -32,6 +32,16 @@ export const profileApi = {
 
   requestLinkCode: async (): Promise<{ code: string; bot_username: string; expires_in: number }> => {
     const res = await apiClient.post<{ code: string; bot_username: string; expires_in: number }>('/api/profile/telegram/link-code')
+    return res.data
+  },
+
+  requestUnlinkCode: async (): Promise<{ message: string; expires_in: number }> => {
+    const res = await apiClient.post<{ message: string; expires_in: number }>('/api/profile/telegram/unlink-code')
+    return res.data
+  },
+
+  getActivity: async (limit = 50): Promise<{ activity: AccountActivity[] }> => {
+    const res = await apiClient.get<{ activity: AccountActivity[] }>(`/api/profile/activity?limit=${limit}`)
     return res.data
   },
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/vpnplatform/internal/repository/postgres"
 	redisrepo "github.com/vpnplatform/internal/repository/redis"
 	"github.com/vpnplatform/internal/service"
+	"github.com/vpnplatform/internal/worker"
 	jwtpkg "github.com/vpnplatform/pkg/jwt"
 	"github.com/vpnplatform/pkg/password"
 )
@@ -130,9 +131,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	user, err := h.auth.Login(c.Request.Context(), service.LoginInput{
-		Username: req.Username,
-		Password: req.Password,
-		IP:       c.ClientIP(),
+		Username:  req.Username,
+		Password:  req.Password,
+		IP:        c.ClientIP(),
+		UserAgent: c.GetHeader("User-Agent"),
 	})
 	if err != nil {
 		// Show the ban message specifically; keep wrong-credentials generic.
@@ -381,20 +383,40 @@ func (h *ProfileHandler) ChangePassword(c *gin.Context) {
 		h.log.Warn("set password version failed", zap.Error(vErr))
 	}
 
+	// Activity log (best-effort)
+	ip := c.ClientIP()
+	ua := strings.TrimSpace(c.GetHeader("User-Agent"))
+	var ipPtr *string
+	var uaPtr *string
+	if ip != "" {
+		ipPtr = &ip
+	}
+	if ua != "" {
+		uaPtr = &ua
+	}
+	_ = h.repo.CreateAccountActivity(c.Request.Context(), &domain.AccountActivity{
+		ID:        uuid.New(),
+		UserID:    userID,
+		EventType: "password_change",
+		IP:        ipPtr,
+		UserAgent: uaPtr,
+		Details:   nil,
+		CreatedAt: time.Now(),
+	})
+
 	c.JSON(http.StatusOK, gin.H{"message": "password updated"})
 }
 
 // PUT /api/profile/telegram
 // This endpoint only allows UNLINKING (sending null telegram_id).
 // Linking is performed exclusively via the Telegram bot /link CODE flow (C-1).
-// Unlinking requires the current password to prevent attackers with a stolen
-// session from disabling Telegram-based password recovery.
+// Unlinking requires a short-lived confirmation code delivered via Telegram.
 func (h *ProfileHandler) UpdateTelegram(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 
 	var req struct {
 		TelegramID *int64 `json:"telegram_id"`
-		Password   string `json:"password"`
+		Code       string `json:"code"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -408,9 +430,9 @@ func (h *ProfileHandler) UpdateTelegram(c *gin.Context) {
 		return
 	}
 
-	// Require password to unlink Telegram — protects password recovery channel.
-	if req.Password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "для отвязки Telegram необходимо указать пароль"})
+	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	if code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "для отвязки Telegram нужен код подтверждения из бота"})
 		return
 	}
 
@@ -419,8 +441,21 @@ func (h *ProfileHandler) UpdateTelegram(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
 		return
 	}
-	if user.PasswordHash == nil || !password.Verify(*user.PasswordHash, req.Password) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "неверный пароль"})
+	if user.TelegramID == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Telegram уже не привязан"})
+		return
+	}
+
+	// Validate one-time unlink code stored in Redis (GetDel to consume).
+	key := fmt.Sprintf("tg:unlink:%s", code)
+	uid, rErr := h.rdb.GetDel(c.Request.Context(), key).Result()
+	if rErr == redis.Nil || uid == "" || uid != userID.String() {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "код не найден или истёк"})
+		return
+	}
+	if rErr != nil {
+		h.log.Warn("unlink code redis getdel", zap.Error(rErr))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
 		return
 	}
 
@@ -428,7 +463,89 @@ func (h *ProfileHandler) UpdateTelegram(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось отвязать Telegram"})
 		return
 	}
+
+	// Activity log (best-effort)
+	ip := c.ClientIP()
+	ua := strings.TrimSpace(c.GetHeader("User-Agent"))
+	var ipPtr *string
+	var uaPtr *string
+	if ip != "" {
+		ipPtr = &ip
+	}
+	if ua != "" {
+		uaPtr = &ua
+	}
+	_ = h.repo.CreateAccountActivity(c.Request.Context(), &domain.AccountActivity{
+		ID:        uuid.New(),
+		UserID:    userID,
+		EventType: "telegram_unlink",
+		IP:        ipPtr,
+		UserAgent: uaPtr,
+		Details:   nil,
+		CreatedAt: time.Now(),
+	})
+
 	c.JSON(http.StatusOK, gin.H{"message": "Telegram отвязан"})
+}
+
+// POST /api/profile/telegram/unlink-code
+// Generates a short-lived one-time code and sends it to the linked Telegram.
+func (h *ProfileHandler) GenerateUnlinkCode(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := middleware.CurrentUserID(c)
+
+	user, err := h.repo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
+		return
+	}
+	if user.TelegramID == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Telegram не привязан"})
+		return
+	}
+
+	// Rate-limit: 3 requests per 10 minutes per user.
+	rlKey := fmt.Sprintf("rl:unlink_code:%s", userID.String())
+	count, rlErr := redisrepo.Increment(ctx, h.rdb, rlKey, 10*time.Minute)
+	if rlErr == nil && count > 3 {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "слишком много запросов, повторите позже"})
+		return
+	}
+
+	code, err := generateLinkCode()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+	key := fmt.Sprintf("tg:unlink:%s", code)
+	if err := h.rdb.Set(ctx, key, userID.String(), 10*time.Minute).Err(); err != nil {
+		h.log.Error("generate unlink code: redis set", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+
+	// Send code to Telegram via worker queue (if configured).
+	_ = worker.Enqueue(ctx, h.rdb, worker.QueueNotifyTelegram, worker.NotifyTelegramJob{
+		TelegramID: *user.TelegramID,
+		Message:    fmt.Sprintf("🔐 <b>Код для отвязки Telegram</b>\n\nКод: <code>%s</code>\n\nСрок действия: 10 минут.", code),
+	})
+
+	c.JSON(http.StatusOK, gin.H{"message": "код отправлен в Telegram", "expires_in": 600})
+}
+
+// GET /api/profile/activity?limit=50
+func (h *ProfileHandler) Activity(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	items, err := h.repo.ListAccountActivity(c.Request.Context(), userID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить активность"})
+		return
+	}
+	if items == nil {
+		items = []*domain.AccountActivity{}
+	}
+	c.JSON(http.StatusOK, gin.H{"activity": items})
 }
 
 // GET /api/profile/traffic

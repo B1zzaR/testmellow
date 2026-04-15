@@ -46,7 +46,7 @@ func main() {
 	remnaClient := remnawave.NewClient(cfg.Remna, log)
 	antiEngine := anticheat.NewEngine(rdb, log)
 
-	authSvc := service.NewAuthService(userRepo, antiEngine, log, cfg.App.AdminLogin)
+	authSvc := service.NewAuthService(userRepo, antiEngine, rdb, log, cfg.App.AdminLogin)
 	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log)
 	ecoSvc := service.NewEconomyService(userRepo, remnaClient, antiEngine, log)
 	trialSvc := service.NewTrialService(userRepo, remnaClient, log)

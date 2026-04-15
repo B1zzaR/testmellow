@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -28,13 +29,14 @@ import (
 type AuthService struct {
 	repo       *postgres.UserRepo
 	anti       *anticheat.Engine
+	rdb        *redis.Client
 	log        *zap.Logger
 	adminLogin string // login that is auto-granted is_admin
 }
 
-func NewAuthService(repo *postgres.UserRepo, anti *anticheat.Engine, log *zap.Logger, adminLogin string) *AuthService {
+func NewAuthService(repo *postgres.UserRepo, anti *anticheat.Engine, rdb *redis.Client, log *zap.Logger, adminLogin string) *AuthService {
 	// Normalise once at construction so comparisons are always exact (C-5).
-	return &AuthService{repo: repo, anti: anti, log: log, adminLogin: strings.ToLower(strings.TrimSpace(adminLogin))}
+	return &AuthService{repo: repo, anti: anti, rdb: rdb, log: log, adminLogin: strings.ToLower(strings.TrimSpace(adminLogin))}
 }
 
 type RegisterInput struct {
@@ -54,9 +56,13 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 		return nil, errors.New("пароль должен содержать не менее 8 символов")
 	}
 
-	// Rate limit registration by IP (max 3 per hour)
-	if err := s.anti.CheckIPRateLimit(ctx, input.IP, "register", 3, time.Hour); err != nil {
-		return nil, err
+	// Rate limit registration by IP (max 3 per hour).
+	// If IP is unknown/invalid (e.g. Telegram bot registrations), skip IP-based limiting.
+	ipOK := net.ParseIP(strings.TrimSpace(input.IP)) != nil
+	if ipOK {
+		if err := s.anti.CheckIPRateLimit(ctx, input.IP, "register", 3, time.Hour); err != nil {
+			return nil, err
+		}
 	}
 
 	existing, err := s.repo.GetByUsername(ctx, username)
@@ -69,7 +75,10 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 
 	// Check for IP and device-fingerprint abuse (H-5).
 	newUserID := uuid.New()
-	sameIPCount, _ := s.repo.CountUsersFromIP(ctx, input.IP, newUserID)
+	sameIPCount := 0
+	if ipOK {
+		sameIPCount, _ = s.repo.CountUsersFromIP(ctx, input.IP, newUserID)
+	}
 	sameFPCount, _ := s.repo.CountUsersFromFingerprint(ctx, input.DeviceFingerprint, newUserID)
 
 	// Hard block: max 3 accounts per IP, max 2 per device fingerprint
@@ -105,7 +114,12 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 		RiskScore:         riskDelta,
 		IsAdmin:           s.adminLogin != "" && strings.ToLower(username) == s.adminLogin,
 		DeviceFingerprint: &input.DeviceFingerprint,
-		LastKnownIP:       &input.IP,
+		LastKnownIP: func() *string {
+			if ipOK && input.IP != "" {
+				return &input.IP
+			}
+			return nil
+		}(),
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
 	}
@@ -155,9 +169,10 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 }
 
 type LoginInput struct {
-	Username string
-	Password string
-	IP       string
+	Username   string
+	Password   string
+	IP         string
+	UserAgent  string
 }
 
 func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User, error) {
@@ -191,6 +206,48 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User
 		} else {
 			user.IsAdmin = true
 		}
+	}
+
+	// Detect new IP before we overwrite last_known_ip.
+	prevIP := ""
+	if user.LastKnownIP != nil {
+		prevIP = *user.LastKnownIP
+	}
+	isNewIP := prevIP != "" && input.IP != "" && prevIP != input.IP
+
+	// Update last known IP (best-effort).
+	if input.IP != "" {
+		_ = s.repo.UpdateLastKnownIP(ctx, user.ID, input.IP)
+	}
+
+	// Activity log (best-effort).
+	ip := input.IP
+	ua := strings.TrimSpace(input.UserAgent)
+	var ipPtr *string
+	var uaPtr *string
+	if ip != "" {
+		ipPtr = &ip
+	}
+	if ua != "" {
+		uaPtr = &ua
+	}
+	_ = s.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
+		ID:        uuid.New(),
+		UserID:    user.ID,
+		EventType: "login",
+		IP:        ipPtr,
+		UserAgent: uaPtr,
+		Details:   nil,
+		CreatedAt: time.Now(),
+	})
+
+	// Notify in Telegram on new IP (best-effort, via worker queue).
+	if isNewIP && s.rdb != nil && user.TelegramID != nil && *user.TelegramID != 0 {
+		msg := fmt.Sprintf("⚠️ <b>Вход с нового IP</b>\n\nIP: %s\nЕсли это были не вы — срочно смените пароль.", input.IP)
+		_ = worker.Enqueue(ctx, s.rdb, worker.QueueNotifyTelegram, worker.NotifyTelegramJob{
+			TelegramID: *user.TelegramID,
+			Message:    msg,
+		})
 	}
 
 	return user, nil

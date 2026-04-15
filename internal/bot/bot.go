@@ -390,7 +390,7 @@ func (b *Bot) handleStart(c tele.Context) error {
 		Username:     login,
 		Password:     randPass,
 		ReferralCode: referralCode,
-		IP:           "0.0.0.0",
+		IP:           "",
 	})
 	if err != nil {
 		if existing, lookupErr := b.repo.GetByUsername(ctx, login); lookupErr == nil && existing != nil && existing.TelegramID == nil {

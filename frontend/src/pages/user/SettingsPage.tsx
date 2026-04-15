@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { profileApi } from '@/api/profile'
 import { useProfile } from '@/hooks/useProfile'
 import { Card } from '@/components/ui/Card'
@@ -16,17 +16,23 @@ function TelegramSection() {
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const [linkCode, setLinkCode] = useState<{ code: string; bot_username: string } | null>(null)
   const [copied, setCopied] = useState(false)
-  const [unlinkPassword, setUnlinkPassword] = useState('')
+  const [unlinkCode, setUnlinkCode] = useState('')
   const [showUnlinkForm, setShowUnlinkForm] = useState(false)
 
   const unlinkMutation = useMutation({
-    mutationFn: () => profileApi.setTelegramID(null, unlinkPassword),
+    mutationFn: () => profileApi.setTelegramID(null, unlinkCode),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['profile'] })
       setFlash({ type: 'success', msg: 'Telegram отвязан' })
-      setUnlinkPassword('')
+      setUnlinkCode('')
       setShowUnlinkForm(false)
     },
+    onError: (e: Error) => setFlash({ type: 'error', msg: e.message }),
+  })
+
+  const requestUnlinkCodeMutation = useMutation({
+    mutationFn: () => profileApi.requestUnlinkCode(),
+    onSuccess: () => setFlash({ type: 'success', msg: 'Код отправлен в Telegram' }),
     onError: (e: Error) => setFlash({ type: 'error', msg: e.message }),
   })
 
@@ -82,12 +88,17 @@ function TelegramSection() {
           </p>
           {showUnlinkForm ? (
             <div className="space-y-3">
+              <Button
+                variant="secondary"
+                onClick={() => { setFlash(null); requestUnlinkCodeMutation.mutate() }}
+                loading={requestUnlinkCodeMutation.isPending}
+              >
+                Получить код в Telegram
+              </Button>
               <Input
-                label="Пароль для подтверждения"
-                type="password"
-                value={unlinkPassword}
-                onChange={(e) => setUnlinkPassword(e.target.value)}
-                autoComplete="current-password"
+                label="Код подтверждения из Telegram"
+                value={unlinkCode}
+                onChange={(e) => setUnlinkCode(e.target.value)}
                 required
               />
               <div className="flex gap-2">
@@ -95,8 +106,8 @@ function TelegramSection() {
                   variant="secondary"
                   onClick={() => {
                     setFlash(null)
-                    if (!unlinkPassword) {
-                      setFlash({ type: 'error', msg: 'Введите пароль для подтверждения' })
+                    if (!unlinkCode) {
+                      setFlash({ type: 'error', msg: 'Введите код из Telegram' })
                       return
                     }
                     unlinkMutation.mutate()
@@ -107,7 +118,7 @@ function TelegramSection() {
                 </Button>
                 <Button
                   variant="secondary"
-                  onClick={() => { setShowUnlinkForm(false); setUnlinkPassword(''); setFlash(null) }}
+                  onClick={() => { setShowUnlinkForm(false); setUnlinkCode(''); setFlash(null) }}
                 >
                   Отмена
                 </Button>
@@ -282,6 +293,64 @@ function PasswordSection() {
   )
 }
 
+// ─── Activity section ─────────────────────────────────────────────────────────
+
+function ActivitySection() {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['profile_activity'],
+    queryFn: () => profileApi.getActivity(30),
+  })
+
+  const activity = data?.activity ?? []
+
+  const label = (t: string) => {
+    switch (t) {
+      case 'login': return 'Вход в аккаунт'
+      case 'password_change': return 'Смена пароля'
+      case 'telegram_unlink': return 'Отвязка Telegram'
+      case 'telegram_link': return 'Привязка Telegram'
+      default: return t
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-slate-100">
+          <Icon name="clock" size={18} className="text-primary-500" />
+          Журнал активности
+        </h2>
+        <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">
+          Последние действия в вашем аккаунте
+        </p>
+      </div>
+
+      {isLoading ? (
+        <p className="text-sm text-gray-500 dark:text-slate-500">Загрузка…</p>
+      ) : error ? (
+        <Alert variant="error" message={(error as Error).message} />
+      ) : activity.length === 0 ? (
+        <p className="text-sm text-gray-500 dark:text-slate-500">Пока нет записей.</p>
+      ) : (
+        <div className="space-y-2">
+          {activity.map((a) => (
+            <div key={a.id} className="rounded-lg border border-gray-200 dark:border-surface-700 px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-gray-900 dark:text-slate-100">{label(a.event_type)}</p>
+                <p className="text-xs text-gray-400 dark:text-slate-600">{new Date(a.created_at).toLocaleString()}</p>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-slate-500">
+                {a.ip && <span>IP: {a.ip}</span>}
+                {a.user_agent && <span className="truncate max-w-full">UA: {a.user_agent}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
@@ -300,6 +369,10 @@ export function SettingsPage() {
           <PasswordSection />
         </Card>
       </div>
+
+      <Card>
+        <ActivitySection />
+      </Card>
     </div>
   )
 }

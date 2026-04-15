@@ -137,6 +137,16 @@ export interface DeviceListResponse {
   limit: number
 }
 
+export interface AccountActivity {
+  id: string
+  user_id: string
+  event_type: string
+  ip: string | null
+  user_agent: string | null
+  details: string | null
+  created_at: string
+}
+
 export interface Analytics {
   total_users: number
   active_subscriptions: number

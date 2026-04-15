@@ -72,7 +72,7 @@ func main() {
 	deviceRepo := dbpkg.NewDeviceRepo(db)
 	antiEngine := anticheat.NewEngine(rdb, log)
 
-	authSvc := service.NewAuthService(userRepo, antiEngine, log, cfg.App.AdminLogin)
+	authSvc := service.NewAuthService(userRepo, antiEngine, rdb, log, cfg.App.AdminLogin)
 	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log)
 	ecoSvc := service.NewEconomyService(userRepo, remnaClient, antiEngine, log)
 	trialSvc := service.NewTrialService(userRepo, remnaClient, log)
@@ -145,9 +145,11 @@ func main() {
 		api.GET("/profile", profileH.Get)
 		api.GET("/profile/connection", profileH.GetConnection)
 		api.GET("/profile/traffic", profileH.GetTraffic)
+		api.GET("/profile/activity", profileH.Activity)
 		api.POST("/profile/password", profileH.ChangePassword)
 		api.PUT("/profile/telegram", profileH.UpdateTelegram)
 		api.POST("/profile/telegram/link-code", profileH.GenerateLinkCode)
+		api.POST("/profile/telegram/unlink-code", profileH.GenerateUnlinkCode)
 		api.GET("/balance", balanceH.Get)
 		api.GET("/balance/history", balanceH.History)
 

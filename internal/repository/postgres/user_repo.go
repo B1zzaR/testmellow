@@ -308,6 +308,11 @@ func (r *UserRepo) UpdateFingerprint(ctx context.Context, userID uuid.UUID, fp, 
 	return err
 }
 
+func (r *UserRepo) UpdateLastKnownIP(ctx context.Context, userID uuid.UUID, ip string) error {
+	_, err := r.db.Exec(ctx, `UPDATE users SET last_known_ip=$1::inet, updated_at=NOW() WHERE id=$2`, ip, userID)
+	return err
+}
+
 // BanUser bans a user
 func (r *UserRepo) BanUser(ctx context.Context, userID uuid.UUID) error {
 	_, err := r.db.Exec(ctx, `UPDATE users SET is_banned=TRUE, updated_at=NOW() WHERE id=$1`, userID)
@@ -1191,6 +1196,43 @@ func (r *UserRepo) CreateRiskEvent(ctx context.Context, userID *uuid.UUID, event
 		userID, eventType, ip, fp, delta, details,
 	)
 	return err
+}
+
+// ─── Account Activity ─────────────────────────────────────────────────────────
+
+func (r *UserRepo) CreateAccountActivity(ctx context.Context, a *domain.AccountActivity) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO account_activity (id, user_id, event_type, ip, user_agent, details, created_at)
+		VALUES ($1,$2,$3,$4::inet,$5,$6::jsonb,$7)`,
+		a.ID, a.UserID, a.EventType, a.IP, a.UserAgent, a.Details, a.CreatedAt,
+	)
+	return err
+}
+
+func (r *UserRepo) ListAccountActivity(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.AccountActivity, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id, user_id, event_type, ip::text, user_agent, details::text, created_at
+		FROM account_activity
+		WHERE user_id=$1
+		ORDER BY created_at DESC
+		LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*domain.AccountActivity
+	for rows.Next() {
+		a := &domain.AccountActivity{}
+		if err := rows.Scan(&a.ID, &a.UserID, &a.EventType, &a.IP, &a.UserAgent, &a.Details, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // ─── Analytics ────────────────────────────────────────────────────────────────

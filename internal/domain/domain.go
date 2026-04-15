@@ -374,3 +374,15 @@ type SystemNotification struct {
 	CreatedAt time.Time        `db:"created_at" json:"created_at"`
 	UpdatedAt time.Time        `db:"updated_at" json:"updated_at"`
 }
+
+// ─── Account Activity ─────────────────────────────────────────────────────────
+
+type AccountActivity struct {
+	ID        uuid.UUID `db:"id" json:"id"`
+	UserID    uuid.UUID `db:"user_id" json:"user_id"`
+	EventType string    `db:"event_type" json:"event_type"`
+	IP        *string   `db:"ip" json:"ip"`
+	UserAgent *string   `db:"user_agent" json:"user_agent"`
+	Details   *string   `db:"details" json:"details"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
+}
