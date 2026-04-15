@@ -82,7 +82,7 @@ func main() {
 	jwtMgr := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTLHours)
 
 	// ── Handlers ──────────────────────────────────────────────────────────
-	authH := httpHandler.NewAuthHandler(authSvc, jwtMgr, rdb, log)
+	authH := httpHandler.NewAuthHandler(authSvc, userRepo, jwtMgr, rdb, log)
 	profileH := httpHandler.NewProfileHandler(userRepo, remnaClient, rdb, cfg.Telegram.BotUsername, log)
 	balanceH := httpHandler.NewBalanceHandler(userRepo, log)
 	subH := httpHandler.NewSubscriptionHandler(subSvc, userRepo, log)
@@ -92,7 +92,7 @@ func main() {
 	trialH := httpHandler.NewTrialHandler(trialSvc, log)
 	deviceH := httpHandler.NewDeviceHandler(deviceSvc, userRepo, log)
 	ticketH := httpHandler.NewTicketHandler(userRepo, log)
-	shopH := httpHandler.NewShopHandler(userRepo, ecoSvc, log)
+	shopH := httpHandler.NewShopHandler(userRepo, ecoSvc, subSvc, log)
 	webhookH := webhookHandler.NewPlategalHandler(platClient, userRepo, rdb, log)
 	adminH := adminHandler.NewHandler(userRepo, rdb, antiEngine, platClient, remnaClient, log)
 
@@ -137,6 +137,7 @@ func main() {
 		auth.POST("/login", middleware.IPRateLimit(rdb, "login", 10, 15*time.Minute), authH.Login)
 		auth.POST("/refresh", authH.Refresh)
 		auth.POST("/logout", authH.Logout)
+		auth.GET("/2fa/check", middleware.IPRateLimit(rdb, "2fa_check", 60, time.Minute), authH.TFACheck)
 	}
 
 	// Protected user endpoints
@@ -150,6 +151,7 @@ func main() {
 		api.PUT("/profile/telegram", profileH.UpdateTelegram)
 		api.POST("/profile/telegram/link-code", profileH.GenerateLinkCode)
 		api.POST("/profile/telegram/unlink-code", profileH.GenerateUnlinkCode)
+		api.POST("/profile/tfa", profileH.ToggleTFA)
 		api.GET("/balance", balanceH.Get)
 		api.GET("/balance/history", balanceH.History)
 
@@ -179,6 +181,7 @@ func main() {
 		api.POST("/shop/buy", shopH.Buy)
 		api.POST("/shop/buy-subscription", shopH.BuySubscription)
 		api.POST("/shop/buy-device-expansion", shopH.BuyDeviceExpansion)
+		api.POST("/shop/buy-device-expansion-money", shopH.BuyDeviceExpansionMoney)
 
 		api.GET("/devices", deviceH.List)
 		api.POST("/devices/:id/disconnect", deviceH.Disconnect)

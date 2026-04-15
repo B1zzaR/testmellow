@@ -37,11 +37,13 @@ import (
 // ─── Queue name constants ───────────────────────────────────────────────────
 
 const (
-	QueuePaymentProcess       = "queue:payment:process"
-	QueueSubscriptionActivate = "queue:subscription:activate"
-	QueueReferralReward       = "queue:referral:reward"
-	QueueReferralPayout       = "queue:referral:payout"
-	QueueNotifyTelegram       = "queue:notify:telegram"
+	QueuePaymentProcess          = "queue:payment:process"
+	QueueSubscriptionActivate    = "queue:subscription:activate"
+	QueueDeviceExpansionActivate = "queue:device_expansion:activate"
+	QueueReferralReward          = "queue:referral:reward"
+	QueueReferralPayout          = "queue:referral:payout"
+	QueueNotifyTelegram          = "queue:notify:telegram"
+	QueueTFAChallenge            = "queue:tfa:challenge"
 )
 
 // ─── Job payload types ────────────────────────────────────────────────────────
@@ -61,6 +63,12 @@ type SubscriptionActivateJob struct {
 	AmountKopecks int64  `json:"amount_kopecks"`
 }
 
+type DeviceExpansionActivateJob struct {
+	UserID        string `json:"user_id"`
+	PaymentID     string `json:"payment_id"`
+	AmountKopecks int64  `json:"amount_kopecks"`
+}
+
 type ReferralRewardJob struct {
 	PaymentID   string `json:"payment_id"`
 	RefereeID   string `json:"referee_id"`
@@ -75,6 +83,12 @@ type ReferralPayoutJob struct {
 type NotifyTelegramJob struct {
 	TelegramID int64  `json:"telegram_id"`
 	Message    string `json:"message"`
+}
+
+type TFAChallengeJob struct {
+	TelegramID  int64  `json:"telegram_id"`
+	ChallengeID string `json:"challenge_id"`
+	Message     string `json:"message"`
 }
 
 // ─── Enqueue helpers ─────────────────────────────────────────────────────────
@@ -115,9 +129,11 @@ func NewWorker(
 func (w *Worker) Run(ctx context.Context) {
 	go w.loop(ctx, QueuePaymentProcess, w.handlePaymentProcess)
 	go w.loop(ctx, QueueSubscriptionActivate, w.handleSubscriptionActivate)
+	go w.loop(ctx, QueueDeviceExpansionActivate, w.handleDeviceExpansionActivate)
 	go w.loop(ctx, QueueReferralReward, w.handleReferralReward)
 	go w.loop(ctx, QueueReferralPayout, w.handleReferralPayout)
 	go w.loop(ctx, QueueNotifyTelegram, w.handleNotifyTelegram)
+	go w.loop(ctx, QueueTFAChallenge, w.handleTFAChallenge)
 
 	// Periodic tasks
 	go w.periodicExpirySweep(ctx)
@@ -279,15 +295,27 @@ func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error
 			return err
 		}
 
-		// Enqueue subscription activation
-		activateJob := SubscriptionActivateJob{
-			UserID:        userID.String(),
-			PaymentID:     txID.String(),
-			Plan:          job.Plan,
-			AmountKopecks: job.AmountKopecks,
-		}
-		if err := Enqueue(ctx, w.rdb, QueueSubscriptionActivate, activateJob); err != nil {
-			w.log.Error("failed to enqueue subscription activation", zap.Error(err))
+		if domain.IsDeviceExpansionPlan(domain.SubscriptionPlan(job.Plan)) {
+			// Device expansion payment — enqueue device expansion activation
+			activateJob := DeviceExpansionActivateJob{
+				UserID:        userID.String(),
+				PaymentID:     txID.String(),
+				AmountKopecks: job.AmountKopecks,
+			}
+			if err := Enqueue(ctx, w.rdb, QueueDeviceExpansionActivate, activateJob); err != nil {
+				w.log.Error("failed to enqueue device expansion activation", zap.Error(err))
+			}
+		} else {
+			// Subscription payment — enqueue subscription activation
+			activateJob := SubscriptionActivateJob{
+				UserID:        userID.String(),
+				PaymentID:     txID.String(),
+				Plan:          job.Plan,
+				AmountKopecks: job.AmountKopecks,
+			}
+			if err := Enqueue(ctx, w.rdb, QueueSubscriptionActivate, activateJob); err != nil {
+				w.log.Error("failed to enqueue subscription activation", zap.Error(err))
+			}
 		}
 
 		// Enqueue referral reward
@@ -473,6 +501,119 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 				_ = bonusTx.Commit(ctx)
 			}
 		}
+	}
+
+	return nil
+}
+
+// ─── Device Expansion Activation ──────────────────────────────────────────────
+
+func (w *Worker) handleDeviceExpansionActivate(ctx context.Context, payload string) error {
+	var job DeviceExpansionActivateJob
+	if err := json.Unmarshal([]byte(payload), &job); err != nil {
+		return fmt.Errorf("unmarshal device expansion job: %w", err)
+	}
+
+	userID, err := uuid.Parse(job.UserID)
+	if err != nil {
+		return fmt.Errorf("invalid user id %q: %w", job.UserID, err)
+	}
+
+	idempKey := fmt.Sprintf("devexp:activated:%s", job.PaymentID)
+	isNew, err := w.anti.EnsureOnce(ctx, idempKey, 48*time.Hour)
+	if err != nil {
+		return err
+	}
+	if !isNew {
+		w.log.Info("duplicate device expansion activation, skipping",
+			zap.String("payment_id", job.PaymentID),
+		)
+		return nil
+	}
+
+	user, err := w.repo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return fmt.Errorf("user %s not found", job.UserID)
+	}
+
+	activeSub, err := w.repo.GetActiveSubscription(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
+		return fmt.Errorf("user %s has no active subscription", job.UserID)
+	}
+
+	newExpiry := activeSub.ExpiresAt
+
+	existing, err := w.repo.GetActiveDeviceExpansion(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	newExtra := 1
+	if existing != nil {
+		if existing.ExtraDevices >= domain.DeviceExpansionMaxExtra {
+			return fmt.Errorf("user %s already at max device expansion", job.UserID)
+		}
+		newExtra = existing.ExtraDevices + 1
+	}
+
+	tx, err := w.repo.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if existing != nil {
+		if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, newExpiry); err != nil {
+			return err
+		}
+		if err := w.repo.UpdateDeviceExpansionExtra(ctx, tx, existing.ID, newExtra); err != nil {
+			return err
+		}
+	} else {
+		expansion := &domain.DeviceExpansion{
+			ID:           uuid.New(),
+			UserID:       userID,
+			ExtraDevices: newExtra,
+			ExpiresAt:    newExpiry,
+			CreatedAt:    time.Now(),
+		}
+		if err := w.repo.CreateDeviceExpansion(ctx, tx, expansion); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	// Update Remnawave panel device limit
+	if user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
+		newLimit := domain.DeviceMaxPerUser + newExtra
+		if err := w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, newLimit); err != nil {
+			w.log.Error("failed to update remnawave hwid device limit",
+				zap.String("user_id", userID.String()),
+				zap.Int("new_limit", newLimit),
+				zap.Error(err))
+		}
+	}
+
+	w.log.Info("device expansion activated via payment",
+		zap.String("user_id", job.UserID),
+		zap.String("payment_id", job.PaymentID),
+		zap.Int("extra_devices", newExtra),
+		zap.Time("expires_at", newExpiry),
+	)
+
+	// Notify user via Telegram
+	if user.TelegramID != nil {
+		msg := fmt.Sprintf("✅ Расширение устройств активировано!\n+1 устройство (всего +%d к базовому лимиту)\nДействует до конца подписки.", newExtra)
+		_ = Enqueue(ctx, w.rdb, QueueNotifyTelegram, NotifyTelegramJob{
+			TelegramID: *user.TelegramID,
+			Message:    msg,
+		})
 	}
 
 	return nil
@@ -881,6 +1022,44 @@ func (w *Worker) handleNotifyTelegram(ctx context.Context, payload string) error
 
 	if resp.StatusCode >= 400 {
 		w.log.Warn("telegram send failed", zap.Int("status", resp.StatusCode), zap.Int64("tg_id", job.TelegramID))
+	}
+	return nil
+}
+
+// handleTFAChallenge sends a 2FA confirmation message with inline buttons via Telegram Bot API.
+func (w *Worker) handleTFAChallenge(ctx context.Context, payload string) error {
+	if w.tgToken == "" {
+		return nil
+	}
+	var job TFAChallengeJob
+	if err := json.Unmarshal([]byte(payload), &job); err != nil {
+		return err
+	}
+
+	keyboard := fmt.Sprintf(
+		`{"inline_keyboard":[[{"text":"✅ Подтвердить","callback_data":"tfa_approve_%s"},{"text":"❌ Отклонить","callback_data":"tfa_deny_%s"}]]}`,
+		job.ChallengeID, job.ChallengeID,
+	)
+	body := fmt.Sprintf(
+		`{"chat_id":%d,"text":%q,"parse_mode":"HTML","reply_markup":%s}`,
+		job.TelegramID, job.Message, keyboard,
+	)
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", w.tgToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram send 2FA: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		w.log.Warn("telegram 2FA send failed", zap.Int("status", resp.StatusCode), zap.Int64("tg_id", job.TelegramID))
 	}
 	return nil
 }

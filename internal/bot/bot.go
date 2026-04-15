@@ -147,6 +147,9 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle("/unlink", b.handleUnlink)
 	b.bot.Handle("/info", b.handleInfo)
 	b.bot.Handle("/resetpassword", b.handleResetPassword)
+
+	// Generic callback handler for dynamic callback_data (e.g. 2FA)
+	b.bot.Handle(tele.OnCallback, b.handleGenericCallback)
 }
 
 // ─── Link handler ─────────────────────────────────────────────────────────────
@@ -1174,3 +1177,55 @@ func (b *Bot) RegisterBuyCallbacks() {
 
 // ─── Unused import avoidance
 var _ = platega.MethodSBPQR
+
+// ─── 2FA Callback Handler ────────────────────────────────────────────────────
+
+func (b *Bot) handleGenericCallback(c tele.Context) error {
+	data := c.Callback().Data
+	switch {
+	case strings.HasPrefix(data, "tfa_approve_"):
+		return b.handleTFACallback(c, data[len("tfa_approve_"):], true)
+	case strings.HasPrefix(data, "tfa_deny_"):
+		return b.handleTFACallback(c, data[len("tfa_deny_"):], false)
+	default:
+		return nil // ignore unknown callbacks
+	}
+}
+
+func (b *Bot) handleTFACallback(c tele.Context, challengeID string, approve bool) error {
+	ctx := context.Background()
+	_ = c.Respond()
+
+	userID, status, err := redisrepo.Get2FAChallenge(ctx, b.rdb, challengeID)
+	if err != nil || userID == "" {
+		return c.Send("⏰ Запрос на вход истёк или уже обработан.")
+	}
+	if status != redisrepo.TFAPending {
+		return c.Send("ℹ️ Этот запрос уже обработан.")
+	}
+
+	// Verify the callback sender matches the user's telegram_id
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return c.Send("❌ Ошибка: некорректный запрос.")
+	}
+	user, err := b.repo.GetByID(ctx, uid)
+	if err != nil || user == nil || user.TelegramID == nil || *user.TelegramID != c.Sender().ID {
+		return c.Send("❌ Вы не можете подтвердить этот запрос.")
+	}
+
+	newStatus := redisrepo.TFADenied
+	emoji := "❌"
+	text := "Вход отклонён"
+	if approve {
+		newStatus = redisrepo.TFAApproved
+		emoji = "✅"
+		text = "Вход подтверждён"
+	}
+
+	if err := redisrepo.Resolve2FAChallenge(ctx, b.rdb, challengeID, newStatus); err != nil {
+		return c.Send("❌ Ошибка обработки. Попробуйте ещё раз.")
+	}
+
+	return c.Send(fmt.Sprintf("%s %s.", emoji, text))
+}

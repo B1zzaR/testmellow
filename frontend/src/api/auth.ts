@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { AuthResponse, LoginRequest, RegisterRequest } from './types'
+import type { AuthResponse, LoginRequest, RegisterRequest, TFACheckResponse } from './types'
 
 export const authApi = {
   login: async (data: LoginRequest): Promise<AuthResponse> => {
@@ -20,5 +20,10 @@ export const authApi = {
   logout: async (): Promise<void> => {
     // Call logout endpoint to clear cookies on server
     await apiClient.post('/api/auth/logout')
+  },
+
+  checkTFA: async (challengeId: string): Promise<TFACheckResponse> => {
+    const res = await apiClient.get<TFACheckResponse>(`/api/auth/2fa/check?challenge_id=${encodeURIComponent(challengeId)}`)
+    return res.data
   },
 }

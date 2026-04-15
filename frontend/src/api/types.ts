@@ -22,6 +22,7 @@ export interface User {
   trial_used: boolean
   is_admin: boolean
   is_banned: boolean
+  tfa_enabled: boolean
   risk_score: number
   created_at: string
   updated_at: string
@@ -183,6 +184,14 @@ export interface AuthResponse {
   user_id: string
   is_admin: boolean
   referral_code?: string
+  tfa_required?: boolean
+  challenge_id?: string
+}
+
+export interface TFACheckResponse {
+  status: 'pending' | 'approved' | 'denied' | 'expired'
+  user_id?: string
+  is_admin?: boolean
 }
 
 export interface BuySubscriptionRequest {

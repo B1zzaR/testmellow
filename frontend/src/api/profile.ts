@@ -44,6 +44,11 @@ export const profileApi = {
     const res = await apiClient.get<{ activity: AccountActivity[] }>(`/api/profile/activity?limit=${limit}`)
     return res.data
   },
+
+  toggleTFA: async (enabled: boolean): Promise<{ tfa_enabled: boolean }> => {
+    const res = await apiClient.post<{ tfa_enabled: boolean }>('/api/profile/tfa', { enabled })
+    return res.data
+  },
 }
 
 export const balanceApi = {

@@ -17,8 +17,13 @@ export const shopApi = {
     return res.data
   },
 
-  buyDeviceExpansion: async (extraDevices: number): Promise<{ message: string; extra_devices: number; expires_at: string; total_limit: number }> => {
-    const res = await apiClient.post<{ message: string; extra_devices: number; expires_at: string; total_limit: number }>('/api/shop/buy-device-expansion', { extra_devices: extraDevices })
+  buyDeviceExpansion: async (): Promise<{ message: string; extra_devices: number; expires_at: string; total_limit: number }> => {
+    const res = await apiClient.post<{ message: string; extra_devices: number; expires_at: string; total_limit: number }>('/api/shop/buy-device-expansion', {})
+    return res.data
+  },
+
+  buyDeviceExpansionMoney: async (returnUrl: string): Promise<{ payment_id: string; redirect_url: string; amount_rub: number; expires_in: string }> => {
+    const res = await apiClient.post<{ payment_id: string; redirect_url: string; amount_rub: number; expires_in: string }>('/api/shop/buy-device-expansion-money', { return_url: returnUrl })
     return res.data
   },
 }

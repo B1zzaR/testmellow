@@ -214,3 +214,54 @@ func CheckPasswordVersion(ctx context.Context, rdb *redis.Client, userID string,
 	}
 	return nil
 }
+
+// ─── Two-Factor Authentication challenges ─────────────────────────────────────
+
+const (
+	TFAPending  = "pending"
+	TFAApproved = "approved"
+	TFADenied   = "denied"
+)
+
+// Create2FAChallenge stores a new 2FA challenge in Redis with a 5-minute TTL.
+func Create2FAChallenge(ctx context.Context, rdb *redis.Client, challengeID, userID string) error {
+	key := fmt.Sprintf("tfa:%s", challengeID)
+	return rdb.Set(ctx, key, userID+":"+TFAPending, 5*time.Minute).Err()
+}
+
+// Get2FAChallenge returns (userID, status, error). Returns ("", "", nil) if not found.
+func Get2FAChallenge(ctx context.Context, rdb *redis.Client, challengeID string) (string, string, error) {
+	key := fmt.Sprintf("tfa:%s", challengeID)
+	val, err := rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	// val = "userID:status"
+	parts := splitTFAValue(val)
+	return parts[0], parts[1], nil
+}
+
+// Resolve2FAChallenge updates the status to approved/denied.
+func Resolve2FAChallenge(ctx context.Context, rdb *redis.Client, challengeID, status string) error {
+	key := fmt.Sprintf("tfa:%s", challengeID)
+	// Get current value to extract userID
+	val, err := rdb.Get(ctx, key).Result()
+	if err != nil {
+		return err
+	}
+	parts := splitTFAValue(val)
+	// Overwrite with new status, keep short TTL for the polling client to pick up
+	return rdb.Set(ctx, key, parts[0]+":"+status, 2*time.Minute).Err()
+}
+
+func splitTFAValue(val string) [2]string {
+	for i := len(val) - 1; i >= 0; i-- {
+		if val[i] == ':' {
+			return [2]string{val[:i], val[i+1:]}
+		}
+	}
+	return [2]string{val, TFAPending}
+}

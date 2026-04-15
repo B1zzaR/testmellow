@@ -29,15 +29,15 @@ func (r *UserRepo) Create(ctx context.Context, u *domain.User) error {
 			yad_balance, referrer_id, referral_code, ltv,
 			risk_score, is_admin, is_banned, remna_user_uuid,
 			device_fingerprint, last_known_ip, trial_used,
-			created_at, updated_at
+			tfa_enabled, created_at, updated_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
 		)`,
 		u.ID, u.TelegramID, u.Username, u.Email, u.PasswordHash,
 		u.YADBalance, u.ReferrerID, u.ReferralCode, u.LTV,
 		u.RiskScore, u.IsAdmin, u.IsBanned, u.RemnaUserUUID,
 		u.DeviceFingerprint, u.LastKnownIP, u.TrialUsed,
-		u.CreatedAt, u.UpdatedAt,
+		u.TFAEnabled, u.CreatedAt, u.UpdatedAt,
 	)
 	return err
 }
@@ -49,13 +49,13 @@ func (r *UserRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, err
 		       yad_balance, referrer_id, referral_code, ltv,
 		       risk_score, is_admin, is_banned, remna_user_uuid,
 		       device_fingerprint, last_known_ip::text, trial_used,
-		       created_at, updated_at
+		       tfa_enabled, created_at, updated_at
 		FROM users WHERE id = $1`, id).Scan(
 		&u.ID, &u.TelegramID, &u.Username, &u.Email, &u.PasswordHash,
 		&u.YADBalance, &u.ReferrerID, &u.ReferralCode, &u.LTV,
 		&u.RiskScore, &u.IsAdmin, &u.IsBanned, &u.RemnaUserUUID,
 		&u.DeviceFingerprint, &u.LastKnownIP, &u.TrialUsed,
-		&u.CreatedAt, &u.UpdatedAt,
+		&u.TFAEnabled, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -70,13 +70,13 @@ func (r *UserRepo) GetByTelegramID(ctx context.Context, tgID int64) (*domain.Use
 		       yad_balance, referrer_id, referral_code, ltv,
 		       risk_score, is_admin, is_banned, remna_user_uuid,
 		       device_fingerprint, last_known_ip::text, trial_used,
-		       created_at, updated_at
+		       tfa_enabled, created_at, updated_at
 		FROM users WHERE telegram_id = $1`, tgID).Scan(
 		&u.ID, &u.TelegramID, &u.Username, &u.Email, &u.PasswordHash,
 		&u.YADBalance, &u.ReferrerID, &u.ReferralCode, &u.LTV,
 		&u.RiskScore, &u.IsAdmin, &u.IsBanned, &u.RemnaUserUUID,
 		&u.DeviceFingerprint, &u.LastKnownIP, &u.TrialUsed,
-		&u.CreatedAt, &u.UpdatedAt,
+		&u.TFAEnabled, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -91,13 +91,13 @@ func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*domain.User, 
 		       yad_balance, referrer_id, referral_code, ltv,
 		       risk_score, is_admin, is_banned, remna_user_uuid,
 		       device_fingerprint, last_known_ip::text, trial_used,
-		       created_at, updated_at
+		       tfa_enabled, created_at, updated_at
 		FROM users WHERE email = $1`, email).Scan(
 		&u.ID, &u.TelegramID, &u.Username, &u.Email, &u.PasswordHash,
 		&u.YADBalance, &u.ReferrerID, &u.ReferralCode, &u.LTV,
 		&u.RiskScore, &u.IsAdmin, &u.IsBanned, &u.RemnaUserUUID,
 		&u.DeviceFingerprint, &u.LastKnownIP, &u.TrialUsed,
-		&u.CreatedAt, &u.UpdatedAt,
+		&u.TFAEnabled, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -112,13 +112,13 @@ func (r *UserRepo) GetByUsername(ctx context.Context, username string) (*domain.
 		       yad_balance, referrer_id, referral_code, ltv,
 		       risk_score, is_admin, is_banned, remna_user_uuid,
 		       device_fingerprint, last_known_ip::text, trial_used,
-		       created_at, updated_at
+		       tfa_enabled, created_at, updated_at
 		FROM users WHERE username = $1`, username).Scan(
 		&u.ID, &u.TelegramID, &u.Username, &u.Email, &u.PasswordHash,
 		&u.YADBalance, &u.ReferrerID, &u.ReferralCode, &u.LTV,
 		&u.RiskScore, &u.IsAdmin, &u.IsBanned, &u.RemnaUserUUID,
 		&u.DeviceFingerprint, &u.LastKnownIP, &u.TrialUsed,
-		&u.CreatedAt, &u.UpdatedAt,
+		&u.TFAEnabled, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -133,13 +133,13 @@ func (r *UserRepo) GetByReferralCode(ctx context.Context, code string) (*domain.
 		       yad_balance, referrer_id, referral_code, ltv,
 		       risk_score, is_admin, is_banned, remna_user_uuid,
 		       device_fingerprint, last_known_ip::text, trial_used,
-		       created_at, updated_at
+		       tfa_enabled, created_at, updated_at
 		FROM users WHERE referral_code = $1`, code).Scan(
 		&u.ID, &u.TelegramID, &u.Username, &u.Email, &u.PasswordHash,
 		&u.YADBalance, &u.ReferrerID, &u.ReferralCode, &u.LTV,
 		&u.RiskScore, &u.IsAdmin, &u.IsBanned, &u.RemnaUserUUID,
 		&u.DeviceFingerprint, &u.LastKnownIP, &u.TrialUsed,
-		&u.CreatedAt, &u.UpdatedAt,
+		&u.TFAEnabled, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -214,7 +214,7 @@ func (r *UserRepo) List(ctx context.Context, limit, offset int) ([]*domain.User,
 		       yad_balance, referrer_id, referral_code, ltv,
 		       risk_score, is_admin, is_banned, remna_user_uuid,
 		       device_fingerprint, last_known_ip::text, trial_used,
-		       created_at, updated_at
+		       tfa_enabled, created_at, updated_at
 		FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -229,7 +229,7 @@ func (r *UserRepo) List(ctx context.Context, limit, offset int) ([]*domain.User,
 			&u.YADBalance, &u.ReferrerID, &u.ReferralCode, &u.LTV,
 			&u.RiskScore, &u.IsAdmin, &u.IsBanned, &u.RemnaUserUUID,
 			&u.DeviceFingerprint, &u.LastKnownIP, &u.TrialUsed,
-			&u.CreatedAt, &u.UpdatedAt,
+			&u.TFAEnabled, &u.CreatedAt, &u.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -416,6 +416,12 @@ func (r *UserRepo) UpdateBanStatus(ctx context.Context, userID uuid.UUID, banned
 func (r *UserRepo) SetAdmin(ctx context.Context, userID uuid.UUID, isAdmin bool) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE users SET is_admin=$1, updated_at=NOW() WHERE id=$2`, isAdmin, userID)
+	return err
+}
+
+func (r *UserRepo) SetTFAEnabled(ctx context.Context, userID uuid.UUID, enabled bool) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET tfa_enabled=$1, updated_at=NOW() WHERE id=$2`, enabled, userID)
 	return err
 }
 
@@ -1648,5 +1654,11 @@ func (r *UserRepo) DeleteExpiredDeviceExpansions(ctx context.Context) (int64, er
 // ExtendDeviceExpansion extends an existing active device expansion's expiry.
 func (r *UserRepo) ExtendDeviceExpansion(ctx context.Context, tx pgx.Tx, expansionID uuid.UUID, newExpiry time.Time) error {
 	_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1 WHERE id = $2`, newExpiry, expansionID)
+	return err
+}
+
+// UpdateDeviceExpansionExtra updates the extra_devices count on an existing expansion.
+func (r *UserRepo) UpdateDeviceExpansionExtra(ctx context.Context, tx pgx.Tx, expansionID uuid.UUID, extra int) error {
+	_, err := tx.Exec(ctx, `UPDATE device_expansions SET extra_devices = $1 WHERE id = $2`, extra, expansionID)
 	return err
 }

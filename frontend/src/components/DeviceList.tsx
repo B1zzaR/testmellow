@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
 import { Modal } from '@/components/ui/Modal'
 import { Icon } from '@/components/ui/Icons'
-import { formatDateTime, formatYAD } from '@/utils/formatters'
+import { formatDateTime } from '@/utils/formatters'
 import type { Device, DeviceListResponse } from '@/api/types'
 
 function timeUntilDeletion(canDeleteAfter: string): string | null {
@@ -21,6 +21,10 @@ function timeUntilDeletion(canDeleteAfter: string): string | null {
   return `${hours} ч.`
 }
 
+const PRICE_RUB = 40
+const PRICE_YAD = 16
+const MAX_EXTRA = 2
+
 interface DeviceListProps {
   data: DeviceListResponse
 }
@@ -32,7 +36,7 @@ export function DeviceList({ data }: DeviceListProps) {
   const [errorMsg, setErrorMsg] = useState('')
   const [showInactive, setShowInactive] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
-  const [buyTier, setBuyTier] = useState<number | null>(null)
+  const [buyMethod, setBuyMethod] = useState<'yad' | 'money' | null>(null)
 
   const disconnectMutation = useMutation({
     mutationFn: (id: string) => devicesApi.disconnect(id),
@@ -49,26 +53,37 @@ export function DeviceList({ data }: DeviceListProps) {
     },
   })
 
-  const buyExpansionMutation = useMutation({
-    mutationFn: (extraDevices: number) => shopApi.buyDeviceExpansion(extraDevices),
+  const buyExpansionYADMutation = useMutation({
+    mutationFn: () => shopApi.buyDeviceExpansion(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       queryClient.invalidateQueries({ queryKey: ['balance'] })
       setSuccessMsg('Расширение устройств активировано!')
       setErrorMsg('')
-      setBuyTier(null)
+      setBuyMethod(null)
     },
     onError: (e: Error) => {
       setErrorMsg(e.message)
       setSuccessMsg('')
-      setBuyTier(null)
+      setBuyMethod(null)
     },
   })
 
-  const EXPANSION_TIERS = [
-    { extra: 1, total: 5, yad: 25, rub: '39₽', days: 30 },
-    { extra: 2, total: 6, yad: 60, rub: '79₽', days: 30 },
-  ]
+  const buyExpansionMoneyMutation = useMutation({
+    mutationFn: () => shopApi.buyDeviceExpansionMoney(window.location.href),
+    onSuccess: (data) => {
+      setBuyMethod(null)
+      window.location.href = data.redirect_url
+    },
+    onError: (e: Error) => {
+      setErrorMsg(e.message)
+      setSuccessMsg('')
+      setBuyMethod(null)
+    },
+  })
+
+  const currentExtra = expansion?.extra_devices ?? 0
+  const canBuyMore = currentExtra < MAX_EXTRA
 
   const activeDevices = devices.filter(d => d.is_active)
   const inactiveDevices = devices.filter(d => !d.is_active)
@@ -181,85 +196,87 @@ export function DeviceList({ data }: DeviceListProps) {
           </div>
         ) : (
           <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
-            Добавьте устройства на 30 дней. Максимум +2.
+            Добавьте устройства до конца текущей подписки. Максимум +{MAX_EXTRA}.
           </p>
         )}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {EXPANSION_TIERS.map((tier) => {
-            const isCurrentTier = expansion?.extra_devices === tier.extra
-            const hasOtherTier = expansion != null && expansion.extra_devices !== tier.extra
-            return (
-              <div
-                key={tier.extra}
-                className={`flex flex-col rounded-xl border p-4 transition-all ${
-                  isCurrentTier
-                    ? 'border-primary-500 dark:border-primary-500 bg-primary-500/5'
-                    : 'border-gray-200 dark:border-surface-700'
-                } ${hasOtherTier ? 'opacity-50' : ''}`}
+        {canBuyMore ? (
+          <div className="rounded-xl border border-gray-200 dark:border-surface-700 p-4">
+            <p className="text-base font-bold text-gray-900 dark:text-slate-100">
+              +1 устройство
+            </p>
+            <p className="text-xs text-gray-400 dark:text-slate-500">
+              Действует до конца подписки
+            </p>
+            <p className="mt-2 text-xl font-extrabold text-primary-500">
+              {PRICE_RUB}₽
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button
+                className="flex-1"
+                size="sm"
+                onClick={() => setBuyMethod('money')}
               >
-                <p className="text-base font-bold text-gray-900 dark:text-slate-100">
-                  {tier.total} устройств
-                </p>
-                <p className="text-xs text-gray-400 dark:text-slate-500">
-                  +{tier.extra} к базовому лимиту · {tier.days} дней
-                </p>
-                <p className="mt-2 text-xl font-extrabold text-primary-500">
-                  {formatYAD(tier.yad)}
-                </p>
-                <p className="text-[11px] text-gray-400 dark:text-slate-600">или {tier.rub}</p>
-                <Button
-                  className="mt-3 w-full"
-                  size="sm"
-                  variant={isCurrentTier ? 'primary' : 'secondary'}
-                  disabled={hasOtherTier}
-                  onClick={() => setBuyTier(tier.extra)}
-                >
-                  {isCurrentTier ? 'Продлить' : 'Купить'}
-                </Button>
-              </div>
-            )
-          })}
-        </div>
+                Оплатить {PRICE_RUB}₽
+              </Button>
+              <Button
+                className="flex-1"
+                size="sm"
+                variant="secondary"
+                onClick={() => setBuyMethod('yad')}
+              >
+                Оплатить {PRICE_YAD} ЯД
+              </Button>
+            </div>
+          </div>
+        ) : expansion ? (
+          <p className="text-xs text-gray-400 dark:text-slate-500">
+            Достигнут максимум дополнительных устройств (+{MAX_EXTRA}).
+          </p>
+        ) : null}
       </div>
 
       {/* Buy expansion confirmation modal */}
       <Modal
-        open={buyTier !== null}
-        onClose={() => setBuyTier(null)}
+        open={buyMethod !== null}
+        onClose={() => setBuyMethod(null)}
         title="Расширение устройств"
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={() => setBuyTier(null)}>
+            <Button variant="secondary" size="sm" onClick={() => setBuyMethod(null)}>
               Отмена
             </Button>
             <Button
               size="sm"
-              loading={buyExpansionMutation.isPending}
-              onClick={() => buyTier && buyExpansionMutation.mutate(buyTier)}
+              loading={buyExpansionYADMutation.isPending || buyExpansionMoneyMutation.isPending}
+              onClick={() => {
+                if (buyMethod === 'yad') buyExpansionYADMutation.mutate()
+                if (buyMethod === 'money') buyExpansionMoneyMutation.mutate()
+              }}
             >
               Подтвердить
             </Button>
           </>
         }
       >
-        {buyTier && (() => {
-          const tier = EXPANSION_TIERS.find((t) => t.extra === buyTier)!
-          const isExtend = expansion?.extra_devices === buyTier
-          return (
-            <>
-              <p className="text-sm text-gray-600 dark:text-slate-400">
-                {isExtend ? 'Продлить' : 'Активировать'} расширение до{' '}
-                <strong className="text-gray-900 dark:text-slate-100">{tier.total} устройств</strong>{' '}
-                на {tier.days} дней за{' '}
-                <strong className="text-primary-500">{formatYAD(tier.yad)}</strong>?
-              </p>
-              <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
-                Сумма будет списана с баланса ЯД. Максимальная продолжительность — 90 дней.
-              </p>
-            </>
-          )
-        })()}
+        <p className="text-sm text-gray-600 dark:text-slate-400">
+          {expansion ? 'Добавить ещё' : 'Активировать'}{' '}
+          <strong className="text-gray-900 dark:text-slate-100">+1 устройство</strong>{' '}
+          (итого до {4 + currentExtra + 1}) до конца подписки за{' '}
+          <strong className="text-primary-500">
+            {buyMethod === 'money' ? `${PRICE_RUB}₽` : `${PRICE_YAD} ЯД`}
+          </strong>?
+        </p>
+        {buyMethod === 'money' && (
+          <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
+            Вы будете перенаправлены на страницу оплаты.
+          </p>
+        )}
+        {buyMethod === 'yad' && (
+          <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
+            Сумма будет списана с баланса ЯД.
+          </p>
+        )}
       </Modal>
     </Card>
   )

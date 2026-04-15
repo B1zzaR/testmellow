@@ -80,6 +80,7 @@ type User struct {
 	TrialUsed             bool       `db:"trial_used" json:"trial_used"`
 	ActiveDiscountCode    *string    `db:"active_discount_code" json:"active_discount_code,omitempty"`
 	ActiveDiscountPercent int        `db:"active_discount_percent" json:"active_discount_percent"`
+	TFAEnabled            bool       `db:"tfa_enabled" json:"tfa_enabled"`
 	CreatedAt             time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt             time.Time  `db:"updated_at" json:"updated_at"`
 }
@@ -328,33 +329,17 @@ const DeviceInactiveDays = 2
 // ─── Device Expansion ─────────────────────────────────────────────────────────
 
 const (
-	DeviceExpansionMaxExtra       = 2 // base 4 → max 6
-	DeviceExpansionDurationDays   = 30
-	DeviceExpansionMaxForwardDays = 90
+	DeviceExpansionMaxExtra     = 2    // base 4 → max 6
+	DeviceExpansionPriceKopecks = 4000 // 40₽ per +1 device
+	DeviceExpansionPriceYAD     = 16   // 16 ЯД per +1 device
 )
 
-// DeviceExpansionTier represents a purchasable device-limit upgrade tier.
-type DeviceExpansionTier struct {
-	ExtraDevices int   // how many devices above base (1 or 2)
-	TotalDevices int   // resulting device limit
-	YADPrice     int64 // cost in ЯД
-	RubKopecks   int64 // cost in kopecks (for display)
-}
+// PlanDeviceExpansion is a pseudo-plan used for Platega device-expansion payments.
+const PlanDeviceExpansion SubscriptionPlan = "device_expansion"
 
-// DeviceExpansionTiers lists the available tiers.
-var DeviceExpansionTiers = []DeviceExpansionTier{
-	{ExtraDevices: 1, TotalDevices: 5, YADPrice: 25, RubKopecks: 3900},
-	{ExtraDevices: 2, TotalDevices: 6, YADPrice: 60, RubKopecks: 7900},
-}
-
-// DeviceExpansionYADPrice returns the ЯД price for a given extra-devices count, or 0 if invalid.
-func DeviceExpansionYADPrice(extraDevices int) int64 {
-	for _, t := range DeviceExpansionTiers {
-		if t.ExtraDevices == extraDevices {
-			return t.YADPrice
-		}
-	}
-	return 0
+// IsDeviceExpansionPlan returns true when the plan represents a device expansion purchase.
+func IsDeviceExpansionPlan(plan SubscriptionPlan) bool {
+	return plan == PlanDeviceExpansion
 }
 
 // DeviceExpansion tracks an active device-limit expansion purchase.

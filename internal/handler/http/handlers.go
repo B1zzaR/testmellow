@@ -2,6 +2,7 @@ package httphandler
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -30,13 +31,14 @@ import (
 
 type AuthHandler struct {
 	auth   *service.AuthService
+	repo   *postgres.UserRepo
 	jwtMgr *jwtpkg.Manager
 	rdb    *redis.Client
 	log    *zap.Logger
 }
 
-func NewAuthHandler(auth *service.AuthService, jwtMgr *jwtpkg.Manager, rdb *redis.Client, log *zap.Logger) *AuthHandler {
-	return &AuthHandler{auth: auth, jwtMgr: jwtMgr, rdb: rdb, log: log}
+func NewAuthHandler(auth *service.AuthService, repo *postgres.UserRepo, jwtMgr *jwtpkg.Manager, rdb *redis.Client, log *zap.Logger) *AuthHandler {
+	return &AuthHandler{auth: auth, repo: repo, jwtMgr: jwtMgr, rdb: rdb, log: log}
 }
 
 // setAuthCookies writes access and refresh tokens as HttpOnly cookies (H-7).
@@ -146,6 +148,36 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	// ── 2FA via Telegram ──────────────────────────────────────────────────
+	if user.TFAEnabled && user.TelegramID != nil && *user.TelegramID != 0 {
+		challengeID, err := generateChallengeID()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+			return
+		}
+		if err := redisrepo.Create2FAChallenge(c.Request.Context(), h.rdb, challengeID, user.ID.String()); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+			return
+		}
+		// Send Telegram notification via worker queue
+		ip := c.ClientIP()
+		ua := c.GetHeader("User-Agent")
+		msg := fmt.Sprintf(
+			"🔐 <b>Запрос на вход</b>\n\nIP: %s\nUA: %.60s\n\nПодтвердите вход в аккаунт.",
+			ip, ua,
+		)
+		_ = worker.Enqueue(c.Request.Context(), h.rdb, worker.QueueTFAChallenge, worker.TFAChallengeJob{
+			TelegramID:  *user.TelegramID,
+			ChallengeID: challengeID,
+			Message:     msg,
+		})
+		c.JSON(http.StatusOK, gin.H{
+			"tfa_required": true,
+			"challenge_id": challengeID,
+		})
+		return
+	}
+
 	token, err := h.jwtMgr.Generate(user.ID, user.IsAdmin)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
@@ -240,6 +272,72 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
+// GET /api/auth/2fa/check?challenge_id=...
+// Public endpoint — polled by the frontend after login returns tfa_required=true.
+func (h *AuthHandler) TFACheck(c *gin.Context) {
+	challengeID := c.Query("challenge_id")
+	if challengeID == "" || len(challengeID) > 64 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid challenge_id"})
+		return
+	}
+
+	userID, status, err := redisrepo.Get2FAChallenge(c.Request.Context(), h.rdb, challengeID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера"})
+		return
+	}
+	if userID == "" {
+		c.JSON(http.StatusGone, gin.H{"status": "expired"})
+		return
+	}
+
+	switch status {
+	case redisrepo.TFAApproved:
+		// Issue tokens
+		uid, err := uuid.Parse(userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера"})
+			return
+		}
+		user, err := h.repo.GetByID(c.Request.Context(), uid)
+		if err != nil || user == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера"})
+			return
+		}
+		token, err := h.jwtMgr.Generate(uid, user.IsAdmin)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера"})
+			return
+		}
+		refreshToken, jti, err := h.jwtMgr.GenerateRefresh(uid, user.IsAdmin)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера"})
+			return
+		}
+		if err := redisrepo.RegisterRefreshToken(c.Request.Context(), h.rdb, jti, userID, h.jwtMgr.RefreshTTL()); err != nil {
+			h.log.Warn("register refresh token failed (2FA)", zap.Error(err))
+		}
+		setAuthCookies(c, token, refreshToken)
+		c.JSON(http.StatusOK, gin.H{
+			"status":   "approved",
+			"user_id":  uid,
+			"is_admin": user.IsAdmin,
+		})
+	case redisrepo.TFADenied:
+		c.JSON(http.StatusOK, gin.H{"status": "denied"})
+	default:
+		c.JSON(http.StatusOK, gin.H{"status": "pending"})
+	}
+}
+
+func generateChallengeID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // ─── Profile Handler ──────────────────────────────────────────────────────────
 
 type ProfileHandler struct {
@@ -277,6 +375,7 @@ func (h *ProfileHandler) Get(c *gin.Context) {
 		"trial_used":          user.TrialUsed,
 		"is_admin":            user.IsAdmin,
 		"is_banned":           user.IsBanned,
+		"tfa_enabled":         user.TFAEnabled,
 		"created_at":          user.CreatedAt,
 	})
 }
@@ -469,6 +568,9 @@ func (h *ProfileHandler) UpdateTelegram(c *gin.Context) {
 		return
 	}
 
+	// Auto-disable 2FA when Telegram is unlinked
+	_ = h.repo.SetTFAEnabled(c.Request.Context(), userID, false)
+
 	// Activity log (best-effort)
 	ip := c.ClientIP()
 	ua := strings.TrimSpace(c.GetHeader("User-Agent"))
@@ -551,6 +653,38 @@ func (h *ProfileHandler) Activity(c *gin.Context) {
 		items = []*domain.AccountActivity{}
 	}
 	c.JSON(http.StatusOK, gin.H{"activity": items})
+}
+
+// POST /api/profile/tfa
+// Toggle 2FA via Telegram. Requires Telegram to be linked.
+func (h *ProfileHandler) ToggleTFA(c *gin.Context) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+	userID := middleware.CurrentUserID(c)
+	user, err := h.repo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
+		return
+	}
+
+	if req.Enabled && (user.TelegramID == nil || *user.TelegramID == 0) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "сначала привяжите Telegram"})
+		return
+	}
+
+	if err := h.repo.SetTFAEnabled(ctx, userID, req.Enabled); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"tfa_enabled": req.Enabled})
 }
 
 // GET /api/profile/traffic
@@ -1162,13 +1296,14 @@ func (h *TicketHandler) Reply(c *gin.Context) {
 // ─── Shop Handler ─────────────────────────────────────────────────────────────
 
 type ShopHandler struct {
-	repo *postgres.UserRepo
-	eco  *service.EconomyService
-	log  *zap.Logger
+	repo   *postgres.UserRepo
+	eco    *service.EconomyService
+	subSvc *service.SubscriptionService
+	log    *zap.Logger
 }
 
-func NewShopHandler(repo *postgres.UserRepo, eco *service.EconomyService, log *zap.Logger) *ShopHandler {
-	return &ShopHandler{repo: repo, eco: eco, log: log}
+func NewShopHandler(repo *postgres.UserRepo, eco *service.EconomyService, subSvc *service.SubscriptionService, log *zap.Logger) *ShopHandler {
+	return &ShopHandler{repo: repo, eco: eco, subSvc: subSvc, log: log}
 }
 
 // GET /api/shop
@@ -1246,20 +1381,10 @@ func (h *ShopHandler) BuySubscription(c *gin.Context) {
 	})
 }
 
-type buyDeviceExpansionRequest struct {
-	ExtraDevices int `json:"extra_devices" binding:"required,min=1,max=2"`
-}
-
-// POST /api/shop/buy-device-expansion
+// POST /api/shop/buy-device-expansion  (YAD payment — adds +1 device)
 func (h *ShopHandler) BuyDeviceExpansion(c *gin.Context) {
-	var req buyDeviceExpansionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
 	userID := middleware.CurrentUserID(c)
-	expansion, err := h.eco.BuyDeviceExpansion(c.Request.Context(), userID, req.ExtraDevices)
+	expansion, err := h.eco.BuyDeviceExpansion(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1270,6 +1395,33 @@ func (h *ShopHandler) BuyDeviceExpansion(c *gin.Context) {
 		"extra_devices": expansion.ExtraDevices,
 		"expires_at":    expansion.ExpiresAt,
 		"total_limit":   domain.DeviceMaxPerUser + expansion.ExtraDevices,
+	})
+}
+
+type buyDeviceExpansionMoneyRequest struct {
+	ReturnURL string `json:"return_url"`
+}
+
+// POST /api/shop/buy-device-expansion-money  (Platega payment — adds +1 device)
+func (h *ShopHandler) BuyDeviceExpansionMoney(c *gin.Context) {
+	var req buyDeviceExpansionMoneyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	redirect, payment, err := h.subSvc.InitiateDeviceExpansionPayment(c.Request.Context(), userID, req.ReturnURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"payment_id":   payment.ID,
+		"redirect_url": redirect,
+		"amount_rub":   float64(payment.AmountKopecks) / 100,
+		"expires_in":   "15 minutes",
 	})
 }
 

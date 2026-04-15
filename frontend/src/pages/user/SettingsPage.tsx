@@ -214,6 +214,86 @@ function TelegramSection() {
 
 // ─── Password section ─────────────────────────────────────────────────────────
 
+function TFASection() {
+  const queryClient = useQueryClient()
+  const { data: profile } = useProfile()
+  const [flash, setFlash] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+
+  const isLinked = profile?.telegram_id != null
+  const isEnabled = profile?.tfa_enabled ?? false
+
+  const mutation = useMutation({
+    mutationFn: () => profileApi.toggleTFA(!isEnabled),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['profile'] })
+      setFlash({
+        type: 'success',
+        msg: data.tfa_enabled
+          ? 'Двухфакторная аутентификация включена'
+          : 'Двухфакторная аутентификация выключена',
+      })
+    },
+    onError: (e: Error) => setFlash({ type: 'error', msg: e.message }),
+  })
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-slate-100">
+          <Icon name="shield" size={18} className="text-primary-500" />
+          Двухфакторная аутентификация
+        </h2>
+        <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">
+          Подтверждение входа через Telegram-бота
+        </p>
+      </div>
+
+      {flash && <Alert variant={flash.type} message={flash.msg} />}
+
+      {!isLinked ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800/40 dark:bg-amber-500/10">
+          <p className="text-sm text-amber-700 dark:text-amber-400">
+            Для включения 2FA сначала привяжите Telegram в разделе выше.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between rounded-lg border border-gray-200 dark:border-surface-700 px-4 py-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium text-gray-900 dark:text-slate-100">
+                {isEnabled ? 'Включена' : 'Выключена'}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-slate-500">
+                {isEnabled
+                  ? 'При входе потребуется подтверждение в Telegram'
+                  : 'Вход только по логину и паролю'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setFlash(null); mutation.mutate() }}
+              disabled={mutation.isPending}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-surface-900 ${
+                isEnabled ? 'bg-primary-500' : 'bg-gray-200 dark:bg-surface-600'
+              } ${mutation.isPending ? 'opacity-50' : ''}`}
+              role="switch"
+              aria-checked={isEnabled}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  isEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Password section (original) ──────────────────────────────────────────────
+
 function PasswordSection() {
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
@@ -367,6 +447,12 @@ export function SettingsPage() {
         <Card>
           <TelegramSection />
         </Card>
+        <Card>
+          <TFASection />
+        </Card>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
         <Card>
           <PasswordSection />
         </Card>
