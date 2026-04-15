@@ -312,7 +312,12 @@ func (h *ProfileHandler) GetConnection(c *gin.Context) {
 			_ = h.repo.UpdateRemnaUUID(ctx, userID, remnaUUID)
 		} else {
 			// Path 2: look up by username in Remnawave
-			remnaUser, lookupErr := h.remna.GetUserByUsername(ctx, userID.String())
+			remnaName := user.RemnaUsername()
+			remnaUser, lookupErr := h.remna.GetUserByUsername(ctx, remnaName)
+			if lookupErr != nil || remnaUser == nil || remnaUser.UUID == "" {
+				// Legacy fallback: try UUID-based username from older registrations.
+				remnaUser, lookupErr = h.remna.GetUserByUsername(ctx, userID.String())
+			}
 			if lookupErr == nil && remnaUser != nil && remnaUser.UUID != "" {
 				remnaUUID = remnaUser.UUID
 				_ = h.repo.UpdateRemnaUUID(ctx, userID, remnaUUID)
@@ -320,7 +325,7 @@ func (h *ProfileHandler) GetConnection(c *gin.Context) {
 				return
 			}
 			// Path 3: create a new Remnawave account
-			remnaUser, createErr := h.remna.CreateUser(ctx, userID.String(), subs.ExpiresAt)
+			remnaUser, createErr := h.remna.CreateUser(ctx, remnaName, subs.ExpiresAt)
 			if createErr != nil || remnaUser == nil || remnaUser.UUID == "" {
 				h.log.Warn("remnawave lazy repair: create user failed", zap.Error(createErr))
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "не удалось настроить VPN-аккаунт, попробуйте позже"})

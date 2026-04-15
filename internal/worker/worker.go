@@ -357,11 +357,16 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 	// Create or update Remnawave user
 	var remnaUUID string
 	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
-		remnaUser, err := w.remna.CreateUser(ctx, userID.String(), newExpiry)
+		remnaName := user.RemnaUsername()
+		remnaUser, err := w.remna.CreateUser(ctx, remnaName, newExpiry)
 		if err != nil {
 			// Fallback: if the user already exists in Remnawave (e.g. remna_user_uuid
 			// was lost from DB), look them up by username and recover.
-			existing, lookupErr := w.remna.GetUserByUsername(ctx, userID.String())
+			existing, lookupErr := w.remna.GetUserByUsername(ctx, remnaName)
+			if lookupErr != nil || existing == nil {
+				// Legacy fallback: try UUID-based username from older registrations.
+				existing, lookupErr = w.remna.GetUserByUsername(ctx, userID.String())
+			}
 			if lookupErr != nil || existing == nil {
 				return fmt.Errorf("create remna user: %w", err)
 			}

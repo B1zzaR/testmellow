@@ -12,6 +12,7 @@
 // /ticket                — open/manage support tickets
 // /trial                 — info about free trial (redirect to site)
 // /info                  — info with links to privacy policy and user agreement
+// /unlink                — unlink Telegram from the web account
 package bot
 
 import (
@@ -143,6 +144,7 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle("/ticket", b.handleTicketMenu)
 	b.bot.Handle("/help", b.handleHelp)
 	b.bot.Handle("/link", b.handleLink)
+	b.bot.Handle("/unlink", b.handleUnlink)
 	b.bot.Handle("/info", b.handleInfo)
 	b.bot.Handle("/resetpassword", b.handleResetPassword)
 }
@@ -211,10 +213,81 @@ func (b *Bot) handleLink(c tele.Context) error {
 		return c.Send("⚠️ Не удалось привязать аккаунт. Попробуйте снова.")
 	}
 
+	// Activity log (best-effort)
+	_ = b.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
+		ID:        uuid.New(),
+		UserID:    userID,
+		EventType: "telegram_link",
+		CreatedAt: time.Now(),
+	})
+
 	return c.Send(
 		"✅ *Telegram успешно привязан!*\n\nТеперь вы можете управлять подпиской прямо из бота.",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 	)
+}
+
+// ─── Unlink handler ───────────────────────────────────────────────────────────
+
+// handleUnlink processes `/unlink` — generates a one-time code for unlinking
+// the Telegram account and sends it to the user. The code must be entered on
+// the website to confirm the operation. Rate-limited to 3 per 10 minutes.
+func (b *Bot) handleUnlink(c tele.Context) error {
+	ctx := context.Background()
+	tgID := int64(c.Sender().ID)
+
+	// Rate limit: max 3 requests per 10 minutes per Telegram user.
+	rlKey := fmt.Sprintf("rl:unlink_bot:%d", tgID)
+	count, rlErr := redisrepo.Increment(ctx, b.rdb, rlKey, 10*time.Minute)
+	if rlErr == nil && count > 3 {
+		return c.Send("⏳ Слишком много запросов. Повторите через 10 минут.")
+	}
+
+	user, err := b.repo.GetByTelegramID(ctx, tgID)
+	if err != nil {
+		b.log.Error("handleUnlink: get user by tg id", zap.Error(err))
+		return c.Send("⚠️ Временная ошибка. Попробуйте позже.")
+	}
+	if user == nil {
+		return c.Send("❌ К этому Telegram не привязан аккаунт.")
+	}
+	if user.IsBanned {
+		return c.Send("🚫 Ваш аккаунт заблокирован.")
+	}
+
+	code, err := botRandCode()
+	if err != nil {
+		b.log.Error("handleUnlink: generate code", zap.Error(err))
+		return c.Send("⚠️ Внутренняя ошибка. Попробуйте позже.")
+	}
+
+	key := fmt.Sprintf("tg:unlink:%s", code)
+	if err := b.rdb.Set(ctx, key, user.ID.String(), 10*time.Minute).Err(); err != nil {
+		b.log.Error("handleUnlink: redis set", zap.Error(err))
+		return c.Send("⚠️ Временная ошибка. Попробуйте позже.")
+	}
+
+	return c.Send(
+		"🔓 *Отвязка Telegram*\n\n"+
+			"Код для отвязки: `"+code+"`\n\n"+
+			"Введите этот код на сайте в разделе\n*Настройки → Отвязать Telegram*.\n\n"+
+			"_Код действителен 10 минут._",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+	)
+}
+
+// botRandCode returns a 6-character alphanumeric code using unambiguous characters.
+func botRandCode() (string, error) {
+	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	code := make([]byte, 6)
+	for i := range code {
+		b := make([]byte, 1)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		code[i] = chars[int(b[0])%len(chars)]
+	}
+	return string(code), nil
 }
 
 // ─── Reset password handler ───────────────────────────────────────────────────
@@ -265,6 +338,14 @@ func (b *Bot) handleResetPassword(c tele.Context) error {
 	if vErr := redisrepo.SetPasswordVersion(ctx, b.rdb, user.ID.String(), time.Now()); vErr != nil {
 		b.log.Warn("handleResetPassword: set password version", zap.Error(vErr))
 	}
+
+	// Activity log (best-effort)
+	_ = b.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
+		ID:        uuid.New(),
+		UserID:    user.ID,
+		EventType: "password_reset",
+		CreatedAt: time.Now(),
+	})
 
 	loginName := "—"
 	if user.Username != nil {
@@ -410,6 +491,14 @@ func (b *Bot) handleStart(c tele.Context) error {
 	if err := b.repo.SetTelegramID(ctx, newUser.ID, &tgIDVal); err != nil {
 		b.log.Warn("set telegram id after registration", zap.Error(err))
 	}
+
+	// Activity log (best-effort)
+	_ = b.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
+		ID:        uuid.New(),
+		UserID:    newUser.ID,
+		EventType: "registration",
+		CreatedAt: time.Now(),
+	})
 
 	name := username
 	if name == "" {
@@ -756,7 +845,8 @@ func (b *Bot) handleHelp(c tele.Context) error {
 			"👥 /referral — реферальная программа\n"+
 			"🔧 /ticket — поддержка\n"+
 			"🎟 /promo КОД — активировать промокод\n"+
-			"🔑 /resetpassword — сбросить пароль\n\n"+
+			"🔑 /resetpassword — сбросить пароль\n"+
+			"🔓 /unlink — отвязать Telegram\n\n"+
 			"_По всем вопросам обращайтесь через /ticket_",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 		rm,
@@ -967,7 +1057,12 @@ func (b *Bot) RegisterBuyCallbacks() {
 				_ = b.repo.UpdateRemnaUUID(ctx, user.ID, remnaUUID)
 			} else {
 				// Path 2: look up by username in Remnawave
-				remnaUser, lookupErr := b.remna.GetUserByUsername(ctx, user.ID.String())
+				remnaName := user.RemnaUsername()
+				remnaUser, lookupErr := b.remna.GetUserByUsername(ctx, remnaName)
+				if lookupErr != nil || remnaUser == nil || remnaUser.UUID == "" {
+					// Legacy fallback: try UUID-based username from older registrations.
+					remnaUser, lookupErr = b.remna.GetUserByUsername(ctx, user.ID.String())
+				}
 				if lookupErr == nil && remnaUser != nil && remnaUser.UUID != "" {
 					remnaUUID = remnaUser.UUID
 					_ = b.repo.UpdateRemnaUUID(ctx, user.ID, remnaUUID)
@@ -987,7 +1082,7 @@ func (b *Bot) RegisterBuyCallbacks() {
 				}
 
 				// Path 3: create a new Remnawave account
-				remnaUser, createErr := b.remna.CreateUser(ctx, user.ID.String(), subs.ExpiresAt)
+				remnaUser, createErr := b.remna.CreateUser(ctx, remnaName, subs.ExpiresAt)
 				if createErr != nil || remnaUser == nil || remnaUser.UUID == "" {
 					b.log.Warn("remnawave lazy repair: create user failed", zap.Error(createErr))
 					return c.Send("⚠️ Не удалось настроить VPN-аккаунт. Попробуйте позже.")

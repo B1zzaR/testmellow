@@ -307,8 +307,10 @@ function ActivitySection() {
     switch (t) {
       case 'login': return 'Вход в аккаунт'
       case 'password_change': return 'Смена пароля'
+      case 'password_reset': return 'Сброс пароля через бот'
       case 'telegram_unlink': return 'Отвязка Telegram'
       case 'telegram_link': return 'Привязка Telegram'
+      case 'registration': return 'Регистрация'
       default: return t
     }
   }

@@ -120,8 +120,8 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 			}
 			return nil
 		}(),
-		CreatedAt:         time.Now(),
-		UpdatedAt:         time.Now(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	// Resolve referrer
@@ -169,10 +169,10 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 }
 
 type LoginInput struct {
-	Username   string
-	Password   string
-	IP         string
-	UserAgent  string
+	Username  string
+	Password  string
+	IP        string
+	UserAgent string
 }
 
 func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User, error) {
@@ -823,11 +823,16 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 	// never results in free VPN. If Remnawave fails here, the sub record exists
 	// and a background retry can re-activate without charging the user again.
 	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
-		remnaUser, err := s.remna.CreateUser(ctx, userID.String(), newExpiry)
+		remnaName := user.RemnaUsername()
+		remnaUser, err := s.remna.CreateUser(ctx, remnaName, newExpiry)
 		if err != nil {
 			// Fallback: if the user already exists in Remnawave (e.g. remna_user_uuid
 			// was lost from DB), look them up by username and recover.
-			existing, lookupErr := s.remna.GetUserByUsername(ctx, userID.String())
+			existing, lookupErr := s.remna.GetUserByUsername(ctx, remnaName)
+			if lookupErr != nil || existing == nil {
+				// Legacy fallback: try UUID-based username from older registrations.
+				existing, lookupErr = s.remna.GetUserByUsername(ctx, userID.String())
+			}
 			if lookupErr != nil || existing == nil {
 				s.log.Error("remnawave create user failed after YAD deduction — manual retry needed",
 					zap.String("user_id", userID.String()), zap.Error(err))
@@ -924,10 +929,15 @@ func (s *TrialService) ActivateTrial(ctx context.Context, userID uuid.UUID) (*do
 	// trial record already exists so the user cannot claim a second trial,
 	// and an admin / worker can re-activate them without re-charging.
 	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
-		remnaUser, err := s.remna.CreateUser(ctx, userID.String(), expiry)
+		remnaName := user.RemnaUsername()
+		remnaUser, err := s.remna.CreateUser(ctx, remnaName, expiry)
 		if err != nil {
 			// Fallback: if the user already exists in Remnawave, recover UUID.
-			existing, lookupErr := s.remna.GetUserByUsername(ctx, userID.String())
+			existing, lookupErr := s.remna.GetUserByUsername(ctx, remnaName)
+			if lookupErr != nil || existing == nil {
+				// Legacy fallback: try UUID-based username from older registrations.
+				existing, lookupErr = s.remna.GetUserByUsername(ctx, userID.String())
+			}
 			if lookupErr != nil || existing == nil {
 				s.log.Error("remnawave create user failed after trial commit — manual activation needed",
 					zap.String("user_id", userID.String()), zap.Error(err))

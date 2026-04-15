@@ -84,6 +84,16 @@ type User struct {
 	UpdatedAt             time.Time  `db:"updated_at" json:"updated_at"`
 }
 
+// RemnaUsername returns the identifier to use as the Remnawave username.
+// Prefers the website login; falls back to the user UUID so every user
+// has a deterministic, unique Remnawave name.
+func (u *User) RemnaUsername() string {
+	if u.Username != nil && *u.Username != "" {
+		return *u.Username
+	}
+	return u.ID.String()
+}
+
 // ─── Subscription ─────────────────────────────────────────────────────────────
 
 type SubscriptionPlan string
