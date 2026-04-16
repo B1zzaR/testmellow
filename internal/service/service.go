@@ -484,6 +484,9 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
 		return "", nil, errors.New("у вас нет активной подписки")
 	}
+	if activeSub.Status == domain.SubStatusTrial {
+		return "", nil, errors.New("расширение устройств недоступно на пробной подписке — оформите платный тариф")
+	}
 
 	// Check expansion limit
 	existing, err := s.repo.GetActiveDeviceExpansion(ctx, userID)
@@ -989,6 +992,9 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 	}
 	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
 		return nil, errors.New("у вас нет активной подписки")
+	}
+	if activeSub.Status == domain.SubStatusTrial {
+		return nil, errors.New("расширение устройств недоступно на пробной подписке — оформите платный тариф")
 	}
 
 	if user.YADBalance < yadPrice {

@@ -330,7 +330,7 @@ function PasswordSection() {
       <div>
         <h2 className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-slate-100">
           <Icon name="lock" size={18} className="text-primary-500" />
-          Безопасность
+          Смена пароля
         </h2>
         <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">
           Обновите пароль для входа в аккаунт
@@ -340,31 +340,35 @@ function PasswordSection() {
       {flash && <Alert variant={flash.type} message={flash.msg} />}
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Input
-          label="Текущий пароль"
-          type="password"
-          value={oldPw}
-          onChange={(e) => setOldPw(e.target.value)}
-          autoComplete="current-password"
-          required
-        />
-        <Input
-          label="Новый пароль"
-          type="password"
-          value={newPw}
-          onChange={(e) => setNewPw(e.target.value)}
-          autoComplete="new-password"
-          required
-          minLength={8}
-        />
-        <Input
-          label="Повторите новый пароль"
-          type="password"
-          value={confirmPw}
-          onChange={(e) => setConfirmPw(e.target.value)}
-          autoComplete="new-password"
-          required
-        />
+        <div className="max-w-md">
+          <Input
+            label="Текущий пароль"
+            type="password"
+            value={oldPw}
+            onChange={(e) => setOldPw(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 max-w-2xl">
+          <Input
+            label="Новый пароль"
+            type="password"
+            value={newPw}
+            onChange={(e) => setNewPw(e.target.value)}
+            autoComplete="new-password"
+            required
+            minLength={8}
+          />
+          <Input
+            label="Повторите новый пароль"
+            type="password"
+            value={confirmPw}
+            onChange={(e) => setConfirmPw(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </div>
         <Button type="submit" loading={mutation.isPending}>
           Изменить пароль
         </Button>
@@ -383,23 +387,24 @@ function ActivitySection() {
 
   const activity = data?.activity ?? []
 
-  const label = (t: string) => {
-    switch (t) {
-      case 'login': return 'Вход в аккаунт'
-      case 'password_change': return 'Смена пароля'
-      case 'password_reset': return 'Сброс пароля через бот'
-      case 'telegram_unlink': return 'Отвязка Telegram'
-      case 'telegram_link': return 'Привязка Telegram'
-      case 'registration': return 'Регистрация'
-      default: return t
-    }
+  const eventConfig: Record<string, { label: string; icon: string }> = {
+    login: { label: 'Вход в аккаунт', icon: 'user' },
+    password_change: { label: 'Смена пароля', icon: 'lock' },
+    password_reset: { label: 'Сброс пароля через бот', icon: 'lock' },
+    telegram_unlink: { label: 'Отвязка Telegram', icon: 'telegram' },
+    telegram_link: { label: 'Привязка Telegram', icon: 'telegram' },
+    registration: { label: 'Регистрация', icon: 'check-circle' },
+    tfa_enable: { label: 'Включение 2FA', icon: 'shield' },
+    tfa_disable: { label: 'Отключение 2FA', icon: 'shield' },
   }
+
+  const getConfig = (t: string) => eventConfig[t] ?? { label: t, icon: 'globe' }
 
   return (
     <div className="space-y-4">
       <div>
         <h2 className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-slate-100">
-          <Icon name="clock" size={18} className="text-primary-500" />
+          <Icon name="chart" size={18} className="text-primary-500" />
           Журнал активности
         </h2>
         <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">
@@ -414,19 +419,29 @@ function ActivitySection() {
       ) : activity.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-slate-500">Пока нет записей.</p>
       ) : (
-        <div className="space-y-2">
-          {activity.map((a) => (
-            <div key={a.id} className="rounded-lg border border-gray-200 dark:border-surface-700 px-3 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-medium text-gray-900 dark:text-slate-100">{label(a.event_type)}</p>
-                <p className="text-xs text-gray-400 dark:text-slate-600">{new Date(a.created_at).toLocaleString()}</p>
+        <div className="space-y-1.5">
+          {activity.map((a) => {
+            const cfg = getConfig(a.event_type)
+            return (
+              <div key={a.id} className="flex items-start gap-3 rounded-lg border border-gray-100 dark:border-surface-700 px-4 py-3 transition-colors hover:bg-gray-50 dark:hover:bg-surface-800">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-surface-800 text-gray-500 dark:text-slate-500 mt-0.5">
+                  <Icon name={cfg.icon as any} size={14} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-gray-900 dark:text-slate-100">{cfg.label}</p>
+                    <p className="text-xs text-gray-400 dark:text-slate-600">{new Date(a.created_at).toLocaleString('ru-RU')}</p>
+                  </div>
+                  {(a.ip || a.user_agent) && (
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-400 dark:text-slate-600">
+                      {a.ip && <span>IP: {a.ip}</span>}
+                      {a.user_agent && <span className="truncate max-w-[400px]">UA: {a.user_agent}</span>}
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-slate-500">
-                {a.ip && <span>IP: {a.ip}</span>}
-                {a.user_agent && <span className="truncate max-w-full">UA: {a.user_agent}</span>}
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
@@ -437,27 +452,28 @@ function ActivitySection() {
 
 export function SettingsPage() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6 py-6">
+    <div className="space-y-6">
       <div>
         <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100">Настройки</h1>
-        <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">Управление аккаунтом и уведомлениями</p>
+        <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">Управление аккаунтом и безопасностью</p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
+      {/* Telegram + 2FA — full width, stacked sections inside one card */}
+      <Card>
+        <div className="grid gap-8 lg:grid-cols-2 lg:divide-x lg:divide-gray-100 dark:lg:divide-surface-700">
           <TelegramSection />
-        </Card>
-        <Card>
-          <TFASection />
-        </Card>
-      </div>
+          <div className="lg:pl-8">
+            <TFASection />
+          </div>
+        </div>
+      </Card>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <PasswordSection />
-        </Card>
-      </div>
+      {/* Password */}
+      <Card>
+        <PasswordSection />
+      </Card>
 
+      {/* Activity */}
       <Card>
         <ActivitySection />
       </Card>

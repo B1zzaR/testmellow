@@ -222,7 +222,6 @@ export function DashboardPage() {
         <StatCard
           label="Баланс ЯД"
           value={formatYAD(balance?.yad_balance ?? profile?.yad_balance ?? 0)}
-          sub={`~${((balance?.yad_balance ?? profile?.yad_balance ?? 0) * 2.5).toFixed(0)} ₽`}
           icon={<Icon name="skull" size={28} />}
           accent
         />

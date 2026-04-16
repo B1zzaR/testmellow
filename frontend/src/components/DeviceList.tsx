@@ -27,9 +27,10 @@ const MAX_EXTRA = 2
 
 interface DeviceListProps {
   data: DeviceListResponse
+  isTrial?: boolean
 }
 
-export function DeviceList({ data }: DeviceListProps) {
+export function DeviceList({ data, isTrial = false }: DeviceListProps) {
   const { devices, count, limit, expansion } = data
   const queryClient = useQueryClient()
   const [successMsg, setSuccessMsg] = useState('')
@@ -196,17 +197,27 @@ export function DeviceList({ data }: DeviceListProps) {
           </div>
         ) : (
           <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
-            Добавьте устройства до конца текущей подписки. Максимум +{MAX_EXTRA}.
+            Дополнительные устройства действуют до конца текущей подписки. Максимум +{MAX_EXTRA}.
           </p>
         )}
 
-        {canBuyMore ? (
+        {isTrial ? (
+          <div className="flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
+            <Icon name="lock" size={16} className="shrink-0 text-yellow-500" />
+            <div>
+              <p className="text-sm text-yellow-500 font-medium">Недоступно на пробной подписке</p>
+              <p className="text-xs text-gray-400 dark:text-slate-500">
+                Расширение устройств доступно только на платных тарифах. Оформите подписку, чтобы добавить устройства.
+              </p>
+            </div>
+          </div>
+        ) : canBuyMore ? (
           <div className="rounded-xl border border-gray-200 dark:border-surface-700 p-4">
             <p className="text-base font-bold text-gray-900 dark:text-slate-100">
               +1 устройство
             </p>
             <p className="text-xs text-gray-400 dark:text-slate-500">
-              Действует до конца подписки
+              Действует до конца текущей подписки
             </p>
             <p className="mt-2 text-xl font-extrabold text-primary-500">
               {PRICE_RUB}₽
@@ -262,7 +273,7 @@ export function DeviceList({ data }: DeviceListProps) {
         <p className="text-sm text-gray-600 dark:text-slate-400">
           {expansion ? 'Добавить ещё' : 'Активировать'}{' '}
           <strong className="text-gray-900 dark:text-slate-100">+1 устройство</strong>{' '}
-          (итого до {4 + currentExtra + 1}) до конца подписки за{' '}
+          (итого до {4 + currentExtra + 1}) до конца текущей подписки за{' '}
           <strong className="text-primary-500">
             {buyMethod === 'money' ? `${PRICE_RUB}₽` : `${PRICE_YAD} ЯД`}
           </strong>?

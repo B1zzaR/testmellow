@@ -33,7 +33,7 @@ export function BalancePage() {
         <p className="mt-0.5 text-sm text-gray-500 dark:text-slate-500">Внутренняя валюта платформы</p>
       </div>
 
-      <div className="grid gap-4 grid-cols-2 sm:grid-cols-3">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
         <StatCard
           label="Текущий баланс"
           value={formatYAD(balance?.yad_balance ?? 0)}
@@ -45,12 +45,6 @@ export function BalancePage() {
           value="1 ЯД = 2.50 ₽"
           sub="Фиксированный"
           icon={<Icon name="refresh" size={28} />}
-        />
-        <StatCard
-          label="В рублях"
-          value={`${(balance?.yad_ruble_value ?? 0).toFixed(2)} ₽`}
-          sub="Эквивалент"
-          icon={<Icon name="gem" size={28} />}
         />
       </div>
 
