@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1383,20 +1384,8 @@ func (h *ShopHandler) BuySubscription(c *gin.Context) {
 
 // POST /api/shop/buy-device-expansion  (YAD payment — adds +1 or +3 devices)
 func (h *ShopHandler) BuyDeviceExpansion(c *gin.Context) {
-	var req struct {
-		Quantity int `json:"quantity"`
-	}
-	_ = c.ShouldBindJSON(&req)
-	if req.Quantity == 0 {
-		req.Quantity = 1
-	}
-	if req.Quantity != 1 && req.Quantity != 3 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "количество должно быть 1 или 3"})
-		return
-	}
-
 	userID := middleware.CurrentUserID(c)
-	expansion, err := h.eco.BuyDeviceExpansion(c.Request.Context(), userID, req.Quantity)
+	expansion, err := h.eco.BuyDeviceExpansion(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1412,26 +1401,18 @@ func (h *ShopHandler) BuyDeviceExpansion(c *gin.Context) {
 
 type buyDeviceExpansionMoneyRequest struct {
 	ReturnURL string `json:"return_url"`
-	Quantity  int    `json:"quantity"`
 }
 
-// POST /api/shop/buy-device-expansion-money  (Platega payment — adds +1 or +3 devices)
+// POST /api/shop/buy-device-expansion-money  (Platega payment — adds +1 device)
 func (h *ShopHandler) BuyDeviceExpansionMoney(c *gin.Context) {
 	var req buyDeviceExpansionMoneyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Quantity == 0 {
-		req.Quantity = 1
-	}
-	if req.Quantity != 1 && req.Quantity != 3 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "количество должно быть 1 или 3"})
-		return
-	}
 
 	userID := middleware.CurrentUserID(c)
-	redirect, payment, err := h.subSvc.InitiateDeviceExpansionPayment(c.Request.Context(), userID, req.Quantity, req.ReturnURL)
+	redirect, payment, err := h.subSvc.InitiateDeviceExpansionPayment(c.Request.Context(), userID, req.ReturnURL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1442,6 +1423,23 @@ func (h *ShopHandler) BuyDeviceExpansionMoney(c *gin.Context) {
 		"redirect_url": redirect,
 		"amount_rub":   float64(payment.AmountKopecks) / 100,
 		"expires_in":   "15 minutes",
+	})
+}
+
+// POST /api/shop/extend-device-expansion  (YAD payment — extends expansion expiry)
+func (h *ShopHandler) ExtendDeviceExpansion(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	expansion, err := h.eco.ExtendDeviceExpansionYAD(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "Расширение устройств продлено",
+		"extra_devices": expansion.ExtraDevices,
+		"expires_at":    expansion.ExpiresAt,
+		"total_limit":   domain.DeviceMaxPerUser + expansion.ExtraDevices,
 	})
 }
 
@@ -1479,16 +1477,24 @@ func (h *DeviceHandler) List(c *gin.Context) {
 		IsActive       bool   `json:"is_active"`
 		IsInactive     bool   `json:"is_inactive"`
 		CanDeleteAfter string `json:"can_delete_after"`
+		IsBlocked      bool   `json:"is_blocked"`
 	}
+
+	// Sort devices by creation time to determine blocking order.
+	// Oldest devices get priority (unblocked), newest get blocked when over limit.
+	sort.Slice(devices, func(i, j int) bool {
+		return devices[i].CreatedAt.Before(devices[j].CreatedAt)
+	})
 
 	result := make([]deviceResponse, 0, len(devices))
 	activeCount := 0
-	for _, d := range devices {
+	for idx, d := range devices {
 		id := d.HwidID
 		if id == "" {
 			id = d.ID.String()
 		}
 		canDeleteAfter := d.LastActive.Add(time.Duration(domain.DeviceInactiveDays) * 24 * time.Hour)
+		blocked := idx >= limit
 		result = append(result, deviceResponse{
 			ID:             id,
 			DeviceName:     d.DeviceName,
@@ -1496,8 +1502,9 @@ func (h *DeviceHandler) List(c *gin.Context) {
 			IsActive:       d.IsActive,
 			IsInactive:     d.IsInactive(),
 			CanDeleteAfter: canDeleteAfter.Format(time.RFC3339),
+			IsBlocked:      blocked,
 		})
-		if d.IsActive {
+		if d.IsActive && !blocked {
 			activeCount++
 		}
 	}

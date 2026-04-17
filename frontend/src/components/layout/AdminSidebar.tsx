@@ -32,10 +32,7 @@ export function AdminSidebar({ onClose }: AdminSidebarProps) {
       {/* Brand */}
       <div className="flex h-16 items-center gap-3 border-b border-gray-200 dark:border-surface-700 px-5">
         <SnakeLogo size={30} />
-        <div>
-          <p className="text-sm font-bold tracking-wide text-gray-900 dark:text-slate-100">Панель администратора</p>
-          <p className="text-[10px] font-medium uppercase tracking-widest text-yellow-500">Центр управления</p>
-        </div>
+        <p className="text-sm font-bold tracking-wide text-gray-900 dark:text-slate-100">Панель администратора</p>
       </div>
 
       {/* Nav */}

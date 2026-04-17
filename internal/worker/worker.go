@@ -462,22 +462,6 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 		}
 	}
 
-	// Reset device expansions when buying/renewing a subscription.
-	if deleted, err := w.repo.DeleteDeviceExpansionsByUser(ctx, userID); err != nil {
-		w.log.Error("failed to reset device expansions on subscription activate",
-			zap.String("user_id", userID.String()), zap.Error(err))
-	} else if deleted > 0 {
-		w.log.Info("device expansions reset on subscription activate",
-			zap.String("user_id", userID.String()), zap.Int64("deleted", deleted))
-		// Reset Remnawave device limit to base.
-		if remnaUUID != "" {
-			if err := w.remna.UpdateHwidDeviceLimit(ctx, remnaUUID, domain.DeviceMaxPerUser); err != nil {
-				w.log.Error("failed to reset remnawave device limit",
-					zap.String("user_id", userID.String()), zap.Error(err))
-			}
-		}
-	}
-
 	w.log.Info("subscription activated",
 		zap.String("user_id", userID.String()),
 		zap.String("plan", string(plan)),

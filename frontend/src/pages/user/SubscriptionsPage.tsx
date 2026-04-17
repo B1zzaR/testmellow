@@ -244,7 +244,7 @@ export function SubscriptionsPage() {
       )}
 
       {/* Devices */}
-      {activeSub && devicesData && <DeviceList data={devicesData} isTrial={activeSub.status === 'trial'} />}
+      {activeSub && devicesData && <DeviceList data={devicesData} isTrial={activeSub.status === 'trial'} subscriptionPlan={activeSub.plan} subscriptionExpiry={activeSub.expires_at} />}
 
       {/* Plan selector */}
       <Card title={activeSub ? 'Продлить подписку' : 'Выбрать тариф'}>

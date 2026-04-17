@@ -8,7 +8,7 @@ import { Alert } from '@/components/ui/Alert'
 import { Modal } from '@/components/ui/Modal'
 import { Icon } from '@/components/ui/Icons'
 import { formatDateTime } from '@/utils/formatters'
-import type { Device, DeviceListResponse } from '@/api/types'
+import type { Device, DeviceListResponse, SubscriptionPlan } from '@/api/types'
 
 function timeUntilDeletion(canDeleteAfter: string): string | null {
   const diff = new Date(canDeleteAfter).getTime() - Date.now()
@@ -21,25 +21,33 @@ function timeUntilDeletion(canDeleteAfter: string): string | null {
   return `${hours} ч.`
 }
 
-const PRICE_RUB_1 = 40
-const PRICE_YAD_1 = 16
-const PRICE_RUB_3 = 105
-const PRICE_YAD_3 = 42
-const MAX_EXTRA = 3
+const PRICE_RUB = 40
+const PRICE_YAD = 16
+const MAX_EXTRA = 2
+
+// Extension prices (per extra device) depending on current subscription plan
+const EXTENSION_PRICES: Record<string, { rub: number; yad: number }> = {
+  '1week':   { rub: 19, yad: 8 },
+  '1month':  { rub: 39, yad: 16 },
+  '3months': { rub: 119, yad: 48 },
+}
 
 interface DeviceListProps {
   data: DeviceListResponse
   isTrial?: boolean
+  subscriptionPlan?: SubscriptionPlan
+  subscriptionExpiry?: string
 }
 
-export function DeviceList({ data, isTrial = false }: DeviceListProps) {
+export function DeviceList({ data, isTrial = false, subscriptionPlan, subscriptionExpiry }: DeviceListProps) {
   const { devices, count, limit, expansion } = data
   const queryClient = useQueryClient()
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [showInactive, setShowInactive] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
-  const [buyConfig, setBuyConfig] = useState<{ quantity: 1 | 3; method: 'yad' | 'money' } | null>(null)
+  const [buyMethod, setBuyMethod] = useState<'yad' | 'money' | null>(null)
+  const [showExtendConfirm, setShowExtendConfirm] = useState(false)
 
   const disconnectMutation = useMutation({
     mutationFn: (id: string) => devicesApi.disconnect(id),
@@ -57,39 +65,61 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
   })
 
   const buyExpansionYADMutation = useMutation({
-    mutationFn: (qty: number) => shopApi.buyDeviceExpansion(qty),
+    mutationFn: () => shopApi.buyDeviceExpansion(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       queryClient.invalidateQueries({ queryKey: ['balance'] })
       setSuccessMsg('Расширение устройств активировано!')
       setErrorMsg('')
-      setBuyConfig(null)
+      setBuyMethod(null)
     },
     onError: (e: Error) => {
       setErrorMsg(e.message)
       setSuccessMsg('')
-      setBuyConfig(null)
+      setBuyMethod(null)
     },
   })
 
   const buyExpansionMoneyMutation = useMutation({
-    mutationFn: (qty: number) => shopApi.buyDeviceExpansionMoney(window.location.href, qty),
+    mutationFn: () => shopApi.buyDeviceExpansionMoney(window.location.href),
     onSuccess: (data) => {
-      setBuyConfig(null)
+      setBuyMethod(null)
       window.location.href = data.redirect_url
     },
     onError: (e: Error) => {
       setErrorMsg(e.message)
       setSuccessMsg('')
-      setBuyConfig(null)
+      setBuyMethod(null)
+    },
+  })
+
+  const extendExpansionMutation = useMutation({
+    mutationFn: () => shopApi.extendDeviceExpansion(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      queryClient.invalidateQueries({ queryKey: ['balance'] })
+      setSuccessMsg('Расширение устройств продлено!')
+      setErrorMsg('')
+      setShowExtendConfirm(false)
+    },
+    onError: (e: Error) => {
+      setErrorMsg(e.message)
+      setSuccessMsg('')
+      setShowExtendConfirm(false)
     },
   })
 
   const currentExtra = expansion?.extra_devices ?? 0
   const canBuyMore = currentExtra < MAX_EXTRA
 
-  const activeDevices = devices.filter(d => d.is_active)
-  const inactiveDevices = devices.filter(d => !d.is_active)
+  // Check if expansion needs to be extended to match new subscription
+  const needsExtension = expansion && subscriptionExpiry &&
+    new Date(expansion.expires_at).getTime() < new Date(subscriptionExpiry).getTime()
+  const extensionPrices = subscriptionPlan ? EXTENSION_PRICES[subscriptionPlan] : null
+
+  const activeDevices = devices.filter(d => d.is_active && !d.is_blocked)
+  const blockedDevices = devices.filter(d => d.is_blocked)
+  const inactiveDevices = devices.filter(d => !d.is_active && !d.is_blocked)
   const atLimit = count >= limit
 
   return (
@@ -155,6 +185,26 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
             </div>
           )}
 
+          {/* Blocked devices (over limit after expansion expired) */}
+          {blockedDevices.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-red-500 dark:text-red-400">Заблокированы ({blockedDevices.length})</p>
+              <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-2.5 mb-2">
+                <p className="text-xs text-red-500 dark:text-red-400">
+                  Эти устройства заблокированы — расширение устройств истекло. Отключите одно из активных устройств или продлите расширение, чтобы разблокировать.
+                </p>
+              </div>
+              {blockedDevices.map((device) => (
+                <DeviceRow
+                  key={device.id}
+                  device={device}
+                  onDisconnect={() => setConfirmId(device.id)}
+                  loading={disconnectMutation.isPending && disconnectMutation.variables === device.id}
+                />
+              ))}
+            </div>
+          )}
+
           {/* Inactive devices */}
           {inactiveDevices.length > 0 && (
             <div className="space-y-2">
@@ -190,7 +240,7 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
             <Icon name="shield" size={16} className="shrink-0 text-primary-500" />
             <div>
               <p className="text-sm text-primary-500 font-medium">
-                +{expansion.extra_devices} устройств (до {4 + expansion.extra_devices})
+                +{expansion.extra_devices} {expansion.extra_devices === 1 ? 'устройство' : 'устройства'} (до {4 + expansion.extra_devices})
               </p>
               <p className="text-xs text-gray-400 dark:text-slate-500">
                 Действует до {formatDateTime(expansion.expires_at)}
@@ -206,9 +256,30 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
         <div className="mb-3 flex items-center gap-3 rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-2.5">
           <Icon name="info" size={14} className="shrink-0 text-yellow-500" />
           <p className="text-xs text-yellow-600 dark:text-yellow-400">
-            При окончании подписки дополнительные устройства сбрасываются. При продлении или покупке новой подписки необходимо приобрести расширение заново.
+            При окончании подписки дополнительные устройства сбрасываются. При продлении подписки можно продлить расширение.
           </p>
         </div>
+
+        {/* Extension prompt — when expansion expires before subscription */}
+        {needsExtension && extensionPrices && (
+          <div className="mb-3 rounded-xl border-2 border-primary-500/40 bg-primary-500/5 dark:bg-primary-500/10 p-4">
+            <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 mb-1">
+              Продлить расширение устройств
+            </p>
+            <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
+              У вас есть +{expansion!.extra_devices} {expansion!.extra_devices === 1 ? 'устройство' : 'устройства'}, но расширение истекает раньше подписки. Продлите до конца текущей подписки.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1"
+                size="sm"
+                onClick={() => setShowExtendConfirm(true)}
+              >
+                {extensionPrices.yad} ЯД
+              </Button>
+            </div>
+          </div>
+        )}
 
         {isTrial ? (
           <div className="flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
@@ -221,77 +292,33 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
             </div>
           </div>
         ) : canBuyMore ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {/* +1 device option */}
-            <div className="rounded-xl border border-gray-200 dark:border-surface-700 p-4">
-              <p className="text-base font-bold text-gray-900 dark:text-slate-100">
-                +1 устройство
-              </p>
-              <p className="text-xs text-gray-400 dark:text-slate-500">
-                До конца текущей подписки
-              </p>
-              <p className="mt-2 text-xl font-extrabold text-primary-500">
-                {PRICE_RUB_1}₽
-              </p>
-              <div className="mt-3 flex gap-2">
-                <Button
-                  className="flex-1"
-                  size="sm"
-                  onClick={() => setBuyConfig({ quantity: 1, method: 'money' })}
-                >
-                  {PRICE_RUB_1}₽
-                </Button>
-                <Button
-                  className="flex-1"
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setBuyConfig({ quantity: 1, method: 'yad' })}
-                >
-                  {PRICE_YAD_1} ЯД
-                </Button>
-              </div>
+          <div className="rounded-xl border border-gray-200 dark:border-surface-700 p-4">
+            <p className="text-base font-bold text-gray-900 dark:text-slate-100">
+              +1 устройство
+            </p>
+            <p className="text-xs text-gray-400 dark:text-slate-500">
+              До конца текущей подписки
+            </p>
+            <p className="mt-2 text-xl font-extrabold text-primary-500">
+              {PRICE_RUB}₽
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button
+                className="flex-1"
+                size="sm"
+                onClick={() => setBuyMethod('money')}
+              >
+                {PRICE_RUB}₽
+              </Button>
+              <Button
+                className="flex-1"
+                size="sm"
+                variant="secondary"
+                onClick={() => setBuyMethod('yad')}
+              >
+                {PRICE_YAD} ЯД
+              </Button>
             </div>
-
-            {/* +3 devices bundle option (only when no expansion yet) */}
-            {currentExtra === 0 && (
-              <div className="relative rounded-xl border-2 border-primary-500/40 bg-primary-500/5 dark:bg-primary-500/10 p-4">
-                <span className="absolute right-3 top-3 rounded-full bg-primary-500/15 px-2 py-0.5 text-[10px] font-semibold text-primary-500">
-                  Выгоднее
-                </span>
-                <p className="text-base font-bold text-gray-900 dark:text-slate-100">
-                  +3 устройства
-                </p>
-                <p className="text-xs text-gray-400 dark:text-slate-500">
-                  До конца текущей подписки
-                </p>
-                <div className="mt-2 flex items-baseline gap-2">
-                  <p className="text-xl font-extrabold text-primary-500">
-                    {PRICE_RUB_3}₽
-                  </p>
-                  <span className="text-sm text-gray-400 dark:text-slate-600 line-through">{PRICE_RUB_1 * 3}₽</span>
-                  <span className="rounded-full bg-green-500/10 px-1.5 py-0.5 text-[10px] font-bold text-green-500">
-                    −{PRICE_RUB_1 * 3 - PRICE_RUB_3}₽
-                  </span>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <Button
-                    className="flex-1"
-                    size="sm"
-                    onClick={() => setBuyConfig({ quantity: 3, method: 'money' })}
-                  >
-                    {PRICE_RUB_3}₽
-                  </Button>
-                  <Button
-                    className="flex-1"
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => setBuyConfig({ quantity: 3, method: 'yad' })}
-                  >
-                    {PRICE_YAD_3} ЯД
-                  </Button>
-                </div>
-              </div>
-            )}
           </div>
         ) : expansion ? (
           <p className="text-xs text-gray-400 dark:text-slate-500">
@@ -302,21 +329,21 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
 
       {/* Buy expansion confirmation modal */}
       <Modal
-        open={buyConfig !== null}
-        onClose={() => setBuyConfig(null)}
+        open={buyMethod !== null}
+        onClose={() => setBuyMethod(null)}
         title="Расширение устройств"
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={() => setBuyConfig(null)}>
+            <Button variant="secondary" size="sm" onClick={() => setBuyMethod(null)}>
               Отмена
             </Button>
             <Button
               size="sm"
               loading={buyExpansionYADMutation.isPending || buyExpansionMoneyMutation.isPending}
               onClick={() => {
-                if (!buyConfig) return
-                if (buyConfig.method === 'yad') buyExpansionYADMutation.mutate(buyConfig.quantity)
-                if (buyConfig.method === 'money') buyExpansionMoneyMutation.mutate(buyConfig.quantity)
+                if (!buyMethod) return
+                if (buyMethod === 'yad') buyExpansionYADMutation.mutate()
+                if (buyMethod === 'money') buyExpansionMoneyMutation.mutate()
               }}
             >
               Подтвердить
@@ -324,35 +351,55 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
           </>
         }
       >
-        {buyConfig && (
+        {buyMethod && (
           <>
             <p className="text-sm text-gray-600 dark:text-slate-400">
               {expansion ? 'Добавить ещё' : 'Активировать'}{' '}
-              <strong className="text-gray-900 dark:text-slate-100">+{buyConfig.quantity} {buyConfig.quantity === 1 ? 'устройство' : 'устройства'}</strong>{' '}
-              (итого до {4 + currentExtra + buyConfig.quantity}) до конца текущей подписки за{' '}
+              <strong className="text-gray-900 dark:text-slate-100">+1 устройство</strong>{' '}
+              (итого до {4 + currentExtra + 1}) до конца текущей подписки за{' '}
               <strong className="text-primary-500">
-                {buyConfig.method === 'money'
-                  ? `${buyConfig.quantity === 3 ? PRICE_RUB_3 : PRICE_RUB_1}₽`
-                  : `${buyConfig.quantity === 3 ? PRICE_YAD_3 : PRICE_YAD_1} ЯД`
-                }
+                {buyMethod === 'money' ? `${PRICE_RUB}₽` : `${PRICE_YAD} ЯД`}
               </strong>?
             </p>
-            {buyConfig.quantity === 3 && (
-              <p className="mt-2 text-xs text-green-500 font-medium">
-                Выгода {buyConfig.method === 'money' ? `${PRICE_RUB_1 * 3 - PRICE_RUB_3}₽` : `${PRICE_YAD_1 * 3 - PRICE_YAD_3} ЯД`} по сравнению с покупкой по одному
-              </p>
-            )}
-            {buyConfig.method === 'money' && (
+            {buyMethod === 'money' && (
               <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
                 Вы будете перенаправлены на страницу оплаты.
               </p>
             )}
-            {buyConfig.method === 'yad' && (
+            {buyMethod === 'yad' && (
               <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
                 Сумма будет списана с баланса ЯД.
               </p>
             )}
           </>
+        )}
+      </Modal>
+
+      {/* Extend expansion confirmation modal */}
+      <Modal
+        open={showExtendConfirm}
+        onClose={() => setShowExtendConfirm(false)}
+        title="Продление расширения устройств"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setShowExtendConfirm(false)}>
+              Отмена
+            </Button>
+            <Button
+              size="sm"
+              loading={extendExpansionMutation.isPending}
+              onClick={() => extendExpansionMutation.mutate()}
+            >
+              Продлить
+            </Button>
+          </>
+        }
+      >
+        {expansion && extensionPrices && (
+          <p className="text-sm text-gray-600 dark:text-slate-400">
+            Продлить +{expansion.extra_devices} {expansion.extra_devices === 1 ? 'устройство' : 'устройства'} до конца подписки за{' '}
+            <strong className="text-primary-500">{extensionPrices.yad} ЯД</strong>?
+          </p>
         )}
       </Modal>
     </Card>
@@ -367,15 +414,18 @@ interface DeviceRowProps {
 
 function DeviceRow({ device, onDisconnect, loading }: DeviceRowProps) {
   const inactive = device.is_inactive
+  const blocked = device.is_blocked
   const remaining = timeUntilDeletion(device.can_delete_after)
 
   return (
     <div
       className={[
         'flex items-center justify-between rounded-lg border px-4 py-3 transition-colors',
-        inactive
-          ? 'border-gray-200 dark:border-surface-600 bg-gray-50/50 dark:bg-surface-800/60'
-          : 'border-gray-100 dark:border-surface-700 hover:bg-gray-50 dark:hover:bg-surface-800',
+        blocked
+          ? 'border-red-500/30 bg-red-50/50 dark:bg-red-900/10 opacity-75'
+          : inactive
+            ? 'border-gray-200 dark:border-surface-600 bg-gray-50/50 dark:bg-surface-800/60'
+            : 'border-gray-100 dark:border-surface-700 hover:bg-gray-50 dark:hover:bg-surface-800',
       ].join(' ')}
     >
       <div className="flex min-w-0 items-center gap-3">
@@ -383,7 +433,9 @@ function DeviceRow({ device, onDisconnect, loading }: DeviceRowProps) {
         <span
           className={[
             'h-2 w-2 shrink-0 rounded-full',
-            inactive ? 'bg-gray-400 dark:bg-slate-600' : 'bg-primary-500',
+            blocked
+              ? 'bg-red-500'
+              : inactive ? 'bg-gray-400 dark:bg-slate-600' : 'bg-primary-500',
           ].join(' ')}
         />
 
@@ -394,12 +446,17 @@ function DeviceRow({ device, onDisconnect, loading }: DeviceRowProps) {
           <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-500">
             Последняя активность: {formatDateTime(device.last_active)}
           </p>
-          {!inactive && remaining && (
+          {blocked && (
+            <p className="mt-0.5 text-xs text-red-500">
+              Заблокировано — превышен лимит устройств
+            </p>
+          )}
+          {!blocked && !inactive && remaining && (
             <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-600">
               Удаление доступно через {remaining}
             </p>
           )}
-          {inactive && (
+          {!blocked && inactive && (
             <p className="mt-0.5 text-xs text-primary-500">
               Можно удалить
             </p>
@@ -411,15 +468,17 @@ function DeviceRow({ device, onDisconnect, loading }: DeviceRowProps) {
         <span
           className={[
             'rounded-full px-2.5 py-0.5 text-[11px] font-semibold',
-            inactive
-              ? 'bg-gray-100 dark:bg-surface-700 text-gray-500 dark:text-slate-400'
-              : 'bg-primary-500/10 text-primary-500',
+            blocked
+              ? 'bg-red-500/10 text-red-500'
+              : inactive
+                ? 'bg-gray-100 dark:bg-surface-700 text-gray-500 dark:text-slate-400'
+                : 'bg-primary-500/10 text-primary-500',
           ].join(' ')}
         >
-          {inactive ? 'Неактивно' : 'Активно'}
+          {blocked ? 'Заблокировано' : inactive ? 'Неактивно' : 'Активно'}
         </span>
 
-        {inactive && (
+        {(inactive || blocked) && (
           <Button
             variant="danger"
             size="sm"

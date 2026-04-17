@@ -476,10 +476,7 @@ func (s *SubscriptionService) InitiateRenewal(ctx context.Context, userID uuid.U
 
 // InitiateDeviceExpansionPayment creates a Platega payment for device expansion.
 // quantity must be 1 or 3.
-func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context, userID uuid.UUID, quantity int, returnURL string) (string, *domain.Payment, error) {
-	if quantity != 1 && quantity != 3 {
-		return "", nil, errors.New("количество должно быть 1 или 3")
-	}
+func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context, userID uuid.UUID, returnURL string) (string, *domain.Payment, error) {
 
 	// Must have an active subscription
 	activeSub, err := s.repo.GetActiveSubscription(ctx, userID)
@@ -502,7 +499,7 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 	if existing != nil {
 		currentExtra = existing.ExtraDevices
 	}
-	if currentExtra+quantity > domain.DeviceExpansionMaxExtra {
+	if currentExtra+1 > domain.DeviceExpansionMaxExtra {
 		return "", nil, errors.New("превышен максимум дополнительных устройств")
 	}
 
@@ -515,19 +512,9 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		return "", nil, errors.New("покупки за деньги временно заблокированы администратором")
 	}
 
-	// Determine plan and price based on quantity
-	var plan domain.SubscriptionPlan
-	var priceKopecks int64
-	var description string
-	if quantity == 3 {
-		plan = domain.PlanDeviceExpansion3
-		priceKopecks = int64(domain.DeviceExpansionBundle3PriceKopecks)
-		description = "Расширение лимита устройств +3"
-	} else {
-		plan = domain.PlanDeviceExpansion
-		priceKopecks = int64(domain.DeviceExpansionPriceKopecks)
-		description = "Расширение лимита устройств +1"
-	}
+	plan := domain.PlanDeviceExpansion
+	priceKopecks := int64(domain.DeviceExpansionPriceKopecks)
+	description := "Расширение лимита устройств +1"
 
 	// Re-use existing pending device expansion payment if present
 	existingPayment, err := s.repo.GetPendingPaymentByPlan(ctx, userID, plan)
@@ -590,7 +577,6 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		zap.String("user_id", userID.String()),
 		zap.String("payment_id", txID.String()),
 		zap.Int64("amount_kopecks", priceKopecks),
-		zap.Int("quantity", quantity),
 	)
 	return platResp.Redirect, payment, nil
 }
@@ -958,15 +944,6 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 		return nil, err
 	}
 
-	// Reset device expansions when buying/renewing a subscription.
-	if deleted, err := s.repo.DeleteDeviceExpansionsByUser(ctx, userID); err != nil {
-		s.log.Error("failed to reset device expansions on subscription purchase",
-			zap.String("user_id", userID.String()), zap.Error(err))
-	} else if deleted > 0 {
-		s.log.Info("device expansions reset on subscription purchase",
-			zap.String("user_id", userID.String()), zap.Int64("deleted", deleted))
-	}
-
 	// Activate VPN access AFTER the DB commit so a balance deduction failure
 	// never results in free VPN. If Remnawave fails here, the sub record exists
 	// and a background retry can re-activate without charging the user again.
@@ -1001,19 +978,6 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 		}
 	}
 
-	// Reset Remnawave device limit to base after device expansion reset.
-	if effectiveRemnaUUID := remnaUUID; effectiveRemnaUUID == "" {
-		// Refresh from DB in case it was just set above.
-		if updated, err := s.repo.GetByID(ctx, userID); err == nil && updated != nil && updated.RemnaUserUUID != nil {
-			effectiveRemnaUUID = *updated.RemnaUserUUID
-		}
-		if effectiveRemnaUUID != "" {
-			_ = s.remna.UpdateHwidDeviceLimit(ctx, effectiveRemnaUUID, domain.DeviceMaxPerUser)
-		}
-	} else {
-		_ = s.remna.UpdateHwidDeviceLimit(ctx, effectiveRemnaUUID, domain.DeviceMaxPerUser)
-	}
-
 	s.log.Info("subscription purchased with ЯД",
 		zap.String("user_id", userID.String()),
 		zap.String("plan", string(plan)),
@@ -1023,18 +987,8 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 }
 
 // BuyDeviceExpansion purchases a device limit expansion for the user using ЯД.
-// quantity must be 1 or 3.
-func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUID, quantity int) (*domain.DeviceExpansion, error) {
-	if quantity != 1 && quantity != 3 {
-		return nil, errors.New("количество должно быть 1 или 3")
-	}
-
-	var yadPrice int64
-	if quantity == 3 {
-		yadPrice = int64(domain.DeviceExpansionBundle3PriceYAD)
-	} else {
-		yadPrice = int64(domain.DeviceExpansionPriceYAD)
-	}
+func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUID) (*domain.DeviceExpansion, error) {
+	yadPrice := int64(domain.DeviceExpansionPriceYAD)
 
 	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil || user == nil {
@@ -1070,10 +1024,10 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 	if existing != nil {
 		currentExtra = existing.ExtraDevices
 	}
-	if currentExtra+quantity > domain.DeviceExpansionMaxExtra {
+	if currentExtra+1 > domain.DeviceExpansionMaxExtra {
 		return nil, errors.New("превышен максимум дополнительных устройств")
 	}
-	newExtra := currentExtra + quantity
+	newExtra := currentExtra + 1
 
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
@@ -1082,7 +1036,7 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 	defer tx.Rollback(ctx)
 
 	ref := uuid.New()
-	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref, fmt.Sprintf("Расширение устройств: +%d (всего +%d)", quantity, newExtra)); err != nil {
+	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref, fmt.Sprintf("Расширение устройств: +1 (всего +%d)", newExtra)); err != nil {
 		return nil, err
 	}
 
@@ -1129,11 +1083,81 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 	s.log.Info("device expansion purchased (YAD)",
 		zap.String("user_id", userID.String()),
 		zap.Int("extra_devices", newExtra),
-		zap.Int("quantity", quantity),
 		zap.Int64("yad_spent", yadPrice),
 		zap.Time("expires_at", expansion.ExpiresAt),
 	)
 	return expansion, nil
+}
+
+// ExtendDeviceExpansion extends existing device expansions to match the current
+// subscription's expiry. Called when a user buys a new subscription and wants
+// to keep their extra devices for the new subscription period.
+// method: "yad" or "money" (money returns a redirect URL).
+func (s *EconomyService) ExtendDeviceExpansionYAD(ctx context.Context, userID uuid.UUID) (*domain.DeviceExpansion, error) {
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("пользователь не найден")
+	}
+
+	activeSub, err := s.repo.GetActiveSubscription(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
+		return nil, errors.New("у вас нет активной подписки")
+	}
+
+	existing, err := s.repo.GetActiveDeviceExpansion(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, errors.New("нет активного расширения устройств")
+	}
+
+	// Already extended to cover current subscription
+	if !existing.ExpiresAt.Before(activeSub.ExpiresAt) {
+		return nil, errors.New("расширение устройств уже действует до конца подписки")
+	}
+
+	yadPrice := domain.DeviceExpansionExtensionPriceYAD(activeSub.Plan)
+	if yadPrice == 0 {
+		return nil, errors.New("продление для данного тарифа недоступно")
+	}
+
+	if user.YADBalance < yadPrice {
+		return nil, errors.New("недостаточно ЯД на балансе")
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	ref := uuid.New()
+	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref,
+		fmt.Sprintf("Продление расширения устройств (+%d) до %s", existing.ExtraDevices, activeSub.ExpiresAt.Format("02.01.2006"))); err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	existing.ExpiresAt = activeSub.ExpiresAt
+
+	s.log.Info("device expansion extended (YAD)",
+		zap.String("user_id", userID.String()),
+		zap.Int("extra_devices", existing.ExtraDevices),
+		zap.Int64("yad_spent", yadPrice),
+		zap.Time("new_expires_at", activeSub.ExpiresAt),
+	)
+	return existing, nil
 }
 
 // ─── Trial Service ────────────────────────────────────────────────────────────

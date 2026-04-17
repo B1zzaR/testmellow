@@ -130,6 +130,7 @@ export interface Device {
   is_active: boolean
   is_inactive: boolean
   can_delete_after: string
+  is_blocked: boolean
 }
 
 export interface DeviceListResponse {

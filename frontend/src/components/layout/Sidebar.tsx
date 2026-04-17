@@ -46,10 +46,7 @@ export function Sidebar({ onClose }: SidebarProps) {
       {/* Brand */}
       <div className="flex h-[72px] items-center gap-3 border-b border-gray-200 dark:border-surface-700 px-5">
         <SnakeLogo size={36} />
-        <div>
-          <p className="text-base font-bold tracking-wide text-gray-900 dark:text-slate-100">MelloWPN</p>
-          <p className="text-[11px] font-medium uppercase tracking-widest text-primary-500">Безопасно · Быстро · Надёжно</p>
-        </div>
+        <p className="text-base font-bold tracking-wide text-gray-900 dark:text-slate-100">MelloWPN</p>
       </div>
 
       {/* Nav */}
