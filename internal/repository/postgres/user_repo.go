@@ -1705,7 +1705,7 @@ func (r *UserRepo) MergeUsers(ctx context.Context, srcID, dstID uuid.UUID) error
 		return fmt.Errorf("transfer balance: %w", err)
 	}
 
-	// 3. Reassign child records
+	// 3. Reassign child records (tables with simple user_id FK)
 	reassign := []string{
 		`UPDATE subscriptions       SET user_id    = $1 WHERE user_id    = $2`,
 		`UPDATE payments            SET user_id    = $1 WHERE user_id    = $2`,
@@ -1717,7 +1717,8 @@ func (r *UserRepo) MergeUsers(ctx context.Context, srcID, dstID uuid.UUID) error
 		`UPDATE device_expansions   SET user_id    = $1 WHERE user_id    = $2`,
 		`UPDATE account_activity    SET user_id    = $1 WHERE user_id    = $2`,
 		`UPDATE risk_events         SET user_id    = $1 WHERE user_id    = $2`,
-		`UPDATE referral_rewards    SET referrer_id = $1 WHERE referrer_id = $2`,
+		`UPDATE webhook_events      SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE promocodes          SET created_by_id = $1 WHERE created_by_id = $2`,
 	}
 	for _, q := range reassign {
 		if _, err := tx.Exec(ctx, q, dstID, srcID); err != nil {
@@ -1725,19 +1726,44 @@ func (r *UserRepo) MergeUsers(ctx context.Context, srcID, dstID uuid.UUID) error
 		}
 	}
 
-	// 4. Referrals: transfer referrer relationships (skip if creates self-referral)
+	// 4. Referral rewards: reassign referrer_id
+	_, err = tx.Exec(ctx,
+		`UPDATE referral_rewards SET referrer_id = $1 WHERE referrer_id = $2`, dstID, srcID)
+	if err != nil {
+		return fmt.Errorf("reassign referral_rewards: %w", err)
+	}
+
+	// 5. Referrals: transfer referrer relationships (skip if creates self-referral)
 	_, err = tx.Exec(ctx,
 		`UPDATE referrals SET referrer_id = $1 WHERE referrer_id = $2 AND referee_id <> $1`, dstID, srcID)
 	if err != nil {
 		return fmt.Errorf("reassign referrals referrer: %w", err)
 	}
-	// If src was a referee — delete that referral (can't reassign referee_id easily due to UNIQUE)
-	_, err = tx.Exec(ctx, `DELETE FROM referrals WHERE referee_id = $2`, dstID, srcID)
+
+	// 6. If src was a referee — delete linked rewards first, then the referral
+	_, err = tx.Exec(ctx,
+		`DELETE FROM referral_rewards WHERE referral_id IN (SELECT id FROM referrals WHERE referee_id = $1)`, srcID)
+	if err != nil {
+		return fmt.Errorf("clean referral rewards for referee: %w", err)
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM referrals WHERE referee_id = $1`, srcID)
 	if err != nil {
 		return fmt.Errorf("clean referrals referee: %w", err)
 	}
 
-	// 5. Promo code uses: transfer, skip duplicates
+	// 7. Clean referrals that would create self-referral (src was referrer of dst)
+	_, err = tx.Exec(ctx,
+		`DELETE FROM referral_rewards WHERE referral_id IN (SELECT id FROM referrals WHERE referrer_id = $1 AND referee_id = $1)`, dstID)
+	if err != nil {
+		return fmt.Errorf("clean self-referral rewards: %w", err)
+	}
+	_, err = tx.Exec(ctx,
+		`DELETE FROM referrals WHERE referrer_id = $1 AND referee_id = $1`, dstID)
+	if err != nil {
+		return fmt.Errorf("clean self-referrals: %w", err)
+	}
+
+	// 8. Promo code uses: transfer, skip duplicates
 	_, err = tx.Exec(ctx, `
 		UPDATE promocode_uses SET user_id = $1
 		WHERE user_id = $2
@@ -1751,13 +1777,19 @@ func (r *UserRepo) MergeUsers(ctx context.Context, srcID, dstID uuid.UUID) error
 		return fmt.Errorf("clean promo uses: %w", err)
 	}
 
-	// 6. Unlink Telegram from source
+	// 9. Other users referencing src as their referrer → point to dst
+	_, err = tx.Exec(ctx, `UPDATE users SET referrer_id = $1 WHERE referrer_id = $2`, dstID, srcID)
+	if err != nil {
+		return fmt.Errorf("reassign users referrer_id: %w", err)
+	}
+
+	// 10. Unlink Telegram from source
 	_, err = tx.Exec(ctx, `UPDATE users SET telegram_id = NULL WHERE id = $1`, srcID)
 	if err != nil {
 		return fmt.Errorf("unlink src telegram: %w", err)
 	}
 
-	// 7. Delete source user
+	// 11. Delete source user
 	_, err = tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, srcID)
 	if err != nil {
 		return fmt.Errorf("delete src user: %w", err)

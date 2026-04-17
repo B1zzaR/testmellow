@@ -357,14 +357,19 @@ func (b *Bot) handleStart(c tele.Context) error {
 	if name == "" {
 		name = fmt.Sprintf("User%d", tgID)
 	}
+	webURL := b.cfg.WebAppURL
+	if webURL == "" {
+		webURL = "https://vpn-platform.ru"
+	}
 	_ = c.Send(
 		fmt.Sprintf(
 			"🐍 *Добро пожаловать в MelloVPN!*\n"+brandLine+"\n\n"+
 				"Привет, *%s*! 🎉 Аккаунт создан.\n\n"+
 				"🆓  Попробуйте VPN бесплатно\n"+
 				"💰  Тарифы от *40 ₽/неделю*\n\n"+
+				"🌐  Личный кабинет: [%s](%s)\n\n"+
 				"_Выберите действие в меню ↓_",
-			name,
+			name, webURL, webURL,
 		),
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 	)

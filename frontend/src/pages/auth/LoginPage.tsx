@@ -169,6 +169,20 @@ export function LoginPage() {
               Восстановите через Telegram-бота
             </a>
           </p>
+
+          <div className="mt-5 rounded-xl border border-primary-500/20 bg-primary-500/5 p-3.5 text-center">
+            <p className="text-xs text-gray-500 dark:text-slate-400">
+              Управляйте подпиской через{' '}
+              <a
+                href="https://t.me/mellowpn_bot"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-primary-500 hover:text-primary-400 transition-colors"
+              >
+                Telegram-бота @mellowpn_bot
+              </a>
+            </p>
+          </div>
         </div>
 
         <p className="mt-6 text-center text-xs text-gray-400 dark:text-slate-600">
