@@ -737,16 +737,16 @@ func (r *UserRepo) GetSubscriptionsExpiringIn(ctx context.Context, within time.D
 	return subs, rows.Err()
 }
 
-func (r *UserRepo) ExtendSubscription(ctx context.Context, tx pgx.Tx, subID uuid.UUID, newExpiry time.Time) error {
+func (r *UserRepo) ExtendSubscription(ctx context.Context, tx pgx.Tx, subID uuid.UUID, newExpiry time.Time, plan domain.SubscriptionPlan) error {
 	if tx != nil {
 		_, err := tx.Exec(ctx,
-			`UPDATE subscriptions SET expires_at=$1, status='active', updated_at=NOW() WHERE id=$2`,
-			newExpiry, subID)
+			`UPDATE subscriptions SET expires_at=$1, plan=$2, status='active', updated_at=NOW() WHERE id=$3`,
+			newExpiry, string(plan), subID)
 		return err
 	}
 	_, err := r.db.Exec(ctx,
-		`UPDATE subscriptions SET expires_at=$1, status='active', updated_at=NOW() WHERE id=$2`,
-		newExpiry, subID)
+		`UPDATE subscriptions SET expires_at=$1, plan=$2, status='active', updated_at=NOW() WHERE id=$3`,
+		newExpiry, string(plan), subID)
 	return err
 }
 

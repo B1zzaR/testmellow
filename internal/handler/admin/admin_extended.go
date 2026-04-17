@@ -284,7 +284,7 @@ func (h *Handler) AssignSubscription(c *gin.Context) {
 
 	var sub *domain.Subscription
 	if activeSub != nil {
-		if err := h.repo.ExtendSubscription(c.Request.Context(), nil, activeSub.ID, newExpiry); err != nil {
+		if err := h.repo.ExtendSubscription(c.Request.Context(), nil, activeSub.ID, newExpiry, plan); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to extend subscription"})
 			return
 		}

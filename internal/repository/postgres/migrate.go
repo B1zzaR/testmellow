@@ -427,6 +427,13 @@ CREATE INDEX IF NOT EXISTS idx_device_expansions_expires      ON device_expansio
 			version: "013_tfa_enabled",
 			sql:     `ALTER TABLE users ADD COLUMN IF NOT EXISTS tfa_enabled BOOLEAN NOT NULL DEFAULT FALSE;`,
 		},
+		{
+			version: "014_expand_device_expansion_check",
+			sql: `
+ALTER TABLE device_expansions DROP CONSTRAINT IF EXISTS device_expansions_extra_devices_check;
+ALTER TABLE device_expansions ADD CONSTRAINT device_expansions_extra_devices_check CHECK (extra_devices BETWEEN 1 AND 3);
+`,
+		},
 	}
 
 	for _, m := range migrations {

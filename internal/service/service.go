@@ -931,10 +931,11 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 
 	var sub *domain.Subscription
 	if activeSub != nil {
-		if err := s.repo.ExtendSubscription(ctx, tx, activeSub.ID, newExpiry); err != nil {
+		if err := s.repo.ExtendSubscription(ctx, tx, activeSub.ID, newExpiry, plan); err != nil {
 			return nil, err
 		}
 		activeSub.ExpiresAt = newExpiry
+		activeSub.Plan = plan
 		sub = activeSub
 	} else {
 		sub = &domain.Subscription{
@@ -955,6 +956,15 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+
+	// Reset device expansions when buying/renewing a subscription.
+	if deleted, err := s.repo.DeleteDeviceExpansionsByUser(ctx, userID); err != nil {
+		s.log.Error("failed to reset device expansions on subscription purchase",
+			zap.String("user_id", userID.String()), zap.Error(err))
+	} else if deleted > 0 {
+		s.log.Info("device expansions reset on subscription purchase",
+			zap.String("user_id", userID.String()), zap.Int64("deleted", deleted))
 	}
 
 	// Activate VPN access AFTER the DB commit so a balance deduction failure
@@ -989,6 +999,19 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 		} else {
 			_ = s.remna.EnableUser(ctx, remnaUUID)
 		}
+	}
+
+	// Reset Remnawave device limit to base after device expansion reset.
+	if effectiveRemnaUUID := remnaUUID; effectiveRemnaUUID == "" {
+		// Refresh from DB in case it was just set above.
+		if updated, err := s.repo.GetByID(ctx, userID); err == nil && updated != nil && updated.RemnaUserUUID != nil {
+			effectiveRemnaUUID = *updated.RemnaUserUUID
+		}
+		if effectiveRemnaUUID != "" {
+			_ = s.remna.UpdateHwidDeviceLimit(ctx, effectiveRemnaUUID, domain.DeviceMaxPerUser)
+		}
+	} else {
+		_ = s.remna.UpdateHwidDeviceLimit(ctx, effectiveRemnaUUID, domain.DeviceMaxPerUser)
 	}
 
 	s.log.Info("subscription purchased with ЯД",

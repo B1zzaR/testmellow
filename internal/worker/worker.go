@@ -428,7 +428,7 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 			return fmt.Errorf("begin extend tx: %w", err)
 		}
 		defer tx.Rollback(ctx)
-		if err := w.repo.ExtendSubscription(ctx, tx, activeSub.ID, newExpiry); err != nil {
+		if err := w.repo.ExtendSubscription(ctx, tx, activeSub.ID, newExpiry, plan); err != nil {
 			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -459,6 +459,22 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit create tx: %w", err)
+		}
+	}
+
+	// Reset device expansions when buying/renewing a subscription.
+	if deleted, err := w.repo.DeleteDeviceExpansionsByUser(ctx, userID); err != nil {
+		w.log.Error("failed to reset device expansions on subscription activate",
+			zap.String("user_id", userID.String()), zap.Error(err))
+	} else if deleted > 0 {
+		w.log.Info("device expansions reset on subscription activate",
+			zap.String("user_id", userID.String()), zap.Int64("deleted", deleted))
+		// Reset Remnawave device limit to base.
+		if remnaUUID != "" {
+			if err := w.remna.UpdateHwidDeviceLimit(ctx, remnaUUID, domain.DeviceMaxPerUser); err != nil {
+				w.log.Error("failed to reset remnawave device limit",
+					zap.String("user_id", userID.String()), zap.Error(err))
+			}
 		}
 	}
 
