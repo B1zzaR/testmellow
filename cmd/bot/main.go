@@ -42,6 +42,7 @@ func main() {
 	defer rdb.Close()
 
 	userRepo := dbpkg.NewUserRepo(db)
+	deviceRepo := dbpkg.NewDeviceRepo(db)
 	platClient := platega.NewClient(cfg.Platega, log)
 	remnaClient := remnawave.NewClient(cfg.Remna, log)
 	antiEngine := anticheat.NewEngine(rdb, log)
@@ -50,15 +51,17 @@ func main() {
 	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log)
 	ecoSvc := service.NewEconomyService(userRepo, remnaClient, antiEngine, log)
 	trialSvc := service.NewTrialService(userRepo, remnaClient, log)
+	devSvc := service.NewDeviceService(deviceRepo, userRepo, remnaClient, log)
 
 	jwtMgr := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTLHours)
 
 	botCfg := bot.BotConfig{
-		Token:     cfg.Telegram.Token,
-		AdminID:   cfg.Telegram.AdminID,
-		WebAppURL: cfg.Telegram.WebAppURL,
+		Token:            cfg.Telegram.Token,
+		AdminID:          cfg.Telegram.AdminID,
+		WebAppURL:        cfg.Telegram.WebAppURL,
+		PaymentReturnURL: cfg.Telegram.WebAppURL,
 	}
-	b, err := bot.New(botCfg, userRepo, authSvc, subSvc, ecoSvc, trialSvc, remnaClient, jwtMgr, rdb, log)
+	b, err := bot.New(botCfg, userRepo, authSvc, subSvc, ecoSvc, trialSvc, devSvc, remnaClient, jwtMgr, rdb, log)
 	if err != nil {
 		log.Fatal("init bot", zap.Error(err))
 	}

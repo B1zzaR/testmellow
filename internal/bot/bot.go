@@ -1,18 +1,4 @@
 // Package bot implements the Telegram bot interface for the VPN platform.
-//
-// Commands:
-//
-// /start [referral_code] — register or login, process referral
-// /balance               — show YAD balance + Telegram ID
-// /buy                   — buy subscription
-// /mysubs                — list subscriptions
-// /renew                 — renew subscription
-// /promo <code>          — apply promo code
-// /referral              — show referral link and stats
-// /ticket                — open/manage support tickets
-// /trial                 — info about free trial (redirect to site)
-// /info                  — info with links to privacy policy and user agreement
-// /unlink                — unlink Telegram from the web account
 package bot
 
 import (
@@ -21,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,6 +35,7 @@ type Bot struct {
 	subSvc   *service.SubscriptionService
 	ecoSvc   *service.EconomyService
 	trialSvc *service.TrialService
+	devSvc   *service.DeviceService
 	remna    *remnawave.Client
 	jwtMgr   *jwtpkg.Manager
 	rdb      *redis.Client
@@ -58,7 +46,7 @@ type Bot struct {
 type BotConfig struct {
 	Token            string
 	AdminID          int64
-	WebAppURL        string // e.g. https://yourdomain.com
+	WebAppURL        string
 	PaymentReturnURL string
 }
 
@@ -69,6 +57,7 @@ func New(
 	subSvc *service.SubscriptionService,
 	ecoSvc *service.EconomyService,
 	trialSvc *service.TrialService,
+	devSvc *service.DeviceService,
 	remna *remnawave.Client,
 	jwtMgr *jwtpkg.Manager,
 	rdb *redis.Client,
@@ -90,6 +79,7 @@ func New(
 		subSvc:   subSvc,
 		ecoSvc:   ecoSvc,
 		trialSvc: trialSvc,
+		devSvc:   devSvc,
 		remna:    remna,
 		jwtMgr:   jwtMgr,
 		rdb:      rdb,
@@ -101,15 +91,6 @@ func New(
 	return bot, nil
 }
 
-// botRandPassword returns a cryptographically random 32-hex-char password (C-2).
-func botRandPassword() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
 func (b *Bot) Start() {
 	b.log.Info("telegram bot started")
 	b.bot.Start()
@@ -119,9 +100,8 @@ func (b *Bot) Stop() {
 	b.bot.Stop()
 }
 
-// StartQueues listens to Redis queues for outgoing Telegram messages
-// (notifications and 2FA challenges) and sends them via the bot instance.
-// Should be called as a goroutine: go b.StartQueues(ctx)
+// ─── Queue system ─────────────────────────────────────────────────────────────
+
 func (b *Bot) StartQueues(ctx context.Context) {
 	go b.queueLoop(ctx, "queue:notify:telegram", b.handleNotifyTelegramQueue)
 	go b.queueLoop(ctx, "queue:tfa:challenge", b.handleTFAChallengeQueue)
@@ -148,10 +128,7 @@ func (b *Bot) queueLoop(ctx context.Context, queue string, handler func(ctx cont
 			continue
 		}
 		if err := handler(ctx, result[1]); err != nil {
-			b.log.Error("bot queue handler error",
-				zap.String("queue", queue),
-				zap.Error(err),
-			)
+			b.log.Error("bot queue handler error", zap.String("queue", queue), zap.Error(err))
 		}
 	}
 }
@@ -177,8 +154,8 @@ func (b *Bot) handleTFAChallengeQueue(_ context.Context, payload string) error {
 	if err := json.Unmarshal([]byte(payload), &job); err != nil {
 		return err
 	}
-	approveBtn := tele.InlineButton{Text: "✅ Подтвердить", Data: "tfa_approve_" + job.ChallengeID}
-	denyBtn := tele.InlineButton{Text: "❌ Отклонить", Data: "tfa_deny_" + job.ChallengeID}
+	approveBtn := tele.InlineButton{Text: "✓ Подтвердить", Data: "tfa_approve_" + job.ChallengeID}
+	denyBtn := tele.InlineButton{Text: "✕ Отклонить", Data: "tfa_deny_" + job.ChallengeID}
 	markup := &tele.ReplyMarkup{
 		InlineKeyboard: [][]tele.InlineButton{{approveBtn, denyBtn}},
 	}
@@ -189,8 +166,9 @@ func (b *Bot) handleTFAChallengeQueue(_ context.Context, payload string) error {
 	return err
 }
 
+// ─── Handler registration ─────────────────────────────────────────────────────
+
 func (b *Bot) registerHandlers() {
-	// M-9: global per-user rate limit — max 20 commands per minute.
 	b.bot.Use(func(next tele.HandlerFunc) tele.HandlerFunc {
 		return func(c tele.Context) error {
 			if c.Sender() == nil {
@@ -199,11 +177,12 @@ func (b *Bot) registerHandlers() {
 			key := fmt.Sprintf("rl:bot:%d", c.Sender().ID)
 			count, err := redisrepo.Increment(context.Background(), b.rdb, key, time.Minute)
 			if err == nil && count > 20 {
-				return c.Send("⏳ Слишком много запросов. Подождите минуту и попробуйте снова.")
+				return c.Send("⏳ Слишком много запросов — подождите минуту.")
 			}
 			return next(c)
 		}
 	})
+
 	b.bot.Handle("/start", b.handleStart)
 	b.bot.Handle("/balance", b.handleBalance)
 	b.bot.Handle("/buy", b.handleBuy)
@@ -213,230 +192,26 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle("/referral", b.handleReferral)
 	b.bot.Handle("/trial", b.handleTrial)
 	b.bot.Handle("/ticket", b.handleTicketMenu)
+	b.bot.Handle("/newticket", b.handleNewTicket)
 	b.bot.Handle("/help", b.handleHelp)
 	b.bot.Handle("/link", b.handleLink)
 	b.bot.Handle("/unlink", b.handleUnlink)
 	b.bot.Handle("/info", b.handleInfo)
 	b.bot.Handle("/resetpassword", b.handleResetPassword)
+	b.bot.Handle("/devices", b.handleDevices)
+	b.bot.Handle("/buydevice", b.handleBuyDevice)
+	b.bot.Handle("/extend", b.handleExtendDevices)
+	b.bot.Handle("/traffic", b.handleTraffic)
+	b.bot.Handle("/history", b.handleHistory)
+	b.bot.Handle("/payments", b.handlePayments)
+	b.bot.Handle("/toggle2fa", b.handleToggle2FA)
 
-	// Generic callback handler for dynamic callback_data (e.g. 2FA)
 	b.bot.Handle(tele.OnCallback, b.handleGenericCallback)
 }
 
-// ─── Link handler ─────────────────────────────────────────────────────────────
+// ─── Brand helpers ────────────────────────────────────────────────────────────
 
-// handleLink processes `/link CODE` — links the web account to this Telegram user.
-func (b *Bot) handleLink(c tele.Context) error {
-	args := strings.Fields(c.Message().Text)
-	if len(args) < 2 {
-		return c.Send(
-			"❌ *Привязка аккаунта*\n\n"+
-				"Используйте команду в формате:\n"+
-				"`/link КОД`\n\n"+
-				"_Откройте сайт → Настройки → «Привязать Telegram» и скопируйте команду._",
-			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-		)
-	}
-	code := strings.ToUpper(strings.TrimSpace(args[1]))
-	key := fmt.Sprintf("tg:link:%s", code)
-
-	ctx := context.Background()
-	// GetDel atomically reads and removes the code in one round-trip,
-	// preventing a second concurrent /link invocation from consuming the same code.
-	userIDStr, err := b.rdb.GetDel(ctx, key).Result()
-	if err == redis.Nil {
-		return c.Send("❌ Код не найден или уже истёк.\n\nЗапросите новый код на сайте.")
-	}
-	if err != nil {
-		b.log.Error("handleLink: redis getdel", zap.Error(err))
-		return c.Send("⚠️ Временная ошибка. Попробуйте позже.")
-	}
-
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		b.log.Error("handleLink: invalid user id in redis", zap.String("value", userIDStr))
-		return c.Send("⚠️ Внутренняя ошибка. Запросите новый код на сайте.")
-	}
-
-	tgID := c.Sender().ID
-	tgIDVal := int64(tgID)
-
-	// Check if this telegram_id is already linked to some user
-	existingUser, err := b.repo.GetByTelegramID(ctx, tgIDVal)
-	if err != nil {
-		b.log.Error("handleLink: get by telegram id", zap.Error(err))
-		return c.Send("⚠️ Временная ошибка. Попробуйте позже.")
-	}
-
-	// If telegram_id is linked to the same user, just confirm
-	if existingUser != nil && existingUser.ID == userID {
-		return c.Send("✅ Этот Telegram уже привязан к вашему аккаунту!")
-	}
-
-	// If telegram_id is linked to another user, unlink it first
-	if existingUser != nil && existingUser.ID != userID {
-		if err := b.repo.SetTelegramID(ctx, existingUser.ID, nil); err != nil {
-			b.log.Error("handleLink: unlink telegram from old user", zap.Error(err))
-			return c.Send("⚠️ Не удалось выполнить операцию. Попробуйте позже.")
-		}
-	}
-
-	// Now link telegram_id to the target user
-	if err := b.repo.SetTelegramID(ctx, userID, &tgIDVal); err != nil {
-		b.log.Error("handleLink: set telegram id", zap.Error(err))
-		return c.Send("⚠️ Не удалось привязать аккаунт. Попробуйте снова.")
-	}
-
-	// Activity log (best-effort)
-	_ = b.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
-		ID:        uuid.New(),
-		UserID:    userID,
-		EventType: "telegram_link",
-		CreatedAt: time.Now(),
-	})
-
-	return c.Send(
-		"✅ *Telegram успешно привязан!*\n\nТеперь вы можете управлять подпиской прямо из бота.",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-	)
-}
-
-// ─── Unlink handler ───────────────────────────────────────────────────────────
-
-// handleUnlink processes `/unlink` — generates a one-time code for unlinking
-// the Telegram account and sends it to the user. The code must be entered on
-// the website to confirm the operation. Rate-limited to 3 per 10 minutes.
-func (b *Bot) handleUnlink(c tele.Context) error {
-	ctx := context.Background()
-	tgID := int64(c.Sender().ID)
-
-	// Rate limit: max 3 requests per 10 minutes per Telegram user.
-	rlKey := fmt.Sprintf("rl:unlink_bot:%d", tgID)
-	count, rlErr := redisrepo.Increment(ctx, b.rdb, rlKey, 10*time.Minute)
-	if rlErr == nil && count > 3 {
-		return c.Send("⏳ Слишком много запросов. Повторите через 10 минут.")
-	}
-
-	user, err := b.repo.GetByTelegramID(ctx, tgID)
-	if err != nil {
-		b.log.Error("handleUnlink: get user by tg id", zap.Error(err))
-		return c.Send("⚠️ Временная ошибка. Попробуйте позже.")
-	}
-	if user == nil {
-		return c.Send("❌ К этому Telegram не привязан аккаунт.")
-	}
-	if user.IsBanned {
-		return c.Send("🚫 Ваш аккаунт заблокирован.")
-	}
-
-	code, err := botRandCode()
-	if err != nil {
-		b.log.Error("handleUnlink: generate code", zap.Error(err))
-		return c.Send("⚠️ Внутренняя ошибка. Попробуйте позже.")
-	}
-
-	key := fmt.Sprintf("tg:unlink:%s", code)
-	if err := b.rdb.Set(ctx, key, user.ID.String(), 10*time.Minute).Err(); err != nil {
-		b.log.Error("handleUnlink: redis set", zap.Error(err))
-		return c.Send("⚠️ Временная ошибка. Попробуйте позже.")
-	}
-
-	return c.Send(
-		"🔓 *Отвязка Telegram*\n\n"+
-			"Код для отвязки: `"+code+"`\n\n"+
-			"Введите этот код на сайте в разделе\n*Настройки → Отвязать Telegram*.\n\n"+
-			"_Код действителен 10 минут._",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-	)
-}
-
-// botRandCode returns a 6-character alphanumeric code using unambiguous characters.
-func botRandCode() (string, error) {
-	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	code := make([]byte, 6)
-	for i := range code {
-		b := make([]byte, 1)
-		if _, err := rand.Read(b); err != nil {
-			return "", err
-		}
-		code[i] = chars[int(b[0])%len(chars)]
-	}
-	return string(code), nil
-}
-
-// ─── Reset password handler ───────────────────────────────────────────────────
-
-// handleResetPassword generates a new random password for the account linked to
-// this Telegram user and sends it privately. Rate-limited to 3 per hour.
-func (b *Bot) handleResetPassword(c tele.Context) error {
-	ctx := context.Background()
-	tgID := int64(c.Sender().ID)
-
-	// Rate limit: max 3 resets per hour per Telegram user.
-	rlKey := fmt.Sprintf("rl:resetpw:%d", tgID)
-	count, rlErr := redisrepo.Increment(ctx, b.rdb, rlKey, time.Hour)
-	if rlErr == nil && count > 3 {
-		return c.Send("⏳ Слишком много попыток. Повторите через час.")
-	}
-
-	user, err := b.repo.GetByTelegramID(ctx, tgID)
-	if err != nil {
-		b.log.Error("handleResetPassword: get user by tg id", zap.Error(err))
-		return c.Send("⚠️ Временная ошибка. Попробуйте позже.")
-	}
-	if user == nil {
-		return c.Send("❌ К этому Telegram не привязан аккаунт.\n\nПривяжите аккаунт на сайте в разделе Настройки → Telegram.")
-	}
-	if user.IsBanned {
-		return c.Send("🚫 Ваш аккаунт заблокирован.")
-	}
-
-	newPw, err := botRandPassword()
-	if err != nil {
-		b.log.Error("handleResetPassword: generate password", zap.Error(err))
-		return c.Send("⚠️ Внутренняя ошибка. Попробуйте позже.")
-	}
-
-	hash, err := password.Hash(newPw)
-	if err != nil {
-		b.log.Error("handleResetPassword: hash password", zap.Error(err))
-		return c.Send("⚠️ Внутренняя ошибка. Попробуйте позже.")
-	}
-
-	if err := b.repo.SetPassword(ctx, user.ID, hash); err != nil {
-		b.log.Error("handleResetPassword: set password", zap.Error(err))
-		return c.Send("⚠️ Не удалось сбросить пароль. Попробуйте позже.")
-	}
-
-	// Invalidate all existing sessions.
-	if vErr := redisrepo.SetPasswordVersion(ctx, b.rdb, user.ID.String(), time.Now()); vErr != nil {
-		b.log.Warn("handleResetPassword: set password version", zap.Error(vErr))
-	}
-
-	// Activity log (best-effort)
-	_ = b.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
-		ID:        uuid.New(),
-		UserID:    user.ID,
-		EventType: "password_reset",
-		CreatedAt: time.Now(),
-	})
-
-	loginName := "—"
-	if user.Username != nil {
-		loginName = *user.Username
-	}
-
-	return c.Send(
-		"🔑 *Пароль сброшен!*\n\n"+
-			"Логин: `"+loginName+"`\n"+
-			"Новый пароль: `"+newPw+"`\n\n"+
-			"_Рекомендуем сменить пароль в настройках после входа._\n"+
-			"_Все активные сессии завершены._",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-	)
-}
-
-// ─── Main menu helpers ────────────────────────────────────────────────────────
+const brandLine = "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
 
 func mainMenuText(user *domain.User, tgID int64, username string) string {
 	name := username
@@ -445,16 +220,14 @@ func mainMenuText(user *domain.User, tgID int64, username string) string {
 	}
 	adminLine := ""
 	if user.IsAdmin {
-		adminLine = "\n⚙️ _Режим администратора_"
+		adminLine = "\n🔧 _Администратор_"
 	}
 	return fmt.Sprintf(
-		"🐍 *MelloWPN*\n\n"+
-			"Привет, *%s*! 👋\n"+
-			"━━━━━━━━━━━━━━━━━\n"+
-			"💎 Баланс: *%d ЯД* (~%.0f ₽)\n"+
-			"🪪 ID: `%d`%s\n"+
-			"━━━━━━━━━━━━━━━━━\n"+
-			"Выберите действие 👇",
+		"*MelloVPN* 🐍\n"+brandLine+"\n\n"+
+			"Привет, *%s* 👋\n\n"+
+			"◽ Баланс: *%d ЯД* (~%.0f ₽)\n"+
+			"◽ ID: `%d`%s\n\n"+
+			brandLine+"\nВыбери действие ↓",
 		name,
 		user.YADBalance,
 		float64(user.YADBalance)*2.5,
@@ -466,20 +239,23 @@ func mainMenuText(user *domain.User, tgID int64, username string) string {
 func (b *Bot) mainMenuMarkup(user *domain.User) *tele.ReplyMarkup {
 	rm := &tele.ReplyMarkup{}
 
-	btnBuy := rm.Data("💎 Купить VPN", "menu_buy")
-	btnMySubs := rm.Data("📋 Мои подписки", "menu_mysubs")
+	btnBuy := rm.Data("🛒 Купить VPN", "menu_buy")
+	btnSubs := rm.Data("📋 Мои подписки", "menu_mysubs")
+	btnDevices := rm.Data("📱 Устройства", "menu_devices")
+	btnTraffic := rm.Data("📊 Трафик", "menu_traffic")
 	btnTrial := rm.Data("🆓 Пробный период", "menu_trial")
 	btnPromo := rm.Data("🎟 Промокод", "menu_promo")
 	btnRef := rm.Data("👥 Рефералы", "menu_referrals")
-	btnYad := rm.Data("🛒 Магазин ЯД", "menu_yadshop")
+	btnBalance := rm.Data("💰 Кошелёк", "menu_balance")
 	btnHelp := rm.Data("❓ Помощь", "menu_help")
-	btnSupport := rm.Data("🔧 Поддержка", "menu_support")
+	btnSupport := rm.Data("🎫 Поддержка", "menu_support")
 	btnInfo := rm.Data("ℹ️ О сервисе", "menu_info")
 
 	rows := []tele.Row{
-		rm.Row(btnBuy, btnMySubs),
+		rm.Row(btnBuy, btnSubs),
+		rm.Row(btnDevices, btnTraffic),
 		rm.Row(btnTrial, btnPromo),
-		rm.Row(btnRef, btnYad),
+		rm.Row(btnRef, btnBalance),
 		rm.Row(btnHelp, btnSupport),
 		rm.Row(btnInfo),
 	}
@@ -492,16 +268,16 @@ func (b *Bot) mainMenuMarkup(user *domain.User) *tele.ReplyMarkup {
 }
 
 func backBtn(rm *tele.ReplyMarkup) tele.Btn {
-	return rm.Data("🏠 Главное меню", "menu_back")
+	return rm.Data("← Меню", "menu_back")
 }
 
 func (b *Bot) sendMainMenu(c tele.Context) error {
 	ctx := context.Background()
 	user, err := b.getUser(ctx, c)
 	if err != nil {
-		return c.Send("❌ " + err.Error())
+		return c.Send("Ошибка: " + err.Error())
 	}
-	tgID := int64(c.Sender().ID)
+	tgID := c.Sender().ID
 	username := c.Sender().Username
 	return c.Send(
 		mainMenuText(user, tgID, username),
@@ -517,23 +293,22 @@ func (b *Bot) handleStart(c tele.Context) error {
 	tgID := c.Sender().ID
 	username := c.Sender().Username
 
-	user, err := b.repo.GetByTelegramID(ctx, int64(tgID))
+	user, err := b.repo.GetByTelegramID(ctx, tgID)
 	if err != nil {
-		return c.Send("❌ Внутренняя ошибка. Попробуйте позже.")
+		return c.Send("Произошла ошибка — попробуйте позже.")
 	}
 
 	if user != nil {
 		if user.IsBanned {
-			return c.Send("🚫 Ваш аккаунт заблокирован.")
+			return c.Send("Аккаунт заблокирован.")
 		}
 		return c.Send(
-			mainMenuText(user, int64(tgID), username),
+			mainMenuText(user, tgID, username),
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 			b.mainMenuMarkup(user),
 		)
 	}
 
-	// New user — parse referral code from /start <referralCode>
 	referralCode := ""
 	parts := strings.Fields(c.Text())
 	if len(parts) > 1 {
@@ -544,7 +319,7 @@ func (b *Bot) handleStart(c tele.Context) error {
 	randPass, err := botRandPassword()
 	if err != nil {
 		b.log.Error("bot: generate random password failed", zap.Error(err))
-		return c.Send("❌ Внутренняя ошибка. Попробуйте позже.")
+		return c.Send("Произошла ошибка — попробуйте позже.")
 	}
 
 	newUser, err := b.auth.Register(ctx, service.RegisterInput{
@@ -555,24 +330,23 @@ func (b *Bot) handleStart(c tele.Context) error {
 	})
 	if err != nil {
 		if existing, lookupErr := b.repo.GetByUsername(ctx, login); lookupErr == nil && existing != nil && existing.TelegramID == nil {
-			tgIDVal := int64(tgID)
+			tgIDVal := tgID
 			_ = b.repo.SetTelegramID(ctx, existing.ID, &tgIDVal)
 			return c.Send(
-				mainMenuText(existing, int64(tgID), username),
+				mainMenuText(existing, tgID, username),
 				&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 				b.mainMenuMarkup(existing),
 			)
 		}
-		b.log.Warn("bot registration failed", zap.Error(err), zap.Int64("tg_id", int64(tgID)))
-		return c.Send("❌ Не удалось создать аккаунт. Попробуйте позже.")
+		b.log.Warn("bot registration failed", zap.Error(err), zap.Int64("tg_id", tgID))
+		return c.Send("Не удалось создать аккаунт — попробуйте позже.")
 	}
 
-	tgIDVal := int64(tgID)
+	tgIDVal := tgID
 	if err := b.repo.SetTelegramID(ctx, newUser.ID, &tgIDVal); err != nil {
 		b.log.Warn("set telegram id after registration", zap.Error(err))
 	}
 
-	// Activity log (best-effort)
 	_ = b.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
 		ID:        uuid.New(),
 		UserID:    newUser.ID,
@@ -586,18 +360,18 @@ func (b *Bot) handleStart(c tele.Context) error {
 	}
 	_ = c.Send(
 		fmt.Sprintf(
-			"🎉 *Добро пожаловать в MelloWPN!*\n\n"+
-				"Привет, *%s*! Аккаунт создан ✅\n\n"+
-				"🆓 Попробуйте VPN бесплатно — активируйте пробный период\n"+
-				"💎 Или выберите тариф от *40 ₽/неделю*\n"+
-				"👥 Приглашайте друзей — получайте *15%%* бонус с каждого платежа\n\n"+
-				"Выберите действие в меню ниже 👇",
+			"*Добро пожаловать в MelloVPN* 🐍\n"+brandLine+"\n\n"+
+				"Привет, *%s*! Аккаунт создан.\n\n"+
+				"◽ Попробуйте VPN бесплатно — пробный период\n"+
+				"◽ Тарифы от *40 ₽/неделю*\n"+
+				"◽ Приглашайте друзей — *15%%* бонус с платежей\n\n"+
+				"Выберите действие в меню ↓",
 			name,
 		),
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 	)
 	return c.Send(
-		mainMenuText(newUser, int64(tgID), username),
+		mainMenuText(newUser, tgID, username),
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 		b.mainMenuMarkup(newUser),
 	)
@@ -609,32 +383,30 @@ func (b *Bot) handleBalance(c tele.Context) error {
 	ctx := context.Background()
 	user, err := b.getUser(ctx, c)
 	if err != nil {
-		return c.Send("❌ " + err.Error())
+		return c.Send("Ошибка: " + err.Error())
 	}
 
-	tgID := c.Sender().ID
 	rm := &tele.ReplyMarkup{}
-	btnBuyInline := rm.Data("💎 Купить VPN", "menu_buy")
-	btnYad := rm.Data("🛒 Магазин яда", "menu_yadshop")
+	btnBuy := rm.Data("🛒 Купить VPN", "menu_buy")
+	btnHistory := rm.Data("📜 История ЯД", "menu_history")
+	btnPayments := rm.Data("💳 Платежи", "menu_payments")
 	rm.Inline(
-		rm.Row(btnBuyInline, btnYad),
+		rm.Row(btnBuy),
+		rm.Row(btnHistory, btnPayments),
 		rm.Row(backBtn(rm)),
 	)
 
 	return c.Send(fmt.Sprintf(
-		"💰 *Кошелёк*\n"+
-			"━━━━━━━━━━━━━━━━━\n\n"+
-			"🏆 Баланс: *%d ЯД* (~%.0f ₽)\n"+
-			"📊 Курс: 1 ЯД ≈ 2.5 ₽\n\n"+
-			"🪪 Telegram ID: `%d`\n\n"+
-			"━━━━━━━━━━━━━━━━━\n"+
-			"💡 *Как заработать ЯД:*\n"+
-			"• 👥 Приглашайте друзей — *15%%* с платежей\n"+
-			"• 💎 Покупайте подписки — бонус ЯД\n"+
-			"• 🎟 Используйте промокоды",
+		"*💰 Кошелёк*\n"+brandLine+"\n\n"+
+			"Баланс: *%d ЯД* (~%.0f ₽)\n"+
+			"Курс: 1 ЯД ≈ 2.5 ₽\n\n"+
+			brandLine+"\n"+
+			"*Как заработать ЯД:*\n"+
+			"◽ Приглашайте друзей — *15%%* с платежей\n"+
+			"◽ Покупайте подписки — бонус ЯД\n"+
+			"◽ Используйте промокоды",
 		user.YADBalance,
 		float64(user.YADBalance)*2.5,
-		tgID,
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
@@ -642,71 +414,110 @@ func (b *Bot) handleBalance(c tele.Context) error {
 
 func (b *Bot) handleBuy(c tele.Context) error {
 	ctx := context.Background()
-	_, err := b.getUser(ctx, c)
+	user, err := b.getUser(ctx, c)
 	if err != nil {
-		return c.Send("❌ " + err.Error())
+		return c.Send("Ошибка: " + err.Error())
 	}
 
 	rm := &tele.ReplyMarkup{}
-	btnWeek := rm.Data("📅 1 неделя — 40 ₽", "buy_1week")
-	btnMonth := rm.Data("📆 1 месяц — 100 ₽", "buy_1month")
-	btnThree := rm.Data("🗓 3 месяца — 270 ₽ 🔥", "buy_3months")
+	btnWeek := rm.Data("1 нед · 40 ₽", "buy_1week")
+	btnMonth := rm.Data("1 мес · 100 ₽", "buy_1month")
+	btnThree := rm.Data("3 мес · 270 ₽", "buy_3months")
+	btnWeekYAD := rm.Data(fmt.Sprintf("1 нед · %d ЯД", domain.PlanYADPrice(domain.PlanWeek)), "buyyad_1week")
+	btnMonthYAD := rm.Data(fmt.Sprintf("1 мес · %d ЯД", domain.PlanYADPrice(domain.PlanMonth)), "buyyad_1month")
+	btnThreeYAD := rm.Data(fmt.Sprintf("3 мес · %d ЯД", domain.PlanYADPrice(domain.PlanThreeMonth)), "buyyad_3months")
 	rm.Inline(
-		rm.Row(btnWeek),
-		rm.Row(btnMonth),
-		rm.Row(btnThree),
+		rm.Row(btnWeek, btnWeekYAD),
+		rm.Row(btnMonth, btnMonthYAD),
+		rm.Row(btnThree, btnThreeYAD),
 		rm.Row(backBtn(rm)),
 	)
 
-	return c.Send(
-		"💎 *Купить VPN*\n"+
-			"━━━━━━━━━━━━━━━━━\n\n"+
-			"📅 *1 неделя* — 40 ₽\n"+
-			"    ↳ 5.7 ₽/день · +5 ЯД бонус\n\n"+
-			"📆 *1 месяц* — 100 ₽  ⭐️\n"+
-			"    ↳ 3.3 ₽/день · +15 ЯД бонус\n\n"+
-			"🗓 *3 месяца* — 270 ₽  🔥\n"+
-			"    ↳ 3.0 ₽/день · +50 ЯД бонус\n\n"+
-			"━━━━━━━━━━━━━━━━━\n"+
-			"💳 Оплата через СБП\n"+
-			"🔄 Без автопродления",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-		rm,
-	)
+	return c.Send(fmt.Sprintf(
+		"*🛒 Купить VPN*\n"+brandLine+"\n\n"+
+			"*Рублями (СБП):*\n"+
+			"◽ 1 неделя — 40 ₽ (+%d ЯД бонус)\n"+
+			"◽ 1 месяц — 100 ₽ (+%d ЯД бонус)\n"+
+			"◽ 3 месяца — 270 ₽ (+%d ЯД бонус)\n\n"+
+			"*За ЯД (моментально):*\n"+
+			"◽ 1 неделя — %d ЯД\n"+
+			"◽ 1 месяц — %d ЯД\n"+
+			"◽ 3 месяца — %d ЯД\n\n"+
+			brandLine+"\nБаланс: *%d ЯД* · Без автопродления",
+		domain.PlanYADBonus(domain.PlanWeek),
+		domain.PlanYADBonus(domain.PlanMonth),
+		domain.PlanYADBonus(domain.PlanThreeMonth),
+		domain.PlanYADPrice(domain.PlanWeek),
+		domain.PlanYADPrice(domain.PlanMonth),
+		domain.PlanYADPrice(domain.PlanThreeMonth),
+		user.YADBalance,
+	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
-func (b *Bot) handleBuyCallback(plan domain.SubscriptionPlan) tele.HandlerFunc {
+func (b *Bot) handleBuyRubles(plan domain.SubscriptionPlan) tele.HandlerFunc {
 	return func(c tele.Context) error {
 		ctx := context.Background()
 		_ = c.Respond()
 		user, err := b.getUser(ctx, c)
 		if err != nil {
-			return c.Send("❌ " + err.Error())
+			return c.Send("Ошибка: " + err.Error())
 		}
 
 		redirect, payment, err := b.subSvc.InitiatePayment(ctx, user.ID, plan, b.cfg.PaymentReturnURL)
 		if err != nil {
-			return c.Send("❌ " + err.Error())
+			return c.Send("Ошибка: " + err.Error())
 		}
 
 		rm := &tele.ReplyMarkup{}
 		btnPay := rm.URL("💳 Перейти к оплате", redirect)
-		rm.Inline(
-			rm.Row(btnPay),
-			rm.Row(backBtn(rm)),
-		)
+		rm.Inline(rm.Row(btnPay), rm.Row(backBtn(rm)))
 
 		return c.Send(fmt.Sprintf(
-			"💳 *Оплата подписки*\n"+
-				"━━━━━━━━━━━━━━━━━\n\n"+
-				"📋 Тариф: *%s*\n"+
-				"💰 Сумма: *%.0f ₽*\n"+
-				"🆔 Платёж: `%s`\n\n"+
-				"Нажмите кнопку ниже для перехода к оплате.\n"+
+			"*Оплата подписки*\n"+brandLine+"\n\n"+
+				"Тариф: *%s*\n"+
+				"Сумма: *%.0f ₽*\n"+
+				"Платёж: `%s`\n\n"+
+				"Нажмите кнопку для перехода к оплате.\n"+
 				"_Ссылка действительна 15 минут._",
 			planName(plan),
 			float64(payment.AmountKopecks)/100,
 			payment.ID.String(),
+		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+	}
+}
+
+func (b *Bot) handleBuyYAD(plan domain.SubscriptionPlan) tele.HandlerFunc {
+	return func(c tele.Context) error {
+		ctx := context.Background()
+		_ = c.Respond()
+		_, err := b.getUser(ctx, c)
+		if err != nil {
+			return c.Send("Ошибка: " + err.Error())
+		}
+
+		sub, err := b.ecoSvc.BuySubscriptionWithYAD(ctx, (func() uuid.UUID {
+			u, _ := b.getUser(ctx, c)
+			return u.ID
+		})(), plan)
+		if err != nil {
+			rm := &tele.ReplyMarkup{}
+			rm.Inline(rm.Row(backBtn(rm)))
+			return c.Send("Ошибка: "+err.Error(), rm)
+		}
+
+		rm := &tele.ReplyMarkup{}
+		btnVPN := rm.Data("🔗 Подключить VPN", "get_vpn_link")
+		rm.Inline(rm.Row(btnVPN), rm.Row(backBtn(rm)))
+
+		return c.Send(fmt.Sprintf(
+			"*✅ Подписка активирована*\n"+brandLine+"\n\n"+
+				"Тариф: *%s*\n"+
+				"Действует до: `%s`\n"+
+				"Оплачено: *%d ЯД*\n\n"+
+				"Подключите VPN через кнопку ниже.",
+			planName(sub.Plan),
+			sub.ExpiresAt.Format("02.01.2006 15:04"),
+			domain.PlanYADPrice(plan),
 		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 	}
 }
@@ -717,65 +528,54 @@ func (b *Bot) handleMySubs(c tele.Context) error {
 	ctx := context.Background()
 	user, err := b.getUser(ctx, c)
 	if err != nil {
-		return c.Send("❌ " + err.Error())
+		return c.Send("Ошибка: " + err.Error())
 	}
 
 	subs, err := b.subSvc.GetUserSubscriptions(ctx, user.ID)
 
 	rm := &tele.ReplyMarkup{}
 	if err != nil || len(subs) == 0 {
-		btnBuyInline := rm.Data("💎 Купить VPN", "menu_buy")
-		rm.Inline(
-			rm.Row(btnBuyInline),
-			rm.Row(backBtn(rm)),
-		)
+		btnBuy := rm.Data("🛒 Купить VPN", "menu_buy")
+		btnTrial := rm.Data("🆓 Пробный период", "menu_trial")
+		rm.Inline(rm.Row(btnBuy, btnTrial), rm.Row(backBtn(rm)))
 		return c.Send(
-			"📋 *Мои подписки*\n\n"+
-				"📭 У вас пока нет активных подписок.\n\n"+
-				"Попробуйте бесплатный пробный период или купите тариф!",
-			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-			rm,
+			"*📋 Мои подписки*\n"+brandLine+"\n\n"+
+				"У вас нет активных подписок.\n"+
+				"Попробуйте пробный период или купите тариф.",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
 
-	msg := "📋 *Мои подписки*\n━━━━━━━━━━━━━━━━━\n"
+	msg := "*📋 Мои подписки*\n" + brandLine + "\n"
 	for i, sub := range subs {
-		statusEmoji := "🟢"
-		statusText := "Активна"
+		status := "● активна"
 		switch sub.Status {
 		case domain.SubStatusExpired:
-			statusEmoji = "🔴"
-			statusText = "Истекла"
+			status = "○ истекла"
 		case domain.SubStatusTrial:
-			statusEmoji = "🆓"
-			statusText = "Пробная"
+			status = "◎ пробная"
 		case domain.SubStatusCanceled:
-			statusEmoji = "⚫"
-			statusText = "Отменена"
+			status = "○ отменена"
 		}
 		daysLeft := int(time.Until(sub.ExpiresAt).Hours() / 24)
 		daysStr := ""
 		if sub.Status == domain.SubStatusActive || sub.Status == domain.SubStatusTrial {
 			if daysLeft > 0 {
-				daysStr = fmt.Sprintf("\n   ⏳ Осталось: *%d дн.*", daysLeft)
+				daysStr = fmt.Sprintf(" · %d дн.", daysLeft)
 			} else {
-				daysStr = "\n   ⏰ _Подписка закончилась_"
+				daysStr = " · _истекает_"
 			}
 		}
 		msg += fmt.Sprintf(
-			"\n%s %d. *%s* — %s\n   📅 До: `%s`%s\n",
-			statusEmoji, i+1, planName(sub.Plan), statusText,
-			sub.ExpiresAt.Format("02.01.2006"), daysStr,
+			"\n%d. *%s* — %s%s\n    до `%s`\n",
+			i+1, planName(sub.Plan), status, daysStr,
+			sub.ExpiresAt.Format("02.01.2006"),
 		)
 	}
 
-	btnRenew := rm.Data("🔄 Продлить подписку", "menu_buy")
-	btnSubscribeLink := rm.Data("🔗 Подключить VPN", "get_vpn_link")
-	rm.Inline(
-		rm.Row(btnSubscribeLink),
-		rm.Row(btnRenew),
-		rm.Row(backBtn(rm)),
-	)
+	btnRenew := rm.Data("🔄 Продлить", "menu_buy")
+	btnVPN := rm.Data("🔗 Подключить VPN", "get_vpn_link")
+	rm.Inline(rm.Row(btnVPN), rm.Row(btnRenew), rm.Row(backBtn(rm)))
 	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
@@ -785,7 +585,7 @@ func (b *Bot) handlePromo(c tele.Context) error {
 	ctx := context.Background()
 	user, err := b.getUser(ctx, c)
 	if err != nil {
-		return c.Send("❌ " + err.Error())
+		return c.Send("Ошибка: " + err.Error())
 	}
 
 	parts := strings.Fields(c.Text())
@@ -793,12 +593,10 @@ func (b *Bot) handlePromo(c tele.Context) error {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(
-			"🎟 *Промокод*\n\n"+
-				"Отправьте команду в формате:\n"+
-				"`/promo КОД`\n\n"+
+			"*🎟 Промокод*\n"+brandLine+"\n\n"+
+				"Формат: `/promo КОД`\n"+
 				"Пример: `/promo SUMMER2024`",
-			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-			rm,
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
 	code := strings.ToUpper(parts[1])
@@ -807,15 +605,23 @@ func (b *Bot) handlePromo(c tele.Context) error {
 	if err != nil {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
-		return c.Send("❌ "+err.Error(), rm)
+		return c.Send("Ошибка: "+err.Error(), rm)
 	}
 
 	rm := &tele.ReplyMarkup{}
 	rm.Inline(rm.Row(backBtn(rm)))
+
+	if promo.PromoType == domain.PromoTypeDiscount {
+		return c.Send(fmt.Sprintf(
+			"*✅ Промокод активирован*\n"+brandLine+"\n\n"+
+				"Скидка *%d%%* на следующую покупку.",
+			promo.DiscountPercent,
+		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+	}
+
 	return c.Send(fmt.Sprintf(
-		"🎟 *Промокод активирован!*\n\n"+
-			"🏆 Начислено: *%d ЯД*\n"+
-			"💸 Эквивалент: *%.0f ₽*",
+		"*✅ Промокод активирован*\n"+brandLine+"\n\n"+
+			"Начислено: *%d ЯД* (~%.0f ₽)",
 		promo.YADAmount,
 		float64(promo.YADAmount)*2.5,
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
@@ -827,37 +633,28 @@ func (b *Bot) handleReferral(c tele.Context) error {
 	ctx := context.Background()
 	user, err := b.getUser(ctx, c)
 	if err != nil {
-		return c.Send("❌ " + err.Error())
+		return c.Send("Ошибка: " + err.Error())
 	}
 
 	refs, _ := b.repo.GetReferralsByReferrer(ctx, user.ID)
 	referralLink := fmt.Sprintf("https://t.me/%s?start=%s", b.bot.Me.Username, user.ReferralCode)
-
 	shareURL := fmt.Sprintf(
-		"https://t.me/share/url?url=%s&text=VPN%%20платформа%%20—%%20быстрый%%20и%%20безопасный%%20VPN",
+		"https://t.me/share/url?url=%s&text=MelloVPN%%20—%%20быстрый%%20и%%20безопасный%%20VPN",
 		referralLink,
 	)
 
 	rm := &tele.ReplyMarkup{}
 	btnShare := rm.URL("📤 Поделиться ссылкой", shareURL)
-	rm.Inline(
-		rm.Row(btnShare),
-		rm.Row(backBtn(rm)),
-	)
+	rm.Inline(rm.Row(btnShare), rm.Row(backBtn(rm)))
 
 	return c.Send(fmt.Sprintf(
-		"👥 *Реферальная программа*\n"+
-			"━━━━━━━━━━━━━━━━━\n\n"+
-			"🔗 Ваша ссылка:\n`%s`\n\n"+
-			"📊 Приглашено: *%d* чел.\n\n"+
-			"💎 *Как это работает:*\n"+
-			"Друг покупает подписку → вы получаете *15%%* в ЯД\n\n"+
-			"💰 *Выплата бонуса:*\n"+
-			"• 30%% — сразу после оплаты\n"+
-			"• 70%% — через 30 дней\n\n"+
-			"📤 _Поделитесь ссылкой через кнопку ниже_",
-		referralLink,
-		len(refs),
+		"*👥 Рефералы*\n"+brandLine+"\n\n"+
+			"Ваша ссылка:\n`%s`\n\n"+
+			"Приглашено: *%d* чел.\n\n"+
+			"Друг покупает подписку → вы получаете *15%%* в ЯД\n"+
+			"◽ 30%% — сразу после оплаты\n"+
+			"◽ 70%% — через 30 дней",
+		referralLink, len(refs),
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
@@ -870,150 +667,753 @@ func (b *Bot) handleTrial(c tele.Context) error {
 	}
 
 	rm := &tele.ReplyMarkup{}
-	btnRegister := rm.URL("🌐 Открыть сайт", webURL+"/register")
-	rm.Inline(
-		rm.Row(btnRegister),
-		rm.Row(backBtn(rm)),
-	)
+	btnSite := rm.URL("🌐 Открыть сайт", webURL+"/register")
+	rm.Inline(rm.Row(btnSite), rm.Row(backBtn(rm)))
 
 	return c.Send(
-		"🆓 *Пробный период*\n"+
-			"━━━━━━━━━━━━━━━━━\n\n"+
-			"Попробуйте VPN бесплатно!\n\n"+
-			"📌 *Что нужно сделать:*\n"+
-			"1️⃣ Зарегистрируйтесь на сайте\n"+
-			"2️⃣ Перейдите в *«Подписки»*\n"+
-			"3️⃣ Нажмите *«Активировать пробный период»*\n\n"+
-			"✅ Без оплаты · Без привязки карты",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-		rm,
+		"*🆓 Пробный период*\n"+brandLine+"\n\n"+
+			"Попробуйте VPN бесплатно:\n"+
+			"1. Зарегистрируйтесь на сайте\n"+
+			"2. Перейдите в «Подписки»\n"+
+			"3. Нажмите «Активировать пробный период»\n\n"+
+			"_Без оплаты · Без привязки карты_",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 	)
 }
 
-// ─── /ticket ──────────────────────────────────────────────────────────────────
+// ─── /ticket (list) ──────────────────────────────────────────────────────────
 
 func (b *Bot) handleTicketMenu(c tele.Context) error {
 	ctx := context.Background()
 	user, err := b.getUser(ctx, c)
 	if err != nil {
-		return c.Send("❌ " + err.Error())
+		return c.Send("Ошибка: " + err.Error())
 	}
 
-	tickets, _ := b.repo.ListTickets(ctx, &user.ID, "open", 5, 0)
+	tickets, _ := b.repo.ListTickets(ctx, &user.ID, "", 10, 0)
 	rm := &tele.ReplyMarkup{}
-	rm.Inline(rm.Row(backBtn(rm)))
+	btnNew := rm.Data("✏️ Создать тикет", "menu_newticket")
+	rm.Inline(rm.Row(btnNew), rm.Row(backBtn(rm)))
 
 	if len(tickets) == 0 {
 		return c.Send(
-			"🔧 *Поддержка*\n"+
-				"━━━━━━━━━━━━━━━━━\n\n"+
-				"📭 Открытых обращений нет.\n\n"+
-				"Создать тикет → перейдите на сайт в раздел *«Поддержка»*.\n"+
-				"Или напишите: @Mellow\\_support",
-			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+			"*🎫 Поддержка*\n"+brandLine+"\n\n"+
+				"Открытых обращений нет.\n\n"+
+				"Создайте тикет: `/newticket тема сообщения`",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	}
+
+	msg := "*🎫 Поддержка*\n" + brandLine + "\n\n"
+	for _, t := range tickets {
+		status := "●"
+		switch t.Status {
+		case domain.TicketClosed:
+			status = "○"
+		case domain.TicketAnswered:
+			status = "◉"
+		}
+		msg += fmt.Sprintf("%s `%s` — %s\n", status, t.ID.String()[:8], t.Subject)
+	}
+	msg += "\n_● открыт · ◉ ответ · ○ закрыт_"
+	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /newticket ───────────────────────────────────────────────────────────────
+
+func (b *Bot) handleNewTicket(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	parts := strings.SplitN(strings.TrimSpace(c.Text()), " ", 2)
+	if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(
+			"*✏️ Создать тикет*\n"+brandLine+"\n\n"+
+				"Формат: `/newticket Тема сообщения`\n\n"+
+				"Пример:\n`/newticket Не подключается VPN на iPhone`",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	}
+
+	text := strings.TrimSpace(parts[1])
+	subject := text
+	body := text
+	if idx := strings.Index(text, "\n"); idx > 0 {
+		subject = strings.TrimSpace(text[:idx])
+		body = strings.TrimSpace(text[idx+1:])
+	}
+	if len(subject) > 100 {
+		subject = subject[:100]
+	}
+
+	now := time.Now()
+	ticket := &domain.Ticket{
+		ID:        uuid.New(),
+		UserID:    user.ID,
+		Subject:   subject,
+		Status:    domain.TicketOpen,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := b.repo.CreateTicket(ctx, ticket); err != nil {
+		b.log.Error("handleNewTicket: create ticket", zap.Error(err))
+		return c.Send("Не удалось создать тикет — попробуйте позже.")
+	}
+
+	msg := &domain.TicketMessage{
+		ID:        uuid.New(),
+		TicketID:  ticket.ID,
+		SenderID:  user.ID,
+		IsAdmin:   false,
+		Body:      body,
+		CreatedAt: now,
+	}
+	if err := b.repo.AddTicketMessage(ctx, msg); err != nil {
+		b.log.Error("handleNewTicket: add message", zap.Error(err))
+	}
+
+	rm := &tele.ReplyMarkup{}
+	rm.Inline(rm.Row(backBtn(rm)))
+	return c.Send(fmt.Sprintf(
+		"*✅ Тикет создан*\n"+brandLine+"\n\n"+
+			"Тема: *%s*\n"+
+			"ID: `%s`\n\n"+
+			"Ответ придёт в тикет — проверяйте через /ticket",
+		subject, ticket.ID.String()[:8],
+	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /devices ─────────────────────────────────────────────────────────────────
+
+func (b *Bot) handleDevices(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	devices, err := b.devSvc.ListDevices(ctx, user.ID)
+	if err != nil {
+		b.log.Warn("handleDevices: list", zap.Error(err))
+		return c.Send("Не удалось загрузить устройства — попробуйте позже.")
+	}
+
+	limit, _ := b.repo.GetEffectiveDeviceLimit(ctx, user.ID)
+	expansion, _ := b.repo.GetActiveDeviceExpansion(ctx, user.ID)
+
+	sort.Slice(devices, func(i, j int) bool {
+		return devices[i].CreatedAt.Before(devices[j].CreatedAt)
+	})
+
+	rm := &tele.ReplyMarkup{}
+
+	if len(devices) == 0 {
+		var rows []tele.Row
+		currentExtra := 0
+		if expansion != nil {
+			currentExtra = expansion.ExtraDevices
+		}
+		if currentExtra < domain.DeviceExpansionMaxExtra {
+			btnBuyDev := rm.Data("➕ Купить устройство", "menu_buydevice")
+			rows = append(rows, rm.Row(btnBuyDev))
+		}
+		rows = append(rows, rm.Row(backBtn(rm)))
+		rm.Inline(rows...)
+
+		msg := fmt.Sprintf(
+			"*📱 Устройства*\n"+brandLine+"\n\n"+
+				"Нет подключённых устройств.\n"+
+				"Лимит: *%d*", limit)
+		if expansion != nil {
+			msg += fmt.Sprintf(" (включая +%d)", expansion.ExtraDevices)
+		}
+		return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+	}
+
+	activeCount := 0
+	msg := "*📱 Устройства*\n" + brandLine + "\n\n"
+	for idx, d := range devices {
+		blocked := idx >= limit
+		status := "●"
+		suffix := ""
+		if blocked {
+			status = "🔒"
+			suffix = " — _заблокировано_"
+		} else if d.IsActive {
+			activeCount++
+		} else {
+			status = "○"
+		}
+		msg += fmt.Sprintf("%s `%s`%s\n", status, d.DeviceName, suffix)
+	}
+	msg += fmt.Sprintf("\n%d / %d активных", activeCount, limit)
+	if expansion != nil {
+		msg += fmt.Sprintf("\n+%d расширение · до `%s`",
+			expansion.ExtraDevices, expansion.ExpiresAt.Format("02.01.2006"))
+	}
+
+	hasBlocked := len(devices) > limit
+	var rows []tele.Row
+	if hasBlocked {
+		btnDisconnect := rm.Data("✕ Отключить устройство", "menu_disconnect_list")
+		rows = append(rows, rm.Row(btnDisconnect))
+	}
+	currentExtra := 0
+	if expansion != nil {
+		currentExtra = expansion.ExtraDevices
+	}
+	if currentExtra < domain.DeviceExpansionMaxExtra {
+		btnBuyDev := rm.Data("➕ Купить устройство", "menu_buydevice")
+		rows = append(rows, rm.Row(btnBuyDev))
+	}
+
+	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
+	if expansion != nil && activeSub != nil && expansion.ExpiresAt.Before(activeSub.ExpiresAt) {
+		btnExtend := rm.Data("⏳ Продлить расширение", "menu_extend")
+		rows = append(rows, rm.Row(btnExtend))
+	}
+
+	rows = append(rows, rm.Row(backBtn(rm)))
+	rm.Inline(rows...)
+	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /buydevice ───────────────────────────────────────────────────────────────
+
+func (b *Bot) handleBuyDevice(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	expansion, _ := b.repo.GetActiveDeviceExpansion(ctx, user.ID)
+	currentExtra := 0
+	if expansion != nil {
+		currentExtra = expansion.ExtraDevices
+	}
+	if currentExtra >= domain.DeviceExpansionMaxExtra {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(
+			fmt.Sprintf("Максимум дополнительных устройств уже куплен (+%d).", domain.DeviceExpansionMaxExtra),
 			rm,
 		)
 	}
 
-	msg := "🔧 *Поддержка*\n━━━━━━━━━━━━━━━━━\n\n"
-	for _, t := range tickets {
-		statusEmoji := "🟢"
-		if t.Status == "closed" {
-			statusEmoji = "🔴"
-		} else if t.Status == "answered" {
-			statusEmoji = "🟡"
-		}
-		msg += fmt.Sprintf("%s `%s` — %s\n", statusEmoji, t.ID.String()[:8], t.Subject)
+	rm := &tele.ReplyMarkup{}
+	btnYAD := rm.Data(fmt.Sprintf("💰 %d ЯД", domain.DeviceExpansionPriceYAD), "confirm_buydevice_yad")
+	btnMoney := rm.Data(fmt.Sprintf("💳 %d ₽", domain.DeviceExpansionPriceKopecks/100), "confirm_buydevice_money")
+	rm.Inline(rm.Row(btnYAD, btnMoney), rm.Row(backBtn(rm)))
+
+	newTotal := domain.DeviceMaxPerUser + currentExtra + 1
+	return c.Send(fmt.Sprintf(
+		"*➕ Купить устройство*\n"+brandLine+"\n\n"+
+			"Расширение: *+%d / %d*\n"+
+			"После покупки: до *%d* устройств\n"+
+			"Действует до конца подписки\n\n"+
+			"Цена: *%d ₽* или *%d ЯД*\n"+
+			"Баланс: *%d ЯД*",
+		currentExtra, domain.DeviceExpansionMaxExtra,
+		newTotal,
+		domain.DeviceExpansionPriceKopecks/100, domain.DeviceExpansionPriceYAD,
+		user.YADBalance,
+	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /extend ──────────────────────────────────────────────────────────────────
+
+func (b *Bot) handleExtendDevices(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
 	}
+
+	expansion, _ := b.repo.GetActiveDeviceExpansion(ctx, user.ID)
+	if expansion == nil {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send("У вас нет активного расширения устройств.", rm)
+	}
+
+	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
+	if activeSub == nil || !expansion.ExpiresAt.Before(activeSub.ExpiresAt) {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send("Расширение не требует продления.", rm)
+	}
+
+	price := domain.DeviceExpansionExtensionPriceYAD(activeSub.Plan)
+
+	rm := &tele.ReplyMarkup{}
+	btnConfirm := rm.Data(fmt.Sprintf("✅ Продлить за %d ЯД", price), "confirm_extend")
+	rm.Inline(rm.Row(btnConfirm), rm.Row(backBtn(rm)))
+
+	return c.Send(fmt.Sprintf(
+		"*⏳ Продление расширения*\n"+brandLine+"\n\n"+
+			"Устройства: +%d\n"+
+			"Текущий срок: до `%s`\n"+
+			"Новый срок: до `%s`\n\n"+
+			"Цена: *%d ЯД*\n"+
+			"Баланс: *%d ЯД*",
+		expansion.ExtraDevices,
+		expansion.ExpiresAt.Format("02.01.2006"),
+		activeSub.ExpiresAt.Format("02.01.2006"),
+		price, user.YADBalance,
+	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /traffic ─────────────────────────────────────────────────────────────────
+
+func (b *Bot) handleTraffic(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	remnaUUID := ""
+	if user.RemnaUserUUID != nil {
+		remnaUUID = *user.RemnaUserUUID
+	}
+	if remnaUUID == "" {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(
+			"*📊 Трафик*\n"+brandLine+"\n\n"+
+				"Нет данных — VPN не настроен.\n"+
+				"Сначала подключите VPN через «Мои подписки».",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	}
+
+	remnaUser, err := b.remna.GetUser(ctx, remnaUUID)
+	if err != nil {
+		b.log.Warn("handleTraffic: remnawave get user", zap.Error(err))
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send("Не удалось загрузить данные — попробуйте позже.", rm)
+	}
+
+	used := remnaUser.UserTraffic.UsedTrafficBytes
+	lifetime := remnaUser.UserTraffic.LifetimeUsedTrafficBytes
+	limitBytes := remnaUser.TrafficLimitBytes
+
+	rm := &tele.ReplyMarkup{}
+	rm.Inline(rm.Row(backBtn(rm)))
+
+	limitStr := "∞"
+	percentStr := ""
+	if limitBytes > 0 {
+		limitStr = formatBytes(limitBytes)
+		percent := float64(used) / float64(limitBytes) * 100
+		percentStr = fmt.Sprintf(" (%.0f%%)", percent)
+	}
+
+	return c.Send(fmt.Sprintf(
+		"*📊 Трафик*\n"+brandLine+"\n\n"+
+			"Использовано: *%s*%s\n"+
+			"Лимит: *%s*\n"+
+			"За всё время: *%s*",
+		formatBytes(used), percentStr,
+		limitStr,
+		formatBytes(lifetime),
+	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /history ─────────────────────────────────────────────────────────────────
+
+func (b *Bot) handleHistory(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	txs, err := b.repo.GetYADTransactions(ctx, user.ID, 15)
+	if err != nil || len(txs) == 0 {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(
+			"*📜 История ЯД*\n"+brandLine+"\n\nТранзакций нет.",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	}
+
+	msg := "*📜 История ЯД*\n" + brandLine + "\n\n"
+	for _, tx := range txs {
+		sign := "+"
+		if tx.Delta < 0 {
+			sign = ""
+		}
+		txType := yadTxTypeName(tx.TxType)
+		msg += fmt.Sprintf(
+			"◽ %s*%d* ЯД — %s\n    `%s`\n",
+			sign, tx.Delta, txType,
+			tx.CreatedAt.Format("02.01 15:04"),
+		)
+	}
+	msg += fmt.Sprintf("\nБаланс: *%d ЯД*", user.YADBalance)
+
+	rm := &tele.ReplyMarkup{}
+	rm.Inline(rm.Row(backBtn(rm)))
 	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /payments ────────────────────────────────────────────────────────────────
+
+func (b *Bot) handlePayments(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	payments, err := b.subSvc.GetPendingPayments(ctx, user.ID)
+	if err != nil || len(payments) == 0 {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(
+			"*💳 Платежи*\n"+brandLine+"\n\nНезавершённых платежей нет.",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	}
+
+	msg := "*💳 Незавершённые платежи*\n" + brandLine + "\n\n"
+	rm := &tele.ReplyMarkup{}
+	var rows []tele.Row
+	for _, p := range payments {
+		msg += fmt.Sprintf(
+			"◽ *%s* — %.0f ₽\n    `%s` · до %s\n",
+			planName(p.Plan),
+			float64(p.AmountKopecks)/100,
+			p.ID.String()[:8],
+			p.ExpiresAt.Format("15:04"),
+		)
+		if p.RedirectURL != "" {
+			btn := rm.URL("💳 Оплатить "+p.ID.String()[:8], p.RedirectURL)
+			rows = append(rows, rm.Row(btn))
+		}
+	}
+	rows = append(rows, rm.Row(backBtn(rm)))
+	rm.Inline(rows...)
+	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /toggle2fa ───────────────────────────────────────────────────────────────
+
+func (b *Bot) handleToggle2FA(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	newState := !user.TFAEnabled
+	if err := b.repo.SetTFAEnabled(ctx, user.ID, newState); err != nil {
+		b.log.Error("handleToggle2FA", zap.Error(err))
+		return c.Send("Не удалось изменить настройку — попробуйте позже.")
+	}
+
+	rm := &tele.ReplyMarkup{}
+	rm.Inline(rm.Row(backBtn(rm)))
+
+	status := "включена ✅"
+	if !newState {
+		status = "выключена ❌"
+	}
+	return c.Send(fmt.Sprintf(
+		"*🔐 Двухфакторная аутентификация*\n"+brandLine+"\n\n"+
+			"2FA: *%s*\n\n"+
+			"При входе на сайт вам придёт запрос\n"+
+			"на подтверждение в этот бот.",
+		status,
+	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
 // ─── /help ────────────────────────────────────────────────────────────────────
 
 func (b *Bot) handleHelp(c tele.Context) error {
 	rm := &tele.ReplyMarkup{}
-	btnBuy := rm.Data("💎 Купить VPN", "menu_buy")
-	btnSubs := rm.Data("📋 Мои подписки", "menu_mysubs")
-	rm.Inline(
-		rm.Row(btnBuy, btnSubs),
-		rm.Row(backBtn(rm)),
-	)
+	rm.Inline(rm.Row(backBtn(rm)))
 	return c.Send(
-		"❓ *Помощь*\n"+
-			"━━━━━━━━━━━━━━━━━\n\n"+
-			"🔹 *Подписка и VPN:*\n"+
-			"  /buy — купить подписку\n"+
+		"*❓ Помощь*\n"+brandLine+"\n\n"+
+			"*Подписка и VPN:*\n"+
+			"  /buy — купить подписку (₽ или ЯД)\n"+
 			"  /mysubs — список подписок\n"+
-			"  /trial — бесплатный пробный период\n\n"+
-			"🔹 *Кошелёк и бонусы:*\n"+
+			"  /trial — пробный период\n\n"+
+			"*Устройства:*\n"+
+			"  /devices — список устройств\n"+
+			"  /buydevice — купить +1 устройство\n"+
+			"  /extend — продлить расширение\n"+
+			"  /traffic — статистика трафика\n\n"+
+			"*Кошелёк:*\n"+
 			"  /balance — баланс ЯД\n"+
+			"  /history — история транзакций\n"+
+			"  /payments — незавершённые платежи\n"+
 			"  /referral — реферальная программа\n"+
 			"  /promo КОД — активировать промокод\n\n"+
-			"🔹 *Аккаунт:*\n"+
+			"*Аккаунт:*\n"+
 			"  /resetpassword — сбросить пароль\n"+
+			"  /toggle2fa — вкл/выкл 2FA\n"+
 			"  /link КОД — привязать Telegram\n"+
 			"  /unlink — отвязать Telegram\n\n"+
-			"🔹 *Прочее:*\n"+
+			"*Прочее:*\n"+
 			"  /ticket — поддержка\n"+
-			"  /info — документы и контакты\n\n"+
-			"_Вопросы? Пишите в /ticket или @Mellow\\_support_",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-		rm,
+			"  /newticket — создать тикет\n"+
+			"  /info — документы и контакты",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 	)
 }
 
 // ─── /info ────────────────────────────────────────────────────────────────────
 
 func (b *Bot) handleInfo(c tele.Context) error {
+	webURL := b.cfg.WebAppURL
+	if webURL == "" {
+		webURL = "https://vpn-platform.ru"
+	}
+
 	rm := &tele.ReplyMarkup{}
-
-	btnPrivacy := rm.URL("🔒 Политика конфиденциальности", b.cfg.WebAppURL+"/PrivacyPolicy")
-	btnAgreement := rm.URL("📋 Пользовательское соглашение", b.cfg.WebAppURL+"/UserAgreement")
-	btnSupport := rm.URL("💬 Поддержка: @Mellow_support", "https://t.me/Mellow_support")
-	btnBack := backBtn(rm)
-
-	rm.Inline(
-		rm.Row(btnPrivacy),
-		rm.Row(btnAgreement),
-		rm.Row(btnSupport),
-		rm.Row(btnBack),
-	)
+	btnPrivacy := rm.URL("📄 Политика конфиденциальности", webURL+"/PrivacyPolicy")
+	btnAgreement := rm.URL("📄 Пользовательское соглашение", webURL+"/UserAgreement")
+	btnSupport := rm.URL("💬 Поддержка", "https://t.me/Mellow_support")
+	rm.Inline(rm.Row(btnPrivacy), rm.Row(btnAgreement), rm.Row(btnSupport), rm.Row(backBtn(rm)))
 
 	return c.Send(
-		"ℹ️ *О сервисе MelloWPN*\n"+
-			"━━━━━━━━━━━━━━━━━\n\n"+
-			"🛡 Протокол: VLESS/Reality\n"+
-			"📱 Все платформы: iOS, Android, Windows, macOS, Linux\n"+
-			"🚫 Без рекламы и трекеров\n\n"+
-			"💬 Поддержка: @Mellow\\_support\n\n"+
-			"Документы доступны по кнопкам ниже:",
+		"*ℹ️ О сервисе MelloVPN*\n"+brandLine+"\n\n"+
+			"Протокол: VLESS/Reality\n"+
+			"Платформы: iOS, Android, Windows, macOS, Linux\n"+
+			"Без рекламы и трекеров\n\n"+
+			"Поддержка: @Mellow\\_support",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+	)
+}
+
+// ─── /link ────────────────────────────────────────────────────────────────────
+
+func (b *Bot) handleLink(c tele.Context) error {
+	args := strings.Fields(c.Message().Text)
+	if len(args) < 2 {
+		return c.Send(
+			"*🔗 Привязка аккаунта*\n"+brandLine+"\n\n"+
+				"Формат: `/link КОД`\n\n"+
+				"_Откройте сайт → Настройки → «Привязать Telegram» и скопируйте команду._",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+		)
+	}
+	code := strings.ToUpper(strings.TrimSpace(args[1]))
+	key := fmt.Sprintf("tg:link:%s", code)
+
+	ctx := context.Background()
+	userIDStr, err := b.rdb.GetDel(ctx, key).Result()
+	if err == redis.Nil {
+		return c.Send("Код не найден или уже истёк. Запросите новый на сайте.")
+	}
+	if err != nil {
+		b.log.Error("handleLink: redis getdel", zap.Error(err))
+		return c.Send("Временная ошибка — попробуйте позже.")
+	}
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		b.log.Error("handleLink: invalid user id in redis", zap.String("value", userIDStr))
+		return c.Send("Внутренняя ошибка — запросите новый код на сайте.")
+	}
+
+	tgID := c.Sender().ID
+
+	existingUser, err := b.repo.GetByTelegramID(ctx, tgID)
+	if err != nil {
+		b.log.Error("handleLink: get by telegram id", zap.Error(err))
+		return c.Send("Временная ошибка — попробуйте позже.")
+	}
+
+	if existingUser != nil && existingUser.ID == userID {
+		return c.Send("Этот Telegram уже привязан к вашему аккаунту.")
+	}
+
+	if existingUser != nil && existingUser.ID != userID {
+		if err := b.repo.SetTelegramID(ctx, existingUser.ID, nil); err != nil {
+			b.log.Error("handleLink: unlink telegram from old user", zap.Error(err))
+			return c.Send("Не удалось выполнить операцию — попробуйте позже.")
+		}
+	}
+
+	if err := b.repo.SetTelegramID(ctx, userID, &tgID); err != nil {
+		b.log.Error("handleLink: set telegram id", zap.Error(err))
+		return c.Send("Не удалось привязать аккаунт — попробуйте снова.")
+	}
+
+	_ = b.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
+		ID:        uuid.New(),
+		UserID:    userID,
+		EventType: "telegram_link",
+		CreatedAt: time.Now(),
+	})
+
+	return c.Send(
+		"*✅ Telegram привязан*\n"+brandLine+"\n\n"+
+			"Теперь вы можете управлять подпиской прямо из бота.",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-		rm,
+	)
+}
+
+// ─── /unlink ──────────────────────────────────────────────────────────────────
+
+func (b *Bot) handleUnlink(c tele.Context) error {
+	ctx := context.Background()
+	tgID := c.Sender().ID
+
+	rlKey := fmt.Sprintf("rl:unlink_bot:%d", tgID)
+	count, rlErr := redisrepo.Increment(ctx, b.rdb, rlKey, 10*time.Minute)
+	if rlErr == nil && count > 3 {
+		return c.Send("⏳ Слишком много запросов — повторите через 10 минут.")
+	}
+
+	user, err := b.repo.GetByTelegramID(ctx, tgID)
+	if err != nil {
+		b.log.Error("handleUnlink: get user by tg id", zap.Error(err))
+		return c.Send("Временная ошибка — попробуйте позже.")
+	}
+	if user == nil {
+		return c.Send("К этому Telegram не привязан аккаунт.")
+	}
+	if user.IsBanned {
+		return c.Send("Аккаунт заблокирован.")
+	}
+
+	code, err := botRandCode()
+	if err != nil {
+		b.log.Error("handleUnlink: generate code", zap.Error(err))
+		return c.Send("Внутренняя ошибка — попробуйте позже.")
+	}
+
+	key := fmt.Sprintf("tg:unlink:%s", code)
+	if err := b.rdb.Set(ctx, key, user.ID.String(), 10*time.Minute).Err(); err != nil {
+		b.log.Error("handleUnlink: redis set", zap.Error(err))
+		return c.Send("Временная ошибка — попробуйте позже.")
+	}
+
+	return c.Send(
+		"*🔓 Отвязка Telegram*\n"+brandLine+"\n\n"+
+			"Код: `"+code+"`\n\n"+
+			"Введите этот код на сайте:\n"+
+			"*Настройки → Отвязать Telegram*\n\n"+
+			"_Код действителен 10 минут._",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+	)
+}
+
+// ─── /resetpassword ───────────────────────────────────────────────────────────
+
+func (b *Bot) handleResetPassword(c tele.Context) error {
+	ctx := context.Background()
+	tgID := c.Sender().ID
+
+	rlKey := fmt.Sprintf("rl:resetpw:%d", tgID)
+	count, rlErr := redisrepo.Increment(ctx, b.rdb, rlKey, time.Hour)
+	if rlErr == nil && count > 3 {
+		return c.Send("⏳ Слишком много попыток — повторите через час.")
+	}
+
+	user, err := b.repo.GetByTelegramID(ctx, tgID)
+	if err != nil {
+		b.log.Error("handleResetPassword: get user by tg id", zap.Error(err))
+		return c.Send("Временная ошибка — попробуйте позже.")
+	}
+	if user == nil {
+		return c.Send("К этому Telegram не привязан аккаунт.\nПривяжите аккаунт через /link КОД")
+	}
+	if user.IsBanned {
+		return c.Send("Аккаунт заблокирован.")
+	}
+
+	newPw, err := botRandPassword()
+	if err != nil {
+		b.log.Error("handleResetPassword: generate password", zap.Error(err))
+		return c.Send("Внутренняя ошибка — попробуйте позже.")
+	}
+
+	hash, err := password.Hash(newPw)
+	if err != nil {
+		b.log.Error("handleResetPassword: hash password", zap.Error(err))
+		return c.Send("Внутренняя ошибка — попробуйте позже.")
+	}
+
+	if err := b.repo.SetPassword(ctx, user.ID, hash); err != nil {
+		b.log.Error("handleResetPassword: set password", zap.Error(err))
+		return c.Send("Не удалось сбросить пароль — попробуйте позже.")
+	}
+
+	if vErr := redisrepo.SetPasswordVersion(ctx, b.rdb, user.ID.String(), time.Now()); vErr != nil {
+		b.log.Warn("handleResetPassword: set password version", zap.Error(vErr))
+	}
+
+	_ = b.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
+		ID:        uuid.New(),
+		UserID:    user.ID,
+		EventType: "password_reset",
+		CreatedAt: time.Now(),
+	})
+
+	loginName := "—"
+	if user.Username != nil {
+		loginName = *user.Username
+	}
+
+	return c.Send(
+		"*🔑 Пароль сброшен*\n"+brandLine+"\n\n"+
+			"Логин: `"+loginName+"`\n"+
+			"Новый пароль: `"+newPw+"`\n\n"+
+			"_Рекомендуем сменить пароль в настройках._\n"+
+			"_Все активные сессии завершены._",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 	)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+func botRandPassword() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func botRandCode() (string, error) {
+	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	code := make([]byte, 6)
+	for i := range code {
+		b := make([]byte, 1)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		code[i] = chars[int(b[0])%len(chars)]
+	}
+	return string(code), nil
+}
+
 func (b *Bot) getUser(ctx context.Context, c tele.Context) (*domain.User, error) {
-	tgID := int64(c.Sender().ID)
+	tgID := c.Sender().ID
 	user, err := b.repo.GetByTelegramID(ctx, tgID)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка базы данных")
 	}
 	if user == nil {
-		return nil, fmt.Errorf("аккаунт не найден. Используйте /start для регистрации")
+		return nil, fmt.Errorf("аккаунт не найден — используйте /start")
 	}
 	if user.IsBanned {
-		return nil, fmt.Errorf("ваш аккаунт заблокирован")
+		return nil, fmt.Errorf("аккаунт заблокирован")
 	}
 	return user, nil
-}
-
-func usernameOrID(username string, id int64) string {
-	if username != "" {
-		return "@" + username
-	}
-	return fmt.Sprintf("User%d", id)
 }
 
 func planName(p domain.SubscriptionPlan) string {
@@ -1024,12 +1424,51 @@ func planName(p domain.SubscriptionPlan) string {
 		return "1 месяц"
 	case domain.PlanThreeMonth:
 		return "3 месяца"
+	case domain.PlanDeviceExpansion:
+		return "+1 устройство"
 	default:
 		return string(p)
 	}
 }
 
-// SendNotification sends a message to a user by Telegram ID (called from worker)
+func yadTxTypeName(t domain.YADTxType) string {
+	switch t {
+	case domain.YADTxReferralReward:
+		return "реферальный бонус"
+	case domain.YADTxBonus:
+		return "бонус"
+	case domain.YADTxSpent:
+		return "покупка"
+	case domain.YADTxPromo:
+		return "промокод"
+	case domain.YADTxTrial:
+		return "пробный период"
+	default:
+		return string(t)
+	}
+}
+
+func formatBytes(byt int64) string {
+	const (
+		kb = 1024
+		mb = kb * 1024
+		gb = mb * 1024
+		tb = gb * 1024
+	)
+	switch {
+	case byt >= tb:
+		return fmt.Sprintf("%.1f ТБ", float64(byt)/float64(tb))
+	case byt >= gb:
+		return fmt.Sprintf("%.1f ГБ", float64(byt)/float64(gb))
+	case byt >= mb:
+		return fmt.Sprintf("%.1f МБ", float64(byt)/float64(mb))
+	case byt >= kb:
+		return fmt.Sprintf("%.0f КБ", float64(byt)/float64(kb))
+	default:
+		return fmt.Sprintf("%d Б", byt)
+	}
+}
+
 func (b *Bot) SendNotification(tgID int64, message string) error {
 	_, err := b.bot.Send(&tele.User{ID: tgID}, message)
 	return err
@@ -1038,12 +1477,138 @@ func (b *Bot) SendNotification(tgID int64, message string) error {
 // ─── RegisterBuyCallbacks ─────────────────────────────────────────────────────
 
 func (b *Bot) RegisterBuyCallbacks() {
-	// Buy plan callbacks
-	b.bot.Handle(&tele.Btn{Unique: "buy_1week"}, b.handleBuyCallback(domain.PlanWeek))
-	b.bot.Handle(&tele.Btn{Unique: "buy_1month"}, b.handleBuyCallback(domain.PlanMonth))
-	b.bot.Handle(&tele.Btn{Unique: "buy_3months"}, b.handleBuyCallback(domain.PlanThreeMonth))
+	// Buy plan callbacks (rubles)
+	b.bot.Handle(&tele.Btn{Unique: "buy_1week"}, b.handleBuyRubles(domain.PlanWeek))
+	b.bot.Handle(&tele.Btn{Unique: "buy_1month"}, b.handleBuyRubles(domain.PlanMonth))
+	b.bot.Handle(&tele.Btn{Unique: "buy_3months"}, b.handleBuyRubles(domain.PlanThreeMonth))
 
-	// Main menu callbacks
+	// Buy plan callbacks (YAD)
+	b.bot.Handle(&tele.Btn{Unique: "buyyad_1week"}, b.handleBuyYAD(domain.PlanWeek))
+	b.bot.Handle(&tele.Btn{Unique: "buyyad_1month"}, b.handleBuyYAD(domain.PlanMonth))
+	b.bot.Handle(&tele.Btn{Unique: "buyyad_3months"}, b.handleBuyYAD(domain.PlanThreeMonth))
+
+	// Device expansion purchase — YAD
+	b.bot.Handle(&tele.Btn{Unique: "confirm_buydevice_yad"}, func(c tele.Context) error {
+		_ = c.Respond()
+		ctx := context.Background()
+		user, err := b.getUser(ctx, c)
+		if err != nil {
+			return c.Send("Ошибка: " + err.Error())
+		}
+
+		expansion, err := b.ecoSvc.BuyDeviceExpansion(ctx, user.ID)
+		if err != nil {
+			rm := &tele.ReplyMarkup{}
+			rm.Inline(rm.Row(backBtn(rm)))
+			return c.Send("Ошибка: "+err.Error(), rm)
+		}
+
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(fmt.Sprintf(
+			"*✅ Расширение активировано*\n"+brandLine+"\n\n"+
+				"Устройства: +%d (до %d)\n"+
+				"Действует до: `%s`",
+			expansion.ExtraDevices,
+			domain.DeviceMaxPerUser+expansion.ExtraDevices,
+			expansion.ExpiresAt.Format("02.01.2006"),
+		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+	})
+
+	// Device expansion purchase — rubles
+	b.bot.Handle(&tele.Btn{Unique: "confirm_buydevice_money"}, func(c tele.Context) error {
+		_ = c.Respond()
+		ctx := context.Background()
+		user, err := b.getUser(ctx, c)
+		if err != nil {
+			return c.Send("Ошибка: " + err.Error())
+		}
+
+		redirect, payment, err := b.subSvc.InitiateDeviceExpansionPayment(ctx, user.ID, b.cfg.PaymentReturnURL)
+		if err != nil {
+			rm := &tele.ReplyMarkup{}
+			rm.Inline(rm.Row(backBtn(rm)))
+			return c.Send("Ошибка: "+err.Error(), rm)
+		}
+
+		rm := &tele.ReplyMarkup{}
+		btnPay := rm.URL("💳 Перейти к оплате", redirect)
+		rm.Inline(rm.Row(btnPay), rm.Row(backBtn(rm)))
+
+		return c.Send(fmt.Sprintf(
+			"*Оплата расширения*\n"+brandLine+"\n\n"+
+				"Сумма: *%.0f ₽*\n"+
+				"Платёж: `%s`\n\n"+
+				"_Ссылка действительна 15 минут._",
+			float64(payment.AmountKopecks)/100,
+			payment.ID.String(),
+		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+	})
+
+	// Extend device expansion
+	b.bot.Handle(&tele.Btn{Unique: "confirm_extend"}, func(c tele.Context) error {
+		_ = c.Respond()
+		ctx := context.Background()
+		user, err := b.getUser(ctx, c)
+		if err != nil {
+			return c.Send("Ошибка: " + err.Error())
+		}
+
+		expansion, err := b.ecoSvc.ExtendDeviceExpansionYAD(ctx, user.ID)
+		if err != nil {
+			rm := &tele.ReplyMarkup{}
+			rm.Inline(rm.Row(backBtn(rm)))
+			return c.Send("Ошибка: "+err.Error(), rm)
+		}
+
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(fmt.Sprintf(
+			"*✅ Расширение продлено*\n"+brandLine+"\n\n"+
+				"Устройства: +%d\n"+
+				"Действует до: `%s`",
+			expansion.ExtraDevices,
+			expansion.ExpiresAt.Format("02.01.2006"),
+		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+	})
+
+	// Disconnect device list
+	b.bot.Handle(&tele.Btn{Unique: "menu_disconnect_list"}, func(c tele.Context) error {
+		_ = c.Respond()
+		ctx := context.Background()
+		user, err := b.getUser(ctx, c)
+		if err != nil {
+			return c.Send("Ошибка: " + err.Error())
+		}
+
+		devices, err := b.devSvc.ListDevices(ctx, user.ID)
+		if err != nil || len(devices) == 0 {
+			rm := &tele.ReplyMarkup{}
+			rm.Inline(rm.Row(backBtn(rm)))
+			return c.Send("Нет устройств для отключения.", rm)
+		}
+
+		rm := &tele.ReplyMarkup{}
+		var rows []tele.Row
+		for _, d := range devices {
+			name := d.DeviceName
+			if len(name) > 25 {
+				name = name[:25] + "…"
+			}
+			btn := rm.Data("✕ "+name, "disconnect_"+d.HwidID)
+			rows = append(rows, rm.Row(btn))
+		}
+		rows = append(rows, rm.Row(backBtn(rm)))
+		rm.Inline(rows...)
+
+		return c.Send(
+			"*✕ Отключить устройство*\n"+brandLine+"\n\nВыберите устройство:",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	})
+
+	// ─── Main menu callbacks ─────────────────────────────────────────────
+
 	b.bot.Handle(&tele.Btn{Unique: "menu_trial"}, func(c tele.Context) error {
 		_ = c.Respond()
 		return b.handleTrial(c)
@@ -1056,22 +1621,39 @@ func (b *Bot) RegisterBuyCallbacks() {
 		_ = c.Respond()
 		return b.handleMySubs(c)
 	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_devices"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleDevices(c)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_traffic"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleTraffic(c)
+	})
 	b.bot.Handle(&tele.Btn{Unique: "menu_promo"}, func(c tele.Context) error {
 		_ = c.Respond()
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(
-			"🎟 *Промокод*\n\n"+
-				"Отправьте команду в формате:\n"+
-				"`/promo КОД`\n\n"+
+			"*🎟 Промокод*\n"+brandLine+"\n\n"+
+				"Формат: `/promo КОД`\n"+
 				"Пример: `/promo SUMMER2024`",
-			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-			rm,
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	})
 	b.bot.Handle(&tele.Btn{Unique: "menu_support"}, func(c tele.Context) error {
 		_ = c.Respond()
 		return b.handleTicketMenu(c)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_newticket"}, func(c tele.Context) error {
+		_ = c.Respond()
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(
+			"*✏️ Создать тикет*\n"+brandLine+"\n\n"+
+				"Формат: `/newticket Тема сообщения`\n\n"+
+				"Пример:\n`/newticket Не подключается VPN на iPhone`",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
 	})
 	b.bot.Handle(&tele.Btn{Unique: "menu_help"}, func(c tele.Context) error {
 		_ = c.Respond()
@@ -1085,32 +1667,47 @@ func (b *Bot) RegisterBuyCallbacks() {
 		_ = c.Respond()
 		return b.handleInfo(c)
 	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_history"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleHistory(c)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_balance"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleBalance(c)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_payments"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handlePayments(c)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_buydevice"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleBuyDevice(c)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_extend"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleExtendDevices(c)
+	})
 	b.bot.Handle(&tele.Btn{Unique: "menu_yadshop"}, func(c tele.Context) error {
 		_ = c.Respond()
 		ctx := context.Background()
 		user, err := b.getUser(ctx, c)
 		if err != nil {
-			return c.Send("❌ " + err.Error())
+			return c.Send("Ошибка: " + err.Error())
 		}
 		webURL := b.cfg.WebAppURL
 		if webURL == "" {
 			webURL = "https://vpn-platform.ru"
 		}
 		rm := &tele.ReplyMarkup{}
-		btnShop := rm.URL("🛒 Открыть магазин", webURL+"/shop")
-		rm.Inline(
-			rm.Row(btnShop),
-			rm.Row(backBtn(rm)),
-		)
+		btnShop := rm.URL("🏪 Открыть магазин", webURL+"/shop")
+		rm.Inline(rm.Row(btnShop), rm.Row(backBtn(rm)))
 		return c.Send(fmt.Sprintf(
-			"🛒 *Магазин ЯД*\n"+
-				"━━━━━━━━━━━━━━━━━\n\n"+
-				"💎 Ваш баланс: *%d ЯД* (~%.0f ₽)\n\n"+
-				"Покупайте подписки за ЯД — дешевле, чем за рубли!\n\n"+
-				"📅 1 неделя — *%d ЯД*\n"+
-				"📆 1 месяц — *%d ЯД*  ⭐️\n"+
-				"🗓 3 месяца — *%d ЯД*  🔥\n\n"+
-				"_Откройте магазин на сайте:_",
+			"*🏪 Магазин ЯД*\n"+brandLine+"\n\n"+
+				"Баланс: *%d ЯД* (~%.0f ₽)\n\n"+
+				"Подписки за ЯД дешевле:\n"+
+				"◽ 1 неделя — *%d ЯД*\n"+
+				"◽ 1 месяц — *%d ЯД*\n"+
+				"◽ 3 месяца — *%d ЯД*",
 			user.YADBalance,
 			float64(user.YADBalance)*2.5,
 			domain.PlanYADPrice(domain.PlanWeek),
@@ -1130,15 +1727,12 @@ func (b *Bot) RegisterBuyCallbacks() {
 			webURL = "https://vpn-platform.ru"
 		}
 		rm := &tele.ReplyMarkup{}
-		btnPanel := rm.URL("🖥 Открыть панель", webURL+"/admin")
-		rm.Inline(
-			rm.Row(btnPanel),
-			rm.Row(backBtn(rm)),
-		)
+		btnPanel := rm.URL("⚙️ Открыть панель", webURL+"/admin")
+		rm.Inline(rm.Row(btnPanel), rm.Row(backBtn(rm)))
 		return c.Send(
-			"⚙️ *Панель администратора*\n\nОткройте веб-панель для управления платформой.",
-			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-			rm,
+			"*⚙️ Панель администратора*\n"+brandLine+"\n\n"+
+				"Откройте веб-панель для управления платформой.",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	})
 	b.bot.Handle(&tele.Btn{Unique: "menu_back"}, func(c tele.Context) error {
@@ -1146,13 +1740,14 @@ func (b *Bot) RegisterBuyCallbacks() {
 		return b.sendMainMenu(c)
 	})
 
-	// VPN subscription link handler (same logic as GetConnection in HTTP handler)
+	// ─── VPN link ────────────────────────────────────────────────────────
+
 	b.bot.Handle(&tele.Btn{Unique: "get_vpn_link"}, func(c tele.Context) error {
 		_ = c.Respond()
 		ctx := context.Background()
 		user, err := b.getUser(ctx, c)
 		if err != nil {
-			return c.Send("❌ " + err.Error())
+			return c.Send("Ошибка: " + err.Error())
 		}
 
 		remnaUUID := ""
@@ -1160,96 +1755,61 @@ func (b *Bot) RegisterBuyCallbacks() {
 			remnaUUID = *user.RemnaUserUUID
 		}
 
-		// Lazy repair: if remna_user_uuid is missing, try to recover it from the
-		// subscription's remna_sub_uuid (which is the same Remnawave user UUID).
 		if remnaUUID == "" {
 			subs, subErr := b.repo.GetActiveSubscription(ctx, user.ID)
 			if subErr != nil || subs == nil {
-				return c.Send("❌ Активная подписка не найдена.\n\nКупите подписку, чтобы использовать VPN.")
+				return c.Send("Активная подписка не найдена.\nКупите подписку чтобы использовать VPN.")
 			}
 
-			// Path 1: subscription has a stored remna_sub_uuid — use it directly
 			if subs.RemnaSubUUID != nil && *subs.RemnaSubUUID != "" {
 				remnaUUID = *subs.RemnaSubUUID
 				_ = b.repo.UpdateRemnaUUID(ctx, user.ID, remnaUUID)
 			} else {
-				// Path 2: look up by username in Remnawave
 				remnaName := user.RemnaUsername()
 				remnaUser, lookupErr := b.remna.GetUserByUsername(ctx, remnaName)
 				if lookupErr != nil || remnaUser == nil || remnaUser.UUID == "" {
-					// Legacy fallback: try UUID-based username from older registrations.
 					remnaUser, lookupErr = b.remna.GetUserByUsername(ctx, user.ID.String())
 				}
 				if lookupErr == nil && remnaUser != nil && remnaUser.UUID != "" {
 					remnaUUID = remnaUser.UUID
 					_ = b.repo.UpdateRemnaUUID(ctx, user.ID, remnaUUID)
-					rm := &tele.ReplyMarkup{}
-					btnCopy := rm.URL("📋 Открыть ссылку", remnaUser.SubscribeURL)
-					rm.Inline(
-						rm.Row(btnCopy),
-						rm.Row(backBtn(rm)),
-					)
-					return c.Send(
-						"🔗 *Ссылка для подключения VPN*\n\n"+
-							"`"+remnaUser.SubscribeURL+"`\n\n"+
-							"_Вставьте в Happ, V2RayN, Hiddify или другой совместимый клиент_",
-						&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-						rm,
-					)
+					return b.sendVPNLink(c, remnaUser.SubscribeURL)
 				}
 
-				// Path 3: create a new Remnawave account
 				remnaUser, createErr := b.remna.CreateUser(ctx, remnaName, subs.ExpiresAt)
 				if createErr != nil || remnaUser == nil || remnaUser.UUID == "" {
 					b.log.Warn("remnawave lazy repair: create user failed", zap.Error(createErr))
-					return c.Send("⚠️ Не удалось настроить VPN-аккаунт. Попробуйте позже.")
+					return c.Send("Не удалось настроить VPN-аккаунт — попробуйте позже.")
 				}
 				remnaUUID = remnaUser.UUID
 				_ = b.repo.UpdateRemnaUUID(ctx, user.ID, remnaUUID)
-				rm := &tele.ReplyMarkup{}
-				btnCopy := rm.URL("📋 Открыть ссылку", remnaUser.SubscribeURL)
-				rm.Inline(
-					rm.Row(btnCopy),
-					rm.Row(backBtn(rm)),
-				)
-				return c.Send(
-					"🔗 *Ссылка для подключения VPN*\n\n"+
-						"`"+remnaUser.SubscribeURL+"`\n\n"+
-						"_Вставьте в Happ, V2RayN, Hiddify или другой совместимый клиент_",
-					&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-					rm,
-				)
+				return b.sendVPNLink(c, remnaUser.SubscribeURL)
 			}
 		}
 
-		// Standard path: UUID exists, fetch from Remnawave
 		remnaUser, err := b.remna.GetUser(ctx, remnaUUID)
 		if err != nil {
 			b.log.Warn("remnawave get user", zap.Error(err))
-			return c.Send("⚠️ Не удалось загрузить данные подключения. Попробуйте позже.")
+			return c.Send("Не удалось загрузить данные подключения — попробуйте позже.")
 		}
 
-		rm := &tele.ReplyMarkup{}
-		btnCopy := rm.URL("📋 Открыть ссылку", remnaUser.SubscribeURL)
-		rm.Inline(
-			rm.Row(btnCopy),
-			rm.Row(backBtn(rm)),
-		)
-
-		return c.Send(
-			"🔗 *Ссылка для подключения VPN*\n\n"+
-				"`"+remnaUser.SubscribeURL+"`\n\n"+
-				"_Вставьте в Happ, V2RayN, Hiddify или другой совместимый клиент_",
-			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-			rm,
-		)
+		return b.sendVPNLink(c, remnaUser.SubscribeURL)
 	})
 }
 
-// ─── Unused import avoidance
-var _ = platega.MethodSBPQR
+func (b *Bot) sendVPNLink(c tele.Context, url string) error {
+	rm := &tele.ReplyMarkup{}
+	btnOpen := rm.URL("🔗 Открыть ссылку", url)
+	rm.Inline(rm.Row(btnOpen), rm.Row(backBtn(rm)))
+	return c.Send(
+		"*🔗 Подключение VPN*\n"+brandLine+"\n\n"+
+			"`"+url+"`\n\n"+
+			"_Вставьте в Happ, V2RayN, Hiddify или другой клиент._",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+	)
+}
 
-// ─── 2FA Callback Handler ────────────────────────────────────────────────────
+// ─── Generic callback handler ────────────────────────────────────────────────
 
 func (b *Bot) handleGenericCallback(c tele.Context) error {
 	data := c.Callback().Data
@@ -1258,8 +1818,10 @@ func (b *Bot) handleGenericCallback(c tele.Context) error {
 		return b.handleTFACallback(c, data[len("tfa_approve_"):], true)
 	case strings.HasPrefix(data, "tfa_deny_"):
 		return b.handleTFACallback(c, data[len("tfa_deny_"):], false)
+	case strings.HasPrefix(data, "disconnect_"):
+		return b.handleDisconnectCallback(c, data[len("disconnect_"):])
 	default:
-		return nil // ignore unknown callbacks
+		return nil
 	}
 }
 
@@ -1269,34 +1831,55 @@ func (b *Bot) handleTFACallback(c tele.Context, challengeID string, approve bool
 
 	userID, status, err := redisrepo.Get2FAChallenge(ctx, b.rdb, challengeID)
 	if err != nil || userID == "" {
-		return c.Send("⏰ Запрос на вход истёк или уже обработан.")
+		return c.Send("Запрос на вход истёк или уже обработан.")
 	}
 	if status != redisrepo.TFAPending {
-		return c.Send("ℹ️ Этот запрос уже обработан.")
+		return c.Send("Этот запрос уже обработан.")
 	}
 
-	// Verify the callback sender matches the user's telegram_id
 	uid, err := uuid.Parse(userID)
 	if err != nil {
-		return c.Send("❌ Ошибка: некорректный запрос.")
+		return c.Send("Некорректный запрос.")
 	}
 	user, err := b.repo.GetByID(ctx, uid)
 	if err != nil || user == nil || user.TelegramID == nil || *user.TelegramID != c.Sender().ID {
-		return c.Send("❌ Вы не можете подтвердить этот запрос.")
+		return c.Send("Вы не можете подтвердить этот запрос.")
 	}
 
 	newStatus := redisrepo.TFADenied
-	emoji := "❌"
-	text := "Вход отклонён"
+	text := "❌ Вход отклонён."
 	if approve {
 		newStatus = redisrepo.TFAApproved
-		emoji = "✅"
-		text = "Вход подтверждён"
+		text = "✅ Вход подтверждён."
 	}
 
 	if err := redisrepo.Resolve2FAChallenge(ctx, b.rdb, challengeID, newStatus); err != nil {
-		return c.Send("❌ Ошибка обработки. Попробуйте ещё раз.")
+		return c.Send("Ошибка обработки — попробуйте ещё раз.")
 	}
 
-	return c.Send(fmt.Sprintf("%s %s.", emoji, text))
+	return c.Send(text)
 }
+
+func (b *Bot) handleDisconnectCallback(c tele.Context, hwidID string) error {
+	ctx := context.Background()
+	_ = c.Respond()
+
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	if err := b.devSvc.DisconnectDevice(ctx, user.ID, hwidID); err != nil {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send("Ошибка: "+err.Error(), rm)
+	}
+
+	rm := &tele.ReplyMarkup{}
+	btnDevices := rm.Data("📱 Устройства", "menu_devices")
+	rm.Inline(rm.Row(btnDevices), rm.Row(backBtn(rm)))
+	return c.Send("✅ Устройство отключено.", rm)
+}
+
+// Unused import avoidance
+var _ = platega.MethodSBPQR
