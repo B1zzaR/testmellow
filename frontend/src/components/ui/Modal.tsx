@@ -40,10 +40,10 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
       <div
         className={[
           'w-full max-w-md',
-          'rounded-t-2xl border border-surface-600 bg-white shadow-card-lg',
-          'dark:bg-surface-800 dark:border-surface-600',
+          'rounded-t-2xl border border-gray-200 bg-white shadow-elevation-3',
+          'dark:bg-surface-800 dark:border-surface-600 dark:shadow-card-lg',
           // Mobile: slide up from bottom; desktop: scale from center
-          'animate-modal-up sm:rounded-xl sm:animate-modal-scale',
+          'animate-modal-up sm:rounded-2xl sm:animate-modal-scale',
           // Safe area bottom padding on mobile
           'pb-[env(safe-area-inset-bottom)]',
         ].join(' ')}

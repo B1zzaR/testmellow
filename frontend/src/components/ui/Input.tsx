@@ -10,7 +10,7 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 const inputBase = [
-  'block w-full rounded-lg border px-3.5 py-3 text-base',
+  'block w-full rounded-xl border px-3.5 py-3 text-base',
   'transition-[border-color,box-shadow] duration-150',
   'bg-white text-gray-900 placeholder:text-gray-400',
   'focus:outline-none focus:ring-2 focus:ring-primary-500/70 focus:border-primary-500',

@@ -329,17 +329,30 @@ const DeviceInactiveDays = 2
 // ─── Device Expansion ─────────────────────────────────────────────────────────
 
 const (
-	DeviceExpansionMaxExtra     = 2    // base 4 → max 6
-	DeviceExpansionPriceKopecks = 4000 // 40₽ per +1 device
-	DeviceExpansionPriceYAD     = 16   // 16 ЯД per +1 device
+	DeviceExpansionMaxExtra            = 3     // base 4 → max 7
+	DeviceExpansionPriceKopecks        = 4000  // 40₽ per +1 device
+	DeviceExpansionPriceYAD            = 16    // 16 ЯД per +1 device
+	DeviceExpansionBundle3PriceKopecks = 10500 // 105₽ for +3 devices (12.5% discount vs 3×40₽=120₽)
+	DeviceExpansionBundle3PriceYAD     = 42    // 42 ЯД for +3 devices (12.5% discount vs 3×16=48 ЯД)
 )
 
 // PlanDeviceExpansion is a pseudo-plan used for Platega device-expansion payments.
 const PlanDeviceExpansion SubscriptionPlan = "device_expansion"
 
+// PlanDeviceExpansion3 is a pseudo-plan for the +3 device bundle payment.
+const PlanDeviceExpansion3 SubscriptionPlan = "device_expansion_3"
+
 // IsDeviceExpansionPlan returns true when the plan represents a device expansion purchase.
 func IsDeviceExpansionPlan(plan SubscriptionPlan) bool {
-	return plan == PlanDeviceExpansion
+	return plan == PlanDeviceExpansion || plan == PlanDeviceExpansion3
+}
+
+// DeviceExpansionQuantity returns how many extra devices a device-expansion plan grants.
+func DeviceExpansionQuantity(plan SubscriptionPlan) int {
+	if plan == PlanDeviceExpansion3 {
+		return 3
+	}
+	return 1
 }
 
 // DeviceExpansion tracks an active device-limit expansion purchase.

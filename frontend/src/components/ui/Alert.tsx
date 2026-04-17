@@ -30,7 +30,7 @@ interface AlertProps {
 export function Alert({ variant = 'info', message, className = '' }: AlertProps) {
   return (
     <div
-      className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${styles[variant]} ${className}`}
+      className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${styles[variant]} ${className}`}
       role="alert"
     >
       <svg

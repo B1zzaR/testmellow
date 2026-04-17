@@ -19,6 +19,20 @@ export default {
           900: '#14532d',
           950: '#052e16',
         },
+        // Secondary accent — indigo (info, secondary badges, links)
+        accent: {
+          50:  '#eef2ff',
+          100: '#e0e7ff',
+          200: '#c7d2fe',
+          300: '#a5b4fc',
+          400: '#818cf8',
+          500: '#6366f1',
+          600: '#4f46e5',
+          700: '#4338ca',
+          800: '#3730a3',
+          900: '#312e81',
+          950: '#1e1b4b',
+        },
         // Dark surface palette
         surface: {
           950: '#07070d',
@@ -30,15 +44,18 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Noto Sans', 'Ubuntu', 'sans-serif'],
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Noto Sans', 'Ubuntu', 'sans-serif'],
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
       boxShadow: {
         'glow-sm': '0 0 10px rgba(34, 197, 94, 0.15)',
         'glow-md': '0 0 18px rgba(34, 197, 94, 0.22)',
         'glow-lg': '0 0 30px rgba(34, 197, 94, 0.28)',
-        'card':    '0 1px 3px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.4)',
-        'card-lg': '0 4px 12px rgba(0,0,0,0.6)',
+        'elevation-1': '0 1px 2px rgba(0,0,0,0.05)',
+        'elevation-2': '0 4px 12px rgba(0,0,0,0.08)',
+        'elevation-3': '0 12px 32px rgba(0,0,0,0.12)',
+        'card':    '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
+        'card-lg': '0 4px 16px rgba(0,0,0,0.15)',
       },
     },
   },

@@ -7,7 +7,7 @@ import { subscriptionsApi } from '@/api/subscriptions'
 import { referralsApi } from '@/api/referrals'
 import { publicApi } from '@/api/client'
 import { StatCard, Card } from '@/components/ui/Card'
-import { PageSpinner } from '@/components/ui/Spinner'
+import { StatCardSkeleton, CardSkeleton } from '@/components/ui/Skeleton'
 import { Button } from '@/components/ui/Button'
 import { Icon } from '@/components/ui/Icons'
 import { NotificationAlert } from '@/components/NotificationAlert'
@@ -152,7 +152,25 @@ export function DashboardPage() {
     queryFn: () => profileApi.getActivity(5),
   })
 
-  if (profileLoading) return <PageSpinner />
+  if (profileLoading) return (
+    <div className="space-y-6">
+      <div>
+        <div className="h-7 w-48 rounded-lg bg-gray-200 dark:bg-surface-700 animate-shimmer" />
+        <div className="mt-2 h-4 w-32 rounded-lg bg-gray-200 dark:bg-surface-700 animate-shimmer" />
+      </div>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCardSkeleton />
+        <StatCardSkeleton />
+        <StatCardSkeleton />
+        <StatCardSkeleton />
+      </div>
+      <CardSkeleton lines={4} />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <CardSkeleton lines={3} />
+        <CardSkeleton lines={5} />
+      </div>
+    </div>
+  )
 
   const activeSub = (subsData?.subscriptions ?? []).find((s) => s.status === 'active' || s.status === 'trial')
   const daysLeft = activeSub ? daysUntil(activeSub.expires_at) : 0

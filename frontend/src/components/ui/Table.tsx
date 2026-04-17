@@ -29,7 +29,7 @@ export function Table<T>({
   return (
     <>
       {/* Desktop table — hidden on small screens */}
-      <div className="hidden overflow-x-auto rounded-xl border border-gray-200 dark:border-surface-700 sm:block">
+      <div className="hidden overflow-x-auto rounded-2xl border border-gray-200 dark:border-surface-700 sm:block">
         <table className="min-w-full divide-y divide-gray-100 text-sm dark:divide-surface-700">
           <thead className="bg-gray-50 dark:bg-surface-800">
             <tr>
@@ -87,11 +87,11 @@ export function Table<T>({
       {/* Mobile card list — shown only on xs screens */}
       <div className="flex flex-col gap-2 sm:hidden">
         {loading ? (
-          <div className="rounded-xl border border-gray-200 px-4 py-8 text-center text-sm text-gray-400 dark:border-surface-700 dark:text-slate-600">
+          <div className="rounded-2xl border border-gray-200 px-4 py-8 text-center text-sm text-gray-400 dark:border-surface-700 dark:text-slate-600">
             Загрузка…
           </div>
         ) : isEmpty ? (
-          <div className="rounded-xl border border-gray-200 px-4 py-8 text-center text-sm text-gray-400 dark:border-surface-700 dark:text-slate-600">
+          <div className="rounded-2xl border border-gray-200 px-4 py-8 text-center text-sm text-gray-400 dark:border-surface-700 dark:text-slate-600">
             {emptyMessage}
           </div>
         ) : (
@@ -100,7 +100,7 @@ export function Table<T>({
               key={keyExtractor(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
               className={[
-                'rounded-xl border border-gray-200 bg-white px-4 py-3',
+                'rounded-2xl border border-gray-200 bg-white px-4 py-3',
                 'dark:border-surface-700 dark:bg-surface-900',
                 onRowClick ? 'cursor-pointer active:bg-gray-50 dark:active:bg-surface-800' : '',
               ].join(' ')}

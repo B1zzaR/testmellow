@@ -7,7 +7,7 @@ export function AppLayout() {
   const isOnline = useOnlineStatus()
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-[#07070d]">
+    <div className="flex h-screen overflow-hidden bg-gradient-to-b from-gray-50 to-white dark:from-surface-950 dark:to-surface-950 dark:bg-surface-950">
       {/* Sidebar — hidden on mobile, static on ≥lg */}
       <div className="hidden lg:flex lg:w-64 lg:shrink-0">
         <Sidebar />

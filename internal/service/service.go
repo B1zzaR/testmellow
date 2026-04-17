@@ -474,8 +474,13 @@ func (s *SubscriptionService) InitiateRenewal(ctx context.Context, userID uuid.U
 	return s.InitiatePayment(ctx, userID, plan, returnURL)
 }
 
-// InitiateDeviceExpansionPayment creates a Platega payment for +1 device expansion.
-func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context, userID uuid.UUID, returnURL string) (string, *domain.Payment, error) {
+// InitiateDeviceExpansionPayment creates a Platega payment for device expansion.
+// quantity must be 1 or 3.
+func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context, userID uuid.UUID, quantity int, returnURL string) (string, *domain.Payment, error) {
+	if quantity != 1 && quantity != 3 {
+		return "", nil, errors.New("количество должно быть 1 или 3")
+	}
+
 	// Must have an active subscription
 	activeSub, err := s.repo.GetActiveSubscription(ctx, userID)
 	if err != nil {
@@ -493,8 +498,12 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 	if err != nil {
 		return "", nil, err
 	}
-	if existing != nil && existing.ExtraDevices >= domain.DeviceExpansionMaxExtra {
-		return "", nil, errors.New("достигнут максимум дополнительных устройств")
+	currentExtra := 0
+	if existing != nil {
+		currentExtra = existing.ExtraDevices
+	}
+	if currentExtra+quantity > domain.DeviceExpansionMaxExtra {
+		return "", nil, errors.New("превышен максимум дополнительных устройств")
 	}
 
 	// Check if real money purchases are blocked
@@ -506,8 +515,22 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		return "", nil, errors.New("покупки за деньги временно заблокированы администратором")
 	}
 
+	// Determine plan and price based on quantity
+	var plan domain.SubscriptionPlan
+	var priceKopecks int64
+	var description string
+	if quantity == 3 {
+		plan = domain.PlanDeviceExpansion3
+		priceKopecks = int64(domain.DeviceExpansionBundle3PriceKopecks)
+		description = "Расширение лимита устройств +3"
+	} else {
+		plan = domain.PlanDeviceExpansion
+		priceKopecks = int64(domain.DeviceExpansionPriceKopecks)
+		description = "Расширение лимита устройств +1"
+	}
+
 	// Re-use existing pending device expansion payment if present
-	existingPayment, err := s.repo.GetPendingPaymentByPlan(ctx, userID, domain.PlanDeviceExpansion)
+	existingPayment, err := s.repo.GetPendingPaymentByPlan(ctx, userID, plan)
 	if err == nil && existingPayment != nil {
 		return existingPayment.RedirectURL, existingPayment, nil
 	}
@@ -522,7 +545,6 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		return "", nil, errors.New("пользователь не найден")
 	}
 
-	priceKopecks := int64(domain.DeviceExpansionPriceKopecks)
 	amountRubles := float64(priceKopecks) / 100.0
 
 	platResp, err := s.platega.CreatePayment(ctx, platega.CreatePaymentRequest{
@@ -531,7 +553,7 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 			Amount:   amountRubles,
 			Currency: "RUB",
 		},
-		Description: "Расширение лимита устройств +1",
+		Description: description,
 		Return:      returnURL,
 		Payload:     userID.String(),
 	})
@@ -551,7 +573,7 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		AmountKopecks:  priceKopecks,
 		Currency:       "RUB",
 		Status:         domain.PaymentStatusPending,
-		Plan:           domain.PlanDeviceExpansion,
+		Plan:           plan,
 		PaymentMethod:  platega.MethodSBPQR,
 		PlategaPayload: userID.String(),
 		RedirectURL:    platResp.Redirect,
@@ -568,6 +590,7 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		zap.String("user_id", userID.String()),
 		zap.String("payment_id", txID.String()),
 		zap.Int64("amount_kopecks", priceKopecks),
+		zap.Int("quantity", quantity),
 	)
 	return platResp.Redirect, payment, nil
 }
@@ -977,8 +1000,18 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 }
 
 // BuyDeviceExpansion purchases a device limit expansion for the user using ЯД.
-func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUID) (*domain.DeviceExpansion, error) {
-	yadPrice := int64(domain.DeviceExpansionPriceYAD)
+// quantity must be 1 or 3.
+func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUID, quantity int) (*domain.DeviceExpansion, error) {
+	if quantity != 1 && quantity != 3 {
+		return nil, errors.New("количество должно быть 1 или 3")
+	}
+
+	var yadPrice int64
+	if quantity == 3 {
+		yadPrice = int64(domain.DeviceExpansionBundle3PriceYAD)
+	} else {
+		yadPrice = int64(domain.DeviceExpansionPriceYAD)
+	}
 
 	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil || user == nil {
@@ -1010,13 +1043,14 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 		return nil, err
 	}
 
-	newExtra := 1
+	currentExtra := 0
 	if existing != nil {
-		if existing.ExtraDevices >= domain.DeviceExpansionMaxExtra {
-			return nil, errors.New("достигнут максимум дополнительных устройств")
-		}
-		newExtra = existing.ExtraDevices + 1
+		currentExtra = existing.ExtraDevices
 	}
+	if currentExtra+quantity > domain.DeviceExpansionMaxExtra {
+		return nil, errors.New("превышен максимум дополнительных устройств")
+	}
+	newExtra := currentExtra + quantity
 
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
@@ -1025,7 +1059,7 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 	defer tx.Rollback(ctx)
 
 	ref := uuid.New()
-	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref, fmt.Sprintf("Расширение устройств: +1 (всего +%d)", newExtra)); err != nil {
+	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref, fmt.Sprintf("Расширение устройств: +%d (всего +%d)", quantity, newExtra)); err != nil {
 		return nil, err
 	}
 
@@ -1072,6 +1106,7 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 	s.log.Info("device expansion purchased (YAD)",
 		zap.String("user_id", userID.String()),
 		zap.Int("extra_devices", newExtra),
+		zap.Int("quantity", quantity),
 		zap.Int64("yad_spent", yadPrice),
 		zap.Time("expires_at", expansion.ExpiresAt),
 	)

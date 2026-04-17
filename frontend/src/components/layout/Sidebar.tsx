@@ -42,7 +42,7 @@ export function Sidebar({ onClose }: SidebarProps) {
   }
 
   return (
-    <aside className="flex h-full w-64 flex-col bg-white dark:bg-surface-900 border-r border-gray-200 dark:border-surface-700">
+    <aside className="flex h-full w-64 flex-col bg-white shadow-elevation-1 dark:bg-surface-900 border-r border-gray-200 dark:border-surface-700 dark:shadow-none">
       {/* Brand */}
       <div className="flex h-[72px] items-center gap-3 border-b border-gray-200 dark:border-surface-700 px-5">
         <SnakeLogo size={36} />
@@ -81,7 +81,7 @@ export function Sidebar({ onClose }: SidebarProps) {
                 />
                 {item.label}
                 {isActive && (
-                  <span className="ml-auto h-2 w-2 rounded-full bg-primary-500" />
+                  <span className="ml-auto h-2 w-2 rounded-full bg-primary-500 shadow-glow-sm" />
                 )}
               </>
             )}
@@ -180,7 +180,7 @@ export function BottomNav() {
                         className={isActive ? 'text-primary-500' : 'text-gray-400 dark:text-slate-600'}
                       />
                       {item.label}
-                      {isActive && <span className="ml-auto h-2 w-2 rounded-full bg-primary-500" />}
+                      {isActive && <span className="ml-auto h-2 w-2 rounded-full bg-primary-500 shadow-glow-sm" />}
                     </>
                   )}
                 </NavLink>

@@ -9,17 +9,20 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 const variants = {
   primary: [
     'bg-primary-500 text-white',
-    'hover:bg-primary-400',
+    'shadow-[0_0_12px_rgba(34,197,94,0.12)]',
+    'hover:bg-primary-400 hover:shadow-[0_0_16px_rgba(34,197,94,0.18)]',
     'active:bg-primary-600 active:scale-[0.97]',
     'dark:shadow-glow-sm dark:hover:shadow-glow-md',
     'disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:scale-100',
     'focus-visible:ring-primary-500 focus-visible:ring-offset-surface-950',
   ].join(' '),
   secondary: [
-    'bg-transparent text-slate-300 border border-surface-600',
-    'hover:bg-surface-700 hover:border-surface-500 hover:text-slate-100',
-    'active:bg-surface-600 active:scale-[0.97]',
-    'dark:bg-surface-800 dark:border-surface-600',
+    'bg-transparent text-gray-700 border border-gray-300',
+    'hover:bg-gray-100 hover:border-gray-400 hover:text-gray-900',
+    'active:bg-gray-200 active:scale-[0.97]',
+    'dark:text-slate-300 dark:bg-surface-800 dark:border-surface-600',
+    'dark:hover:bg-surface-700 dark:hover:border-surface-500 dark:hover:text-slate-100',
+    'dark:active:bg-surface-600',
     'disabled:opacity-40 disabled:cursor-not-allowed disabled:scale-100',
     'focus-visible:ring-surface-500',
   ].join(' '),
@@ -31,17 +34,18 @@ const variants = {
     'focus-visible:ring-red-500',
   ].join(' '),
   ghost: [
-    'bg-transparent text-slate-400',
-    'hover:bg-surface-700 hover:text-slate-200',
-    'active:bg-surface-600 active:scale-[0.97]',
+    'bg-transparent text-gray-500',
+    'hover:bg-gray-100 hover:text-gray-700',
+    'dark:text-slate-400 dark:hover:bg-surface-700 dark:hover:text-slate-200',
+    'active:bg-gray-200 dark:active:bg-surface-600 active:scale-[0.97]',
     'disabled:opacity-40 disabled:cursor-not-allowed disabled:scale-100',
     'focus-visible:ring-surface-500',
   ].join(' '),
 }
 
 const sizes = {
-  sm: 'min-h-[36px] px-4 py-2 text-sm rounded-lg',
-  md: 'min-h-[44px] px-5 py-2.5 text-sm rounded-lg',
+  sm: 'min-h-[36px] px-4 py-2 text-sm rounded-xl',
+  md: 'min-h-[44px] px-5 py-2.5 text-sm rounded-xl',
   lg: 'min-h-[48px] px-7 py-3 text-base rounded-xl',
 }
 

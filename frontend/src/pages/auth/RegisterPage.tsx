@@ -63,7 +63,7 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-gray-50 px-4 dark:bg-[#07070d]">
+    <div className="relative flex min-h-screen items-center justify-center bg-gradient-to-b from-gray-50 to-white px-4 dark:from-surface-950 dark:to-surface-950 dark:bg-surface-950">
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
         <div className="absolute left-1/2 top-0 h-[400px] w-[600px] -translate-x-1/2 rounded-full bg-primary-500/5 blur-3xl" />
       </div>

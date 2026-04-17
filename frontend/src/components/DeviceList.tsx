@@ -21,9 +21,11 @@ function timeUntilDeletion(canDeleteAfter: string): string | null {
   return `${hours} ч.`
 }
 
-const PRICE_RUB = 40
-const PRICE_YAD = 16
-const MAX_EXTRA = 2
+const PRICE_RUB_1 = 40
+const PRICE_YAD_1 = 16
+const PRICE_RUB_3 = 105
+const PRICE_YAD_3 = 42
+const MAX_EXTRA = 3
 
 interface DeviceListProps {
   data: DeviceListResponse
@@ -37,7 +39,7 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
   const [errorMsg, setErrorMsg] = useState('')
   const [showInactive, setShowInactive] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
-  const [buyMethod, setBuyMethod] = useState<'yad' | 'money' | null>(null)
+  const [buyConfig, setBuyConfig] = useState<{ quantity: 1 | 3; method: 'yad' | 'money' } | null>(null)
 
   const disconnectMutation = useMutation({
     mutationFn: (id: string) => devicesApi.disconnect(id),
@@ -55,31 +57,31 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
   })
 
   const buyExpansionYADMutation = useMutation({
-    mutationFn: () => shopApi.buyDeviceExpansion(),
+    mutationFn: (qty: number) => shopApi.buyDeviceExpansion(qty),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       queryClient.invalidateQueries({ queryKey: ['balance'] })
       setSuccessMsg('Расширение устройств активировано!')
       setErrorMsg('')
-      setBuyMethod(null)
+      setBuyConfig(null)
     },
     onError: (e: Error) => {
       setErrorMsg(e.message)
       setSuccessMsg('')
-      setBuyMethod(null)
+      setBuyConfig(null)
     },
   })
 
   const buyExpansionMoneyMutation = useMutation({
-    mutationFn: () => shopApi.buyDeviceExpansionMoney(window.location.href),
+    mutationFn: (qty: number) => shopApi.buyDeviceExpansionMoney(window.location.href, qty),
     onSuccess: (data) => {
-      setBuyMethod(null)
+      setBuyConfig(null)
       window.location.href = data.redirect_url
     },
     onError: (e: Error) => {
       setErrorMsg(e.message)
       setSuccessMsg('')
-      setBuyMethod(null)
+      setBuyConfig(null)
     },
   })
 
@@ -201,6 +203,13 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
           </p>
         )}
 
+        <div className="mb-3 flex items-center gap-3 rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-2.5">
+          <Icon name="info" size={14} className="shrink-0 text-yellow-500" />
+          <p className="text-xs text-yellow-600 dark:text-yellow-400">
+            При окончании подписки дополнительные устройства сбрасываются. При продлении или покупке новой подписки необходимо приобрести расширение заново.
+          </p>
+        </div>
+
         {isTrial ? (
           <div className="flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
             <Icon name="lock" size={16} className="shrink-0 text-yellow-500" />
@@ -212,33 +221,77 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
             </div>
           </div>
         ) : canBuyMore ? (
-          <div className="rounded-xl border border-gray-200 dark:border-surface-700 p-4">
-            <p className="text-base font-bold text-gray-900 dark:text-slate-100">
-              +1 устройство
-            </p>
-            <p className="text-xs text-gray-400 dark:text-slate-500">
-              Действует до конца текущей подписки
-            </p>
-            <p className="mt-2 text-xl font-extrabold text-primary-500">
-              {PRICE_RUB}₽
-            </p>
-            <div className="mt-3 flex gap-2">
-              <Button
-                className="flex-1"
-                size="sm"
-                onClick={() => setBuyMethod('money')}
-              >
-                Оплатить {PRICE_RUB}₽
-              </Button>
-              <Button
-                className="flex-1"
-                size="sm"
-                variant="secondary"
-                onClick={() => setBuyMethod('yad')}
-              >
-                Оплатить {PRICE_YAD} ЯД
-              </Button>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {/* +1 device option */}
+            <div className="rounded-xl border border-gray-200 dark:border-surface-700 p-4">
+              <p className="text-base font-bold text-gray-900 dark:text-slate-100">
+                +1 устройство
+              </p>
+              <p className="text-xs text-gray-400 dark:text-slate-500">
+                До конца текущей подписки
+              </p>
+              <p className="mt-2 text-xl font-extrabold text-primary-500">
+                {PRICE_RUB_1}₽
+              </p>
+              <div className="mt-3 flex gap-2">
+                <Button
+                  className="flex-1"
+                  size="sm"
+                  onClick={() => setBuyConfig({ quantity: 1, method: 'money' })}
+                >
+                  {PRICE_RUB_1}₽
+                </Button>
+                <Button
+                  className="flex-1"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setBuyConfig({ quantity: 1, method: 'yad' })}
+                >
+                  {PRICE_YAD_1} ЯД
+                </Button>
+              </div>
             </div>
+
+            {/* +3 devices bundle option (only when no expansion yet) */}
+            {currentExtra === 0 && (
+              <div className="relative rounded-xl border-2 border-primary-500/40 bg-primary-500/5 dark:bg-primary-500/10 p-4">
+                <span className="absolute right-3 top-3 rounded-full bg-primary-500/15 px-2 py-0.5 text-[10px] font-semibold text-primary-500">
+                  Выгоднее
+                </span>
+                <p className="text-base font-bold text-gray-900 dark:text-slate-100">
+                  +3 устройства
+                </p>
+                <p className="text-xs text-gray-400 dark:text-slate-500">
+                  До конца текущей подписки
+                </p>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <p className="text-xl font-extrabold text-primary-500">
+                    {PRICE_RUB_3}₽
+                  </p>
+                  <span className="text-sm text-gray-400 dark:text-slate-600 line-through">{PRICE_RUB_1 * 3}₽</span>
+                  <span className="rounded-full bg-green-500/10 px-1.5 py-0.5 text-[10px] font-bold text-green-500">
+                    −{PRICE_RUB_1 * 3 - PRICE_RUB_3}₽
+                  </span>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button
+                    className="flex-1"
+                    size="sm"
+                    onClick={() => setBuyConfig({ quantity: 3, method: 'money' })}
+                  >
+                    {PRICE_RUB_3}₽
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setBuyConfig({ quantity: 3, method: 'yad' })}
+                  >
+                    {PRICE_YAD_3} ЯД
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         ) : expansion ? (
           <p className="text-xs text-gray-400 dark:text-slate-500">
@@ -249,20 +302,21 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
 
       {/* Buy expansion confirmation modal */}
       <Modal
-        open={buyMethod !== null}
-        onClose={() => setBuyMethod(null)}
+        open={buyConfig !== null}
+        onClose={() => setBuyConfig(null)}
         title="Расширение устройств"
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={() => setBuyMethod(null)}>
+            <Button variant="secondary" size="sm" onClick={() => setBuyConfig(null)}>
               Отмена
             </Button>
             <Button
               size="sm"
               loading={buyExpansionYADMutation.isPending || buyExpansionMoneyMutation.isPending}
               onClick={() => {
-                if (buyMethod === 'yad') buyExpansionYADMutation.mutate()
-                if (buyMethod === 'money') buyExpansionMoneyMutation.mutate()
+                if (!buyConfig) return
+                if (buyConfig.method === 'yad') buyExpansionYADMutation.mutate(buyConfig.quantity)
+                if (buyConfig.method === 'money') buyExpansionMoneyMutation.mutate(buyConfig.quantity)
               }}
             >
               Подтвердить
@@ -270,23 +324,35 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
           </>
         }
       >
-        <p className="text-sm text-gray-600 dark:text-slate-400">
-          {expansion ? 'Добавить ещё' : 'Активировать'}{' '}
-          <strong className="text-gray-900 dark:text-slate-100">+1 устройство</strong>{' '}
-          (итого до {4 + currentExtra + 1}) до конца текущей подписки за{' '}
-          <strong className="text-primary-500">
-            {buyMethod === 'money' ? `${PRICE_RUB}₽` : `${PRICE_YAD} ЯД`}
-          </strong>?
-        </p>
-        {buyMethod === 'money' && (
-          <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
-            Вы будете перенаправлены на страницу оплаты.
-          </p>
-        )}
-        {buyMethod === 'yad' && (
-          <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
-            Сумма будет списана с баланса ЯД.
-          </p>
+        {buyConfig && (
+          <>
+            <p className="text-sm text-gray-600 dark:text-slate-400">
+              {expansion ? 'Добавить ещё' : 'Активировать'}{' '}
+              <strong className="text-gray-900 dark:text-slate-100">+{buyConfig.quantity} {buyConfig.quantity === 1 ? 'устройство' : 'устройства'}</strong>{' '}
+              (итого до {4 + currentExtra + buyConfig.quantity}) до конца текущей подписки за{' '}
+              <strong className="text-primary-500">
+                {buyConfig.method === 'money'
+                  ? `${buyConfig.quantity === 3 ? PRICE_RUB_3 : PRICE_RUB_1}₽`
+                  : `${buyConfig.quantity === 3 ? PRICE_YAD_3 : PRICE_YAD_1} ЯД`
+                }
+              </strong>?
+            </p>
+            {buyConfig.quantity === 3 && (
+              <p className="mt-2 text-xs text-green-500 font-medium">
+                Выгода {buyConfig.method === 'money' ? `${PRICE_RUB_1 * 3 - PRICE_RUB_3}₽` : `${PRICE_YAD_1 * 3 - PRICE_YAD_3} ЯД`} по сравнению с покупкой по одному
+              </p>
+            )}
+            {buyConfig.method === 'money' && (
+              <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
+                Вы будете перенаправлены на страницу оплаты.
+              </p>
+            )}
+            {buyConfig.method === 'yad' && (
+              <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
+                Сумма будет списана с баланса ЯД.
+              </p>
+            )}
+          </>
         )}
       </Modal>
     </Card>

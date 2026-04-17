@@ -13,9 +13,10 @@ export function Card({ children, className = '', title, subtitle, action, glow }
   return (
     <div
       className={[
-        'rounded-xl border bg-white shadow-sm',
-        'dark:bg-surface-900 dark:border-surface-700 dark:shadow-card',
-        glow ? 'dark:shadow-glow-sm dark:border-primary-900/60' : '',
+        'rounded-2xl border bg-white shadow-elevation-1 transition-all duration-200',
+        'hover:-translate-y-0.5 hover:shadow-elevation-2',
+        'dark:bg-surface-900 dark:border-surface-700 dark:shadow-card dark:hover:shadow-card-lg',
+        glow ? 'dark:shadow-glow-sm dark:border-primary-900/60 dark:hover:shadow-glow-md' : '',
         className,
       ].join(' ')}
     >
@@ -51,9 +52,10 @@ export function StatCard({ label, value, sub, icon, accent }: StatCardProps) {
   return (
     <div
       className={[
-        'rounded-xl border p-4 sm:p-6',
-        'bg-white dark:bg-surface-900 dark:border-surface-700 dark:shadow-card',
-        accent ? 'dark:border-primary-900/60 dark:shadow-glow-sm' : '',
+        'rounded-2xl border p-4 sm:p-6 transition-all duration-200',
+        'bg-white shadow-elevation-1 hover:-translate-y-0.5 hover:shadow-elevation-2',
+        'dark:bg-surface-900 dark:border-surface-700 dark:shadow-card dark:hover:shadow-card-lg',
+        accent ? 'dark:border-primary-900/60 dark:shadow-glow-sm dark:hover:shadow-glow-md' : '',
       ].join(' ')}
     >
       <div className="flex items-start justify-between gap-3">

@@ -56,7 +56,7 @@ export function Navbar() {
         {profile && (
           <Link
             to="/shop"
-            className="flex items-center gap-1.5 rounded-lg border border-primary-900/40 bg-primary-500/5 px-3 py-1.5 transition-colors hover:bg-primary-500/10"
+            className="flex items-center gap-1.5 rounded-xl border border-primary-900/40 bg-primary-500/5 px-3 py-1.5 transition-all hover:bg-primary-500/10 hover:scale-[1.03] active:scale-[0.97]"
             title="Перейти в магазин ЯД"
           >
             <Icon name="skull" size={16} className="text-primary-500" />

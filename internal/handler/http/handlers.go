@@ -1381,10 +1381,22 @@ func (h *ShopHandler) BuySubscription(c *gin.Context) {
 	})
 }
 
-// POST /api/shop/buy-device-expansion  (YAD payment — adds +1 device)
+// POST /api/shop/buy-device-expansion  (YAD payment — adds +1 or +3 devices)
 func (h *ShopHandler) BuyDeviceExpansion(c *gin.Context) {
+	var req struct {
+		Quantity int `json:"quantity"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	if req.Quantity == 0 {
+		req.Quantity = 1
+	}
+	if req.Quantity != 1 && req.Quantity != 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "количество должно быть 1 или 3"})
+		return
+	}
+
 	userID := middleware.CurrentUserID(c)
-	expansion, err := h.eco.BuyDeviceExpansion(c.Request.Context(), userID)
+	expansion, err := h.eco.BuyDeviceExpansion(c.Request.Context(), userID, req.Quantity)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1400,18 +1412,26 @@ func (h *ShopHandler) BuyDeviceExpansion(c *gin.Context) {
 
 type buyDeviceExpansionMoneyRequest struct {
 	ReturnURL string `json:"return_url"`
+	Quantity  int    `json:"quantity"`
 }
 
-// POST /api/shop/buy-device-expansion-money  (Platega payment — adds +1 device)
+// POST /api/shop/buy-device-expansion-money  (Platega payment — adds +1 or +3 devices)
 func (h *ShopHandler) BuyDeviceExpansionMoney(c *gin.Context) {
 	var req buyDeviceExpansionMoneyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.Quantity == 0 {
+		req.Quantity = 1
+	}
+	if req.Quantity != 1 && req.Quantity != 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "количество должно быть 1 или 3"})
+		return
+	}
 
 	userID := middleware.CurrentUserID(c)
-	redirect, payment, err := h.subSvc.InitiateDeviceExpansionPayment(c.Request.Context(), userID, req.ReturnURL)
+	redirect, payment, err := h.subSvc.InitiateDeviceExpansionPayment(c.Request.Context(), userID, req.Quantity, req.ReturnURL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

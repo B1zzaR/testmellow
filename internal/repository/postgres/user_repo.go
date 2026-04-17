@@ -1651,6 +1651,16 @@ func (r *UserRepo) DeleteExpiredDeviceExpansions(ctx context.Context) (int64, er
 	return tag.RowsAffected(), nil
 }
 
+// DeleteDeviceExpansionsByUser removes all device expansion records for a user.
+// Used when a subscription expires to ensure expansions are fully reset.
+func (r *UserRepo) DeleteDeviceExpansionsByUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	tag, err := r.db.Exec(ctx, `DELETE FROM device_expansions WHERE user_id = $1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ExtendDeviceExpansion extends an existing active device expansion's expiry.
 func (r *UserRepo) ExtendDeviceExpansion(ctx context.Context, tx pgx.Tx, expansionID uuid.UUID, newExpiry time.Time) error {
 	_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1 WHERE id = $2`, newExpiry, expansionID)

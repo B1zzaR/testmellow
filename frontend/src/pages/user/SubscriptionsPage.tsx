@@ -249,6 +249,16 @@ export function SubscriptionsPage() {
       {/* Plan selector */}
       <Card title={activeSub ? 'Продлить подписку' : 'Выбрать тариф'}>
 
+        {/* Device expansion reset warning */}
+        {activeSub && (
+          <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-2.5">
+            <Icon name="info" size={14} className="shrink-0 text-yellow-500" />
+            <p className="text-xs text-yellow-600 dark:text-yellow-400">
+              При окончании подписки дополнительные устройства сбрасываются. При продлении их нужно приобрести заново.
+            </p>
+          </div>
+        )}
+
         {/* Active discount banner */}
         {discount > 0 && (
           <div className="mb-4 flex items-center gap-3 rounded-xl border border-primary-900/40 bg-primary-500/5 px-4 py-3">
