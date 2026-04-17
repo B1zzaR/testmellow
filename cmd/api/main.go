@@ -183,6 +183,7 @@ func main() {
 		api.POST("/shop/buy-device-expansion", shopH.BuyDeviceExpansion)
 		api.POST("/shop/buy-device-expansion-money", shopH.BuyDeviceExpansionMoney)
 		api.POST("/shop/extend-device-expansion", shopH.ExtendDeviceExpansion)
+		api.POST("/shop/extend-device-expansion-money", shopH.ExtendDeviceExpansionMoney)
 
 		api.GET("/devices", deviceH.List)
 		api.POST("/devices/:id/disconnect", deviceH.Disconnect)

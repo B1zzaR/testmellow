@@ -38,6 +38,7 @@ const (
 	QueuePaymentProcess          = "queue:payment:process"
 	QueueSubscriptionActivate    = "queue:subscription:activate"
 	QueueDeviceExpansionActivate = "queue:device_expansion:activate"
+	QueueDeviceExpansionExtend   = "queue:device_expansion:extend"
 	QueueReferralReward          = "queue:referral:reward"
 	QueueReferralPayout          = "queue:referral:payout"
 	QueueNotifyTelegram          = "queue:notify:telegram"
@@ -66,6 +67,11 @@ type DeviceExpansionActivateJob struct {
 	PaymentID     string `json:"payment_id"`
 	AmountKopecks int64  `json:"amount_kopecks"`
 	Quantity      int    `json:"quantity"`
+}
+
+type DeviceExpansionExtendJob struct {
+	UserID    string `json:"user_id"`
+	PaymentID string `json:"payment_id"`
 }
 
 type ReferralRewardJob struct {
@@ -129,6 +135,7 @@ func (w *Worker) Run(ctx context.Context) {
 	go w.loop(ctx, QueuePaymentProcess, w.handlePaymentProcess)
 	go w.loop(ctx, QueueSubscriptionActivate, w.handleSubscriptionActivate)
 	go w.loop(ctx, QueueDeviceExpansionActivate, w.handleDeviceExpansionActivate)
+	go w.loop(ctx, QueueDeviceExpansionExtend, w.handleDeviceExpansionExtend)
 	go w.loop(ctx, QueueReferralReward, w.handleReferralReward)
 	go w.loop(ctx, QueueReferralPayout, w.handleReferralPayout)
 
@@ -302,6 +309,15 @@ func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error
 			}
 			if err := Enqueue(ctx, w.rdb, QueueDeviceExpansionActivate, activateJob); err != nil {
 				w.log.Error("failed to enqueue device expansion activation", zap.Error(err))
+			}
+		} else if domain.IsDeviceExpansionExtendPlan(domain.SubscriptionPlan(job.Plan)) {
+			// Device expansion extend payment — enqueue extension
+			extendJob := DeviceExpansionExtendJob{
+				UserID:    userID.String(),
+				PaymentID: txID.String(),
+			}
+			if err := Enqueue(ctx, w.rdb, QueueDeviceExpansionExtend, extendJob); err != nil {
+				w.log.Error("failed to enqueue device expansion extend", zap.Error(err))
 			}
 		} else {
 			// Subscription payment — enqueue subscription activation
@@ -619,6 +635,84 @@ func (w *Worker) handleDeviceExpansionActivate(ctx context.Context, payload stri
 			deviceWord = "устройств"
 		}
 		msg := fmt.Sprintf("✅ Расширение устройств активировано!\n+%d %s (всего +%d к базовому лимиту)\nДействует до конца подписки.", quantity, deviceWord, newExtra)
+		_ = Enqueue(ctx, w.rdb, QueueNotifyTelegram, NotifyTelegramJob{
+			TelegramID: *user.TelegramID,
+			Message:    msg,
+		})
+	}
+
+	return nil
+}
+
+// ─── Device Expansion Extend ──────────────────────────────────────────────────
+
+func (w *Worker) handleDeviceExpansionExtend(ctx context.Context, payload string) error {
+	var job DeviceExpansionExtendJob
+	if err := json.Unmarshal([]byte(payload), &job); err != nil {
+		return fmt.Errorf("unmarshal device expansion extend job: %w", err)
+	}
+
+	userID, err := uuid.Parse(job.UserID)
+	if err != nil {
+		return fmt.Errorf("invalid user id %q: %w", job.UserID, err)
+	}
+
+	idempKey := fmt.Sprintf("devexp:extended:%s", job.PaymentID)
+	isNew, err := w.anti.EnsureOnce(ctx, idempKey, 48*time.Hour)
+	if err != nil {
+		return err
+	}
+	if !isNew {
+		w.log.Info("duplicate device expansion extend, skipping",
+			zap.String("payment_id", job.PaymentID))
+		return nil
+	}
+
+	user, err := w.repo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return fmt.Errorf("user %s not found", job.UserID)
+	}
+
+	activeSub, err := w.repo.GetActiveSubscription(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
+		return fmt.Errorf("user %s has no active subscription", job.UserID)
+	}
+
+	existing, err := w.repo.GetActiveDeviceExpansion(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return fmt.Errorf("user %s has no active device expansion to extend", job.UserID)
+	}
+
+	tx, err := w.repo.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	w.log.Info("device expansion extended via payment",
+		zap.String("user_id", job.UserID),
+		zap.String("payment_id", job.PaymentID),
+		zap.Int("extra_devices", existing.ExtraDevices),
+		zap.Time("new_expires_at", activeSub.ExpiresAt),
+	)
+
+	if user.TelegramID != nil {
+		msg := fmt.Sprintf("✅ Расширение устройств продлено!\n+%d устройств до %s",
+			existing.ExtraDevices, activeSub.ExpiresAt.Format("02.01.2006"))
 		_ = Enqueue(ctx, w.rdb, QueueNotifyTelegram, NotifyTelegramJob{
 			TelegramID: *user.TelegramID,
 			Message:    msg,

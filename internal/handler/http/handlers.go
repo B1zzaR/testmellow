@@ -1443,6 +1443,29 @@ func (h *ShopHandler) ExtendDeviceExpansion(c *gin.Context) {
 	})
 }
 
+// POST /api/shop/extend-device-expansion-money  (Platega payment — extends expansion expiry)
+func (h *ShopHandler) ExtendDeviceExpansionMoney(c *gin.Context) {
+	var req buyDeviceExpansionMoneyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	redirect, payment, err := h.subSvc.InitiateDeviceExpansionExtendPayment(c.Request.Context(), userID, req.ReturnURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"payment_id":   payment.ID,
+		"redirect_url": redirect,
+		"amount_rub":   float64(payment.AmountKopecks) / 100,
+		"expires_in":   "15 minutes",
+	})
+}
+
 // ─── Device Handler ───────────────────────────────────────────────────────────
 
 type DeviceHandler struct {

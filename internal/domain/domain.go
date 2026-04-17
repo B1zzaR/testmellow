@@ -337,9 +337,17 @@ const (
 // PlanDeviceExpansion is a pseudo-plan used for Platega device-expansion payments.
 const PlanDeviceExpansion SubscriptionPlan = "device_expansion"
 
+// PlanDeviceExpansionExtend is a pseudo-plan for extending existing device expansion via Platega.
+const PlanDeviceExpansionExtend SubscriptionPlan = "device_expansion_extend"
+
 // IsDeviceExpansionPlan returns true when the plan represents a device expansion purchase.
 func IsDeviceExpansionPlan(plan SubscriptionPlan) bool {
 	return plan == PlanDeviceExpansion
+}
+
+// IsDeviceExpansionExtendPlan returns true when the plan represents a device expansion extension.
+func IsDeviceExpansionExtendPlan(plan SubscriptionPlan) bool {
+	return plan == PlanDeviceExpansionExtend
 }
 
 // DeviceExpansionQuantity returns how many extra devices a device-expansion plan grants.

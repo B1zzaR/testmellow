@@ -581,6 +581,106 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 	return platResp.Redirect, payment, nil
 }
 
+// InitiateDeviceExpansionExtendPayment creates a Platega payment for extending
+// an existing device expansion to match the current subscription's expiry.
+func (s *SubscriptionService) InitiateDeviceExpansionExtendPayment(ctx context.Context, userID uuid.UUID, returnURL string) (string, *domain.Payment, error) {
+	activeSub, err := s.repo.GetActiveSubscription(ctx, userID)
+	if err != nil {
+		return "", nil, err
+	}
+	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
+		return "", nil, errors.New("у вас нет активной подписки")
+	}
+
+	existing, err := s.repo.GetActiveDeviceExpansion(ctx, userID)
+	if err != nil {
+		return "", nil, err
+	}
+	if existing == nil {
+		return "", nil, errors.New("нет активного расширения устройств")
+	}
+	if !existing.ExpiresAt.Before(activeSub.ExpiresAt) {
+		return "", nil, errors.New("расширение уже действует до конца подписки")
+	}
+
+	settings, err := s.repo.GetPlatformSettings(ctx)
+	if err != nil {
+		return "", nil, fmt.Errorf("ошибка server config: %w", err)
+	}
+	if settings != nil && settings.BlockRealMoneyPurchases {
+		return "", nil, errors.New("покупки за деньги временно заблокированы администратором")
+	}
+
+	plan := domain.PlanDeviceExpansionExtend
+	priceKopecks := domain.DeviceExpansionExtensionPriceKopecks(activeSub.Plan)
+	if priceKopecks == 0 {
+		return "", nil, errors.New("продление для данного тарифа недоступно")
+	}
+	description := fmt.Sprintf("Продление расширения устройств (+%d)", existing.ExtraDevices)
+
+	existingPayment, err := s.repo.GetPendingPaymentByPlan(ctx, userID, plan)
+	if err == nil && existingPayment != nil {
+		return existingPayment.RedirectURL, existingPayment, nil
+	}
+
+	if err := s.anti.CheckAPIRateLimit(ctx, userID.String(), "device_extend_payment_init", 5, time.Hour); err != nil {
+		return "", nil, err
+	}
+
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return "", nil, errors.New("пользователь не найден")
+	}
+
+	amountRubles := float64(priceKopecks) / 100.0
+
+	platResp, err := s.platega.CreatePayment(ctx, platega.CreatePaymentRequest{
+		PaymentMethod: platega.MethodSBPQR,
+		PaymentDetails: platega.PaymentDetails{
+			Amount:   amountRubles,
+			Currency: "RUB",
+		},
+		Description: description,
+		Return:      returnURL,
+		Payload:     userID.String(),
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("initiate device expansion extend payment: %w", err)
+	}
+
+	txID, err := uuid.Parse(platResp.TransactionID)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid platega transaction id: %w", err)
+	}
+
+	expiresAt := time.Now().Add(15 * time.Minute)
+	payment := &domain.Payment{
+		ID:             txID,
+		UserID:         userID,
+		AmountKopecks:  priceKopecks,
+		Currency:       "RUB",
+		Status:         domain.PaymentStatusPending,
+		Plan:           plan,
+		PaymentMethod:  platega.MethodSBPQR,
+		PlategaPayload: userID.String(),
+		RedirectURL:    platResp.Redirect,
+		ExpiresAt:      &expiresAt,
+		Idempotency:    platResp.TransactionID,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	if err := s.repo.CreatePayment(ctx, payment); err != nil {
+		return "", nil, fmt.Errorf("store device expansion extend payment: %w", err)
+	}
+
+	s.log.Info("device expansion extend payment initiated",
+		zap.String("user_id", userID.String()),
+		zap.String("payment_id", txID.String()),
+		zap.Int64("amount_kopecks", priceKopecks),
+	)
+	return platResp.Redirect, payment, nil
+}
+
 // GetPendingPayments returns non-expired PENDING payments for a user.
 func (s *SubscriptionService) GetPendingPayments(ctx context.Context, userID uuid.UUID) ([]*domain.Payment, error) {
 	return s.repo.GetPendingPayments(ctx, userID)

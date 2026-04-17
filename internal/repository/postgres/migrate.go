@@ -434,6 +434,15 @@ ALTER TABLE device_expansions DROP CONSTRAINT IF EXISTS device_expansions_extra_
 ALTER TABLE device_expansions ADD CONSTRAINT device_expansions_extra_devices_check CHECK (extra_devices BETWEEN 1 AND 2);
 `,
 		},
+		{
+			version: "015_expand_payments_plan",
+			sql: `
+ALTER TABLE payments ALTER COLUMN plan TYPE VARCHAR(32);
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_plan_check;
+ALTER TABLE payments ADD CONSTRAINT payments_plan_check
+    CHECK (plan IN ('1week','1month','3months','device_expansion','device_expansion_extend'));
+`,
+		},
 	}
 
 	for _, m := range migrations {

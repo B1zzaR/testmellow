@@ -31,4 +31,9 @@ export const shopApi = {
     const res = await apiClient.post<{ message: string; extra_devices: number; expires_at: string; total_limit: number }>('/api/shop/extend-device-expansion', {})
     return res.data
   },
+
+  extendDeviceExpansionMoney: async (returnUrl: string): Promise<{ payment_id: string; redirect_url: string; amount_rub: number; expires_in: string }> => {
+    const res = await apiClient.post<{ payment_id: string; redirect_url: string; amount_rub: number; expires_in: string }>('/api/shop/extend-device-expansion-money', { return_url: returnUrl })
+    return res.data
+  },
 }

@@ -47,7 +47,7 @@ export function DeviceList({ data, isTrial = false, subscriptionPlan, subscripti
   const [showInactive, setShowInactive] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [buyMethod, setBuyMethod] = useState<'yad' | 'money' | null>(null)
-  const [showExtendConfirm, setShowExtendConfirm] = useState(false)
+  const [extendMethod, setExtendMethod] = useState<'yad' | 'money' | null>(null)
 
   const disconnectMutation = useMutation({
     mutationFn: (id: string) => devicesApi.disconnect(id),
@@ -100,12 +100,25 @@ export function DeviceList({ data, isTrial = false, subscriptionPlan, subscripti
       queryClient.invalidateQueries({ queryKey: ['balance'] })
       setSuccessMsg('Расширение устройств продлено!')
       setErrorMsg('')
-      setShowExtendConfirm(false)
+      setExtendMethod(null)
     },
     onError: (e: Error) => {
       setErrorMsg(e.message)
       setSuccessMsg('')
-      setShowExtendConfirm(false)
+      setExtendMethod(null)
+    },
+  })
+
+  const extendExpansionMoneyMutation = useMutation({
+    mutationFn: () => shopApi.extendDeviceExpansionMoney(window.location.href),
+    onSuccess: (data) => {
+      setExtendMethod(null)
+      window.location.href = data.redirect_url
+    },
+    onError: (e: Error) => {
+      setErrorMsg(e.message)
+      setSuccessMsg('')
+      setExtendMethod(null)
     },
   })
 
@@ -273,7 +286,15 @@ export function DeviceList({ data, isTrial = false, subscriptionPlan, subscripti
               <Button
                 className="flex-1"
                 size="sm"
-                onClick={() => setShowExtendConfirm(true)}
+                onClick={() => setExtendMethod('money')}
+              >
+                {extensionPrices.rub}₽
+              </Button>
+              <Button
+                className="flex-1"
+                size="sm"
+                variant="secondary"
+                onClick={() => setExtendMethod('yad')}
               >
                 {extensionPrices.yad} ЯД
               </Button>
@@ -377,29 +398,47 @@ export function DeviceList({ data, isTrial = false, subscriptionPlan, subscripti
 
       {/* Extend expansion confirmation modal */}
       <Modal
-        open={showExtendConfirm}
-        onClose={() => setShowExtendConfirm(false)}
+        open={extendMethod !== null}
+        onClose={() => setExtendMethod(null)}
         title="Продление расширения устройств"
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={() => setShowExtendConfirm(false)}>
+            <Button variant="secondary" size="sm" onClick={() => setExtendMethod(null)}>
               Отмена
             </Button>
             <Button
               size="sm"
-              loading={extendExpansionMutation.isPending}
-              onClick={() => extendExpansionMutation.mutate()}
+              loading={extendExpansionMutation.isPending || extendExpansionMoneyMutation.isPending}
+              onClick={() => {
+                if (!extendMethod) return
+                if (extendMethod === 'yad') extendExpansionMutation.mutate()
+                if (extendMethod === 'money') extendExpansionMoneyMutation.mutate()
+              }}
             >
-              Продлить
+              {extendMethod === 'money' ? 'Оплатить' : 'Продлить'}
             </Button>
           </>
         }
       >
-        {expansion && extensionPrices && (
-          <p className="text-sm text-gray-600 dark:text-slate-400">
-            Продлить +{expansion.extra_devices} {expansion.extra_devices === 1 ? 'устройство' : 'устройства'} до конца подписки за{' '}
-            <strong className="text-primary-500">{extensionPrices.yad} ЯД</strong>?
-          </p>
+        {expansion && extensionPrices && extendMethod && (
+          <>
+            <p className="text-sm text-gray-600 dark:text-slate-400">
+              Продлить +{expansion.extra_devices} {expansion.extra_devices === 1 ? 'устройство' : 'устройства'} до конца подписки за{' '}
+              <strong className="text-primary-500">
+                {extendMethod === 'money' ? `${extensionPrices.rub}₽` : `${extensionPrices.yad} ЯД`}
+              </strong>?
+            </p>
+            {extendMethod === 'money' && (
+              <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
+                Вы будете перенаправлены на страницу оплаты.
+              </p>
+            )}
+            {extendMethod === 'yad' && (
+              <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
+                Сумма будет списана с баланса ЯД.
+              </p>
+            )}
+          </>
         )}
       </Modal>
     </Card>
