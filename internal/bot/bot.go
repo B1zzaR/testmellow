@@ -211,7 +211,7 @@ func (b *Bot) registerHandlers() {
 
 // ─── Brand helpers ────────────────────────────────────────────────────────────
 
-const brandLine = "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+const brandLine = "━━━━━━━━━━━━━━━━━━━━━"
 
 func mainMenuText(user *domain.User, tgID int64, username string) string {
 	name := username
@@ -225,12 +225,11 @@ func mainMenuText(user *domain.User, tgID int64, username string) string {
 	return fmt.Sprintf(
 		"*MelloVPN* 🐍\n"+brandLine+"\n\n"+
 			"Привет, *%s* 👋\n\n"+
-			"◽ Баланс: *%d ЯД* (~%.0f ₽)\n"+
-			"◽ ID: `%d`%s\n\n"+
+			"🧪 Баланс: *%d ЯД*\n"+
+			"🆔 ID: `%d`%s\n\n"+
 			brandLine+"\nВыбери действие ↓",
 		name,
 		user.YADBalance,
-		float64(user.YADBalance)*2.5,
 		tgID,
 		adminLine,
 	)
@@ -360,12 +359,11 @@ func (b *Bot) handleStart(c tele.Context) error {
 	}
 	_ = c.Send(
 		fmt.Sprintf(
-			"*Добро пожаловать в MelloVPN* 🐍\n"+brandLine+"\n\n"+
-				"Привет, *%s*! Аккаунт создан.\n\n"+
-				"◽ Попробуйте VPN бесплатно — пробный период\n"+
-				"◽ Тарифы от *40 ₽/неделю*\n"+
-				"◽ Приглашайте друзей — *15%%* бонус с платежей\n\n"+
-				"Выберите действие в меню ↓",
+			"🐍 *Добро пожаловать в MelloVPN!*\n"+brandLine+"\n\n"+
+				"Привет, *%s*! 🎉 Аккаунт создан.\n\n"+
+				"🆓  Попробуйте VPN бесплатно\n"+
+				"💰  Тарифы от *40 ₽/неделю*\n\n"+
+				"_Выберите действие в меню ↓_",
 			name,
 		),
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
@@ -398,15 +396,12 @@ func (b *Bot) handleBalance(c tele.Context) error {
 
 	return c.Send(fmt.Sprintf(
 		"*💰 Кошелёк*\n"+brandLine+"\n\n"+
-			"Баланс: *%d ЯД* (~%.0f ₽)\n"+
-			"Курс: 1 ЯД ≈ 2.5 ₽\n\n"+
+			"🧪 Баланс: *%d ЯД*\n\n"+
 			brandLine+"\n"+
 			"*Как заработать ЯД:*\n"+
-			"◽ Приглашайте друзей — *15%%* с платежей\n"+
 			"◽ Покупайте подписки — бонус ЯД\n"+
 			"◽ Используйте промокоды",
 		user.YADBalance,
-		float64(user.YADBalance)*2.5,
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
@@ -434,16 +429,16 @@ func (b *Bot) handleBuy(c tele.Context) error {
 	)
 
 	return c.Send(fmt.Sprintf(
-		"*🛒 Купить VPN*\n"+brandLine+"\n\n"+
-			"*Рублями (СБП):*\n"+
-			"◽ 1 неделя — 40 ₽ (+%d ЯД бонус)\n"+
-			"◽ 1 месяц — 100 ₽ (+%d ЯД бонус)\n"+
-			"◽ 3 месяца — 270 ₽ (+%d ЯД бонус)\n\n"+
-			"*За ЯД (моментально):*\n"+
-			"◽ 1 неделя — %d ЯД\n"+
-			"◽ 1 месяц — %d ЯД\n"+
-			"◽ 3 месяца — %d ЯД\n\n"+
-			brandLine+"\nБаланс: *%d ЯД* · Без автопродления",
+		"🛒 *Купить VPN*\n"+brandLine+"\n\n"+
+			"💳 *Рублями (СБП):*\n"+
+			"  ▸ 1 неделя — *40 ₽* (+%d ЯД)\n"+
+			"  ▸ 1 месяц — *100 ₽* (+%d ЯД)\n"+
+			"  ▸ 3 месяца — *270 ₽* (+%d ЯД)\n\n"+
+			"🧪 *За ЯД (моментально):*\n"+
+			"  ▸ 1 неделя — *%d ЯД*\n"+
+			"  ▸ 1 месяц — *%d ЯД*\n"+
+			"  ▸ 3 месяца — *%d ЯД*\n\n"+
+			brandLine+"\n🧪 Баланс: *%d ЯД*  ·  _Без автопродления_",
 		domain.PlanYADBonus(domain.PlanWeek),
 		domain.PlanYADBonus(domain.PlanMonth),
 		domain.PlanYADBonus(domain.PlanThreeMonth),
@@ -473,12 +468,12 @@ func (b *Bot) handleBuyRubles(plan domain.SubscriptionPlan) tele.HandlerFunc {
 		rm.Inline(rm.Row(btnPay), rm.Row(backBtn(rm)))
 
 		return c.Send(fmt.Sprintf(
-			"*Оплата подписки*\n"+brandLine+"\n\n"+
-				"Тариф: *%s*\n"+
-				"Сумма: *%.0f ₽*\n"+
-				"Платёж: `%s`\n\n"+
-				"Нажмите кнопку для перехода к оплате.\n"+
-				"_Ссылка действительна 15 минут._",
+			"💳 *Оплата подписки*\n"+brandLine+"\n\n"+
+				"📦  Тариф: *%s*\n"+
+				"💰  Сумма: *%.0f ₽*\n"+
+				"🔖  Платёж: `%s`\n\n"+
+				"_Нажмите кнопку для перехода к оплате._\n"+
+				"_⏱ Ссылка действительна 15 минут._",
 			planName(plan),
 			float64(payment.AmountKopecks)/100,
 			payment.ID.String(),
@@ -510,11 +505,11 @@ func (b *Bot) handleBuyYAD(plan domain.SubscriptionPlan) tele.HandlerFunc {
 		rm.Inline(rm.Row(btnVPN), rm.Row(backBtn(rm)))
 
 		return c.Send(fmt.Sprintf(
-			"*✅ Подписка активирована*\n"+brandLine+"\n\n"+
-				"Тариф: *%s*\n"+
-				"Действует до: `%s`\n"+
-				"Оплачено: *%d ЯД*\n\n"+
-				"Подключите VPN через кнопку ниже.",
+			"🎉 *Подписка активирована!*\n"+brandLine+"\n\n"+
+				"📦  Тариф: *%s*\n"+
+				"📅  До: `%s`\n"+
+				"🧪  Оплачено: *%d ЯД*\n\n"+
+				"_Подключите VPN через кнопку ниже_ 👇",
 			planName(sub.Plan),
 			sub.ExpiresAt.Format("02.01.2006 15:04"),
 			domain.PlanYADPrice(plan),
@@ -539,35 +534,35 @@ func (b *Bot) handleMySubs(c tele.Context) error {
 		btnTrial := rm.Data("🆓 Пробный период", "menu_trial")
 		rm.Inline(rm.Row(btnBuy, btnTrial), rm.Row(backBtn(rm)))
 		return c.Send(
-			"*📋 Мои подписки*\n"+brandLine+"\n\n"+
-				"У вас нет активных подписок.\n"+
-				"Попробуйте пробный период или купите тариф.",
+			"📋 *Мои подписки*\n"+brandLine+"\n\n"+
+				"❌  Активных подписок нет.\n\n"+
+				"_Попробуйте пробный период или купите тариф._",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
 
-	msg := "*📋 Мои подписки*\n" + brandLine + "\n"
+	msg := "📋 *Мои подписки*\n" + brandLine + "\n"
 	for i, sub := range subs {
-		status := "● активна"
+		status := "🟢 активна"
 		switch sub.Status {
 		case domain.SubStatusExpired:
-			status = "○ истекла"
+			status = "🔴 истекла"
 		case domain.SubStatusTrial:
-			status = "◎ пробная"
+			status = "🟡 пробная"
 		case domain.SubStatusCanceled:
-			status = "○ отменена"
+			status = "⚫ отменена"
 		}
 		daysLeft := int(time.Until(sub.ExpiresAt).Hours() / 24)
 		daysStr := ""
 		if sub.Status == domain.SubStatusActive || sub.Status == domain.SubStatusTrial {
 			if daysLeft > 0 {
-				daysStr = fmt.Sprintf(" · %d дн.", daysLeft)
+				daysStr = fmt.Sprintf(" · ⦇ %d дн.", daysLeft)
 			} else {
-				daysStr = " · _истекает_"
+				daysStr = " · _истекает сегодня_"
 			}
 		}
 		msg += fmt.Sprintf(
-			"\n%d. *%s* — %s%s\n    до `%s`\n",
+			"\n  *%d.* *%s* — %s%s\n      📅 до `%s`\n",
 			i+1, planName(sub.Plan), status, daysStr,
 			sub.ExpiresAt.Format("02.01.2006"),
 		)
@@ -593,9 +588,9 @@ func (b *Bot) handlePromo(c tele.Context) error {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(
-			"*🎟 Промокод*\n"+brandLine+"\n\n"+
-				"Формат: `/promo КОД`\n"+
-				"Пример: `/promo SUMMER2024`",
+			"🎟 *Промокод*\n"+brandLine+"\n\n"+
+				"✉️  Формат: `/promo КОД`\n"+
+				"📝  Пример: `/promo SUMMER2024`",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
@@ -621,9 +616,8 @@ func (b *Bot) handlePromo(c tele.Context) error {
 
 	return c.Send(fmt.Sprintf(
 		"*✅ Промокод активирован*\n"+brandLine+"\n\n"+
-			"Начислено: *%d ЯД* (~%.0f ₽)",
+			"🧪 Начислено: *%d ЯД*",
 		promo.YADAmount,
-		float64(promo.YADAmount)*2.5,
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
@@ -648,12 +642,9 @@ func (b *Bot) handleReferral(c tele.Context) error {
 	rm.Inline(rm.Row(btnShare), rm.Row(backBtn(rm)))
 
 	return c.Send(fmt.Sprintf(
-		"*👥 Рефералы*\n"+brandLine+"\n\n"+
-			"Ваша ссылка:\n`%s`\n\n"+
-			"Приглашено: *%d* чел.\n\n"+
-			"Друг покупает подписку → вы получаете *15%%* в ЯД\n"+
-			"◽ 30%% — сразу после оплаты\n"+
-			"◽ 70%% — через 30 дней",
+		"👥 *Рефералы*\n"+brandLine+"\n\n"+
+			"🔗  Ваша ссылка:\n`%s`\n\n"+
+			"👤  Приглашено: *%d* чел.",
 		referralLink, len(refs),
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
@@ -671,12 +662,12 @@ func (b *Bot) handleTrial(c tele.Context) error {
 	rm.Inline(rm.Row(btnSite), rm.Row(backBtn(rm)))
 
 	return c.Send(
-		"*🆓 Пробный период*\n"+brandLine+"\n\n"+
-			"Попробуйте VPN бесплатно:\n"+
-			"1. Зарегистрируйтесь на сайте\n"+
-			"2. Перейдите в «Подписки»\n"+
-			"3. Нажмите «Активировать пробный период»\n\n"+
-			"_Без оплаты · Без привязки карты_",
+		"🆓 *Пробный период*\n"+brandLine+"\n\n"+
+			"Попробуйте VPN бесплатно:\n\n"+
+			"  1️⃣  Зарегистрируйтесь на сайте\n"+
+			"  2️⃣  Перейдите в «Подписки»\n"+
+			"  3️⃣  Нажмите «Активировать»\n\n"+
+			"🔓 _Без оплаты · Без привязки карты_",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 	)
 }
@@ -733,9 +724,9 @@ func (b *Bot) handleNewTicket(c tele.Context) error {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(
-			"*✏️ Создать тикет*\n"+brandLine+"\n\n"+
-				"Формат: `/newticket Тема сообщения`\n\n"+
-				"Пример:\n`/newticket Не подключается VPN на iPhone`",
+			"✏️ *Создать тикет*\n"+brandLine+"\n\n"+
+				"✉️  Формат: `/newticket Тема сообщения`\n\n"+
+				"📝  Пример:\n`/newticket Не подключается VPN на iPhone`",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
@@ -780,10 +771,10 @@ func (b *Bot) handleNewTicket(c tele.Context) error {
 	rm := &tele.ReplyMarkup{}
 	rm.Inline(rm.Row(backBtn(rm)))
 	return c.Send(fmt.Sprintf(
-		"*✅ Тикет создан*\n"+brandLine+"\n\n"+
-			"Тема: *%s*\n"+
-			"ID: `%s`\n\n"+
-			"Ответ придёт в тикет — проверяйте через /ticket",
+		"✅ *Тикет создан!*\n"+brandLine+"\n\n"+
+			"📌  Тема: *%s*\n"+
+			"🔖  ID: `%s`\n\n"+
+			"_Ответ придёт в тикет — проверяйте через_ /ticket",
 		subject, ticket.ID.String()[:8],
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
@@ -826,9 +817,9 @@ func (b *Bot) handleDevices(c tele.Context) error {
 		rm.Inline(rows...)
 
 		msg := fmt.Sprintf(
-			"*📱 Устройства*\n"+brandLine+"\n\n"+
-				"Нет подключённых устройств.\n"+
-				"Лимит: *%d*", limit)
+			"📱 *Устройства*\n"+brandLine+"\n\n"+
+				"❌  Нет подключённых устройств.\n"+
+				"🔒  Лимит: *%d*", limit)
 		if expansion != nil {
 			msg += fmt.Sprintf(" (включая +%d)", expansion.ExtraDevices)
 		}
@@ -836,10 +827,10 @@ func (b *Bot) handleDevices(c tele.Context) error {
 	}
 
 	activeCount := 0
-	msg := "*📱 Устройства*\n" + brandLine + "\n\n"
+	msg := "📱 *Устройства*\n" + brandLine + "\n\n"
 	for idx, d := range devices {
 		blocked := idx >= limit
-		status := "●"
+		status := "🟢"
 		suffix := ""
 		if blocked {
 			status = "🔒"
@@ -847,11 +838,11 @@ func (b *Bot) handleDevices(c tele.Context) error {
 		} else if d.IsActive {
 			activeCount++
 		} else {
-			status = "○"
+			status = "⚪"
 		}
-		msg += fmt.Sprintf("%s `%s`%s\n", status, d.DeviceName, suffix)
+		msg += fmt.Sprintf("  %s `%s`%s\n", status, d.DeviceName, suffix)
 	}
-	msg += fmt.Sprintf("\n%d / %d активных", activeCount, limit)
+	msg += fmt.Sprintf("\n📊  %d / %d активных", activeCount, limit)
 	if expansion != nil {
 		msg += fmt.Sprintf("\n+%d расширение · до `%s`",
 			expansion.ExtraDevices, expansion.ExpiresAt.Format("02.01.2006"))
@@ -913,12 +904,13 @@ func (b *Bot) handleBuyDevice(c tele.Context) error {
 
 	newTotal := domain.DeviceMaxPerUser + currentExtra + 1
 	return c.Send(fmt.Sprintf(
-		"*➕ Купить устройство*\n"+brandLine+"\n\n"+
-			"Расширение: *+%d / %d*\n"+
-			"После покупки: до *%d* устройств\n"+
-			"Действует до конца подписки\n\n"+
-			"Цена: *%d ₽* или *%d ЯД*\n"+
-			"Баланс: *%d ЯД*",
+		"➕ *Купить устройство*\n"+brandLine+"\n\n"+
+			"📱  Расширение: *+%d / %d*\n"+
+			"📈  После покупки: до *%d* устройств\n"+
+			"⏳  Действует до конца подписки\n\n"+
+			brandLine+"\n"+
+			"💰  Цена: *%d ₽* или *%d ЯД*\n"+
+			"💎  Баланс: *%d ЯД*",
 		currentExtra, domain.DeviceExpansionMaxExtra,
 		newTotal,
 		domain.DeviceExpansionPriceKopecks/100, domain.DeviceExpansionPriceYAD,
@@ -956,12 +948,13 @@ func (b *Bot) handleExtendDevices(c tele.Context) error {
 	rm.Inline(rm.Row(btnConfirm), rm.Row(backBtn(rm)))
 
 	return c.Send(fmt.Sprintf(
-		"*⏳ Продление расширения*\n"+brandLine+"\n\n"+
-			"Устройства: +%d\n"+
-			"Текущий срок: до `%s`\n"+
-			"Новый срок: до `%s`\n\n"+
-			"Цена: *%d ЯД*\n"+
-			"Баланс: *%d ЯД*",
+		"⏳ *Продление расширения*\n"+brandLine+"\n\n"+
+			"📱  Устройства: +%d\n"+
+			"📅  Текущий срок: до `%s`\n"+
+			"📆  Новый срок: до `%s`\n\n"+
+			brandLine+"\n"+
+			"💎  Цена: *%d ЯД*\n"+
+			"💎  Баланс: *%d ЯД*",
 		expansion.ExtraDevices,
 		expansion.ExpiresAt.Format("02.01.2006"),
 		activeSub.ExpiresAt.Format("02.01.2006"),
@@ -986,9 +979,9 @@ func (b *Bot) handleTraffic(c tele.Context) error {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(
-			"*📊 Трафик*\n"+brandLine+"\n\n"+
-				"Нет данных — VPN не настроен.\n"+
-				"Сначала подключите VPN через «Мои подписки».",
+			"📊 *Трафик*\n"+brandLine+"\n\n"+
+				"❌  Нет данных — VPN не настроен.\n\n"+
+				"_Подключите VPN через «Мои подписки»._",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
@@ -1017,10 +1010,10 @@ func (b *Bot) handleTraffic(c tele.Context) error {
 	}
 
 	return c.Send(fmt.Sprintf(
-		"*📊 Трафик*\n"+brandLine+"\n\n"+
-			"Использовано: *%s*%s\n"+
-			"Лимит: *%s*\n"+
-			"За всё время: *%s*",
+		"📊 *Трафик*\n"+brandLine+"\n\n"+
+			"⬆️  Использовано: *%s*%s\n"+
+			"📎  Лимит: *%s*\n"+
+			"🌐  За всё время: *%s*",
 		formatBytes(used), percentStr,
 		limitStr,
 		formatBytes(lifetime),
@@ -1041,12 +1034,12 @@ func (b *Bot) handleHistory(c tele.Context) error {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(
-			"*📜 История ЯД*\n"+brandLine+"\n\nТранзакций нет.",
+			"📜 *История ЯД*\n"+brandLine+"\n\n❌  Транзакций нет.",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
 
-	msg := "*📜 История ЯД*\n" + brandLine + "\n\n"
+	msg := "📜 *История ЯД*\n" + brandLine + "\n\n"
 	for _, tx := range txs {
 		sign := "+"
 		if tx.Delta < 0 {
@@ -1054,12 +1047,12 @@ func (b *Bot) handleHistory(c tele.Context) error {
 		}
 		txType := yadTxTypeName(tx.TxType)
 		msg += fmt.Sprintf(
-			"◽ %s*%d* ЯД — %s\n    `%s`\n",
+			"  ▸ %s*%d* ЯД — %s\n      `%s`\n",
 			sign, tx.Delta, txType,
 			tx.CreatedAt.Format("02.01 15:04"),
 		)
 	}
-	msg += fmt.Sprintf("\nБаланс: *%d ЯД*", user.YADBalance)
+	msg += fmt.Sprintf("\n💎 Баланс: *%d ЯД*", user.YADBalance)
 
 	rm := &tele.ReplyMarkup{}
 	rm.Inline(rm.Row(backBtn(rm)))
@@ -1080,17 +1073,17 @@ func (b *Bot) handlePayments(c tele.Context) error {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(
-			"*💳 Платежи*\n"+brandLine+"\n\nНезавершённых платежей нет.",
+			"💳 *Платежи*\n"+brandLine+"\n\n✅  Незавершённых платежей нет.",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
 
-	msg := "*💳 Незавершённые платежи*\n" + brandLine + "\n\n"
+	msg := "💳 *Незавершённые платежи*\n" + brandLine + "\n\n"
 	rm := &tele.ReplyMarkup{}
 	var rows []tele.Row
 	for _, p := range payments {
 		msg += fmt.Sprintf(
-			"◽ *%s* — %.0f ₽\n    `%s` · до %s\n",
+			"  ▸ *%s* — %.0f ₽\n      `%s` · до %s\n",
 			planName(p.Plan),
 			float64(p.AmountKopecks)/100,
 			p.ID.String()[:8],
@@ -1129,10 +1122,10 @@ func (b *Bot) handleToggle2FA(c tele.Context) error {
 		status = "выключена ❌"
 	}
 	return c.Send(fmt.Sprintf(
-		"*🔐 Двухфакторная аутентификация*\n"+brandLine+"\n\n"+
-			"2FA: *%s*\n\n"+
-			"При входе на сайт вам придёт запрос\n"+
-			"на подтверждение в этот бот.",
+		"🔐 *Двухфакторная аутентификация*\n"+brandLine+"\n\n"+
+			"🛡  2FA: *%s*\n\n"+
+			"_При входе на сайт вам придёт запрос_\n"+
+			"_на подтверждение в этот бот._",
 		status,
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
@@ -1143,31 +1136,31 @@ func (b *Bot) handleHelp(c tele.Context) error {
 	rm := &tele.ReplyMarkup{}
 	rm.Inline(rm.Row(backBtn(rm)))
 	return c.Send(
-		"*❓ Помощь*\n"+brandLine+"\n\n"+
-			"*Подписка и VPN:*\n"+
-			"  /buy — купить подписку (₽ или ЯД)\n"+
-			"  /mysubs — список подписок\n"+
-			"  /trial — пробный период\n\n"+
-			"*Устройства:*\n"+
-			"  /devices — список устройств\n"+
-			"  /buydevice — купить +1 устройство\n"+
-			"  /extend — продлить расширение\n"+
-			"  /traffic — статистика трафика\n\n"+
-			"*Кошелёк:*\n"+
-			"  /balance — баланс ЯД\n"+
-			"  /history — история транзакций\n"+
-			"  /payments — незавершённые платежи\n"+
-			"  /referral — реферальная программа\n"+
-			"  /promo КОД — активировать промокод\n\n"+
-			"*Аккаунт:*\n"+
-			"  /resetpassword — сбросить пароль\n"+
-			"  /toggle2fa — вкл/выкл 2FA\n"+
-			"  /link КОД — привязать Telegram\n"+
-			"  /unlink — отвязать Telegram\n\n"+
-			"*Прочее:*\n"+
-			"  /ticket — поддержка\n"+
-			"  /newticket — создать тикет\n"+
-			"  /info — документы и контакты",
+		"❓ *Помощь*\n"+brandLine+"\n\n"+
+			"📦 *Подписка и VPN:*\n"+
+			"  ▸ /buy — купить подписку (₽ или ЯД)\n"+
+			"  ▸ /mysubs — список подписок\n"+
+			"  ▸ /trial — пробный период\n\n"+
+			"📱 *Устройства:*\n"+
+			"  ▸ /devices — список устройств\n"+
+			"  ▸ /buydevice — купить +1 устройство\n"+
+			"  ▸ /extend — продлить расширение\n"+
+			"  ▸ /traffic — статистика трафика\n\n"+
+			"💎 *Кошелёк:*\n"+
+			"  ▸ /balance — баланс ЯД\n"+
+			"  ▸ /history — история транзакций\n"+
+			"  ▸ /payments — незавершённые платежи\n"+
+			"  ▸ /referral — реферальная программа\n"+
+			"  ▸ /promo КОД — активировать промокод\n\n"+
+			"🔑 *Аккаунт:*\n"+
+			"  ▸ /resetpassword — сбросить пароль\n"+
+			"  ▸ /toggle2fa — вкл/выкл 2FA\n"+
+			"  ▸ /link КОД — привязать Telegram\n"+
+			"  ▸ /unlink — отвязать Telegram\n\n"+
+			"🎟 *Прочее:*\n"+
+			"  ▸ /ticket — поддержка\n"+
+			"  ▸ /newticket — создать тикет\n"+
+			"  ▸ /info — документы и контакты",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 	)
 }
@@ -1187,11 +1180,11 @@ func (b *Bot) handleInfo(c tele.Context) error {
 	rm.Inline(rm.Row(btnPrivacy), rm.Row(btnAgreement), rm.Row(btnSupport), rm.Row(backBtn(rm)))
 
 	return c.Send(
-		"*ℹ️ О сервисе MelloVPN*\n"+brandLine+"\n\n"+
-			"Протокол: VLESS/Reality\n"+
-			"Платформы: iOS, Android, Windows, macOS, Linux\n"+
-			"Без рекламы и трекеров\n\n"+
-			"Поддержка: @Mellow\\_support",
+		"ℹ️ *О сервисе MelloVPN*\n"+brandLine+"\n\n"+
+			"🔐  Протокол: VLESS/Reality\n"+
+			"📱  iOS, Android, Windows, macOS, Linux\n"+
+			"🚫  Без рекламы и трекеров\n\n"+
+			"💬  Поддержка: @Mellow\\_support",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 	)
 }
@@ -1202,9 +1195,10 @@ func (b *Bot) handleLink(c tele.Context) error {
 	args := strings.Fields(c.Message().Text)
 	if len(args) < 2 {
 		return c.Send(
-			"*🔗 Привязка аккаунта*\n"+brandLine+"\n\n"+
-				"Формат: `/link КОД`\n\n"+
-				"_Откройте сайт → Настройки → «Привязать Telegram» и скопируйте команду._",
+			"🔗 *Привязка аккаунта*\n"+brandLine+"\n\n"+
+				"✉️  Формат: `/link КОД`\n\n"+
+				"_Откройте сайт → Настройки → «Привязать Telegram»_\n"+
+				"_и скопируйте команду._",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 		)
 	}
@@ -1240,10 +1234,17 @@ func (b *Bot) handleLink(c tele.Context) error {
 	}
 
 	if existingUser != nil && existingUser.ID != userID {
-		if err := b.repo.SetTelegramID(ctx, existingUser.ID, nil); err != nil {
-			b.log.Error("handleLink: unlink telegram from old user", zap.Error(err))
-			return c.Send("Не удалось выполнить операцию — попробуйте позже.")
+		// Merge: transfer all data from the old (bot-created) account to the new (website) account
+		if err := b.repo.MergeUsers(ctx, existingUser.ID, userID); err != nil {
+			b.log.Error("handleLink: merge users", zap.Error(err),
+				zap.String("src", existingUser.ID.String()),
+				zap.String("dst", userID.String()))
+			return c.Send("Не удалось объединить аккаунты — попробуйте позже.")
 		}
+		b.log.Info("handleLink: merged accounts",
+			zap.String("src", existingUser.ID.String()),
+			zap.String("dst", userID.String()),
+			zap.Int64("tg_id", tgID))
 	}
 
 	if err := b.repo.SetTelegramID(ctx, userID, &tgID); err != nil {
@@ -1258,11 +1259,15 @@ func (b *Bot) handleLink(c tele.Context) error {
 		CreatedAt: time.Now(),
 	})
 
-	return c.Send(
-		"*✅ Telegram привязан*\n"+brandLine+"\n\n"+
-			"Теперь вы можете управлять подпиской прямо из бота.",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-	)
+	msg := "✅ *Telegram привязан!*\n" + brandLine + "\n\n" +
+		"🔗  Теперь вы можете управлять\nподпиской прямо из бота."
+	if existingUser != nil && existingUser.ID != userID {
+		msg = "✅ *Аккаунты объединены!*\n" + brandLine + "\n\n" +
+			"🔗  Telegram привязан к аккаунту сайта.\n" +
+			"💎  Баланс ЯД, подписки и история перенесены."
+	}
+
+	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown})
 }
 
 // ─── /unlink ──────────────────────────────────────────────────────────────────
@@ -1302,11 +1307,11 @@ func (b *Bot) handleUnlink(c tele.Context) error {
 	}
 
 	return c.Send(
-		"*🔓 Отвязка Telegram*\n"+brandLine+"\n\n"+
-			"Код: `"+code+"`\n\n"+
-			"Введите этот код на сайте:\n"+
+		"🔓 *Отвязка Telegram*\n"+brandLine+"\n\n"+
+			"🔑  Код: `"+code+"`\n\n"+
+			"💻  Введите этот код на сайте:\n"+
 			"*Настройки → Отвязать Telegram*\n\n"+
-			"_Код действителен 10 минут._",
+			"_⏱ Код действителен 10 минут._",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
 	)
 }
@@ -1369,9 +1374,9 @@ func (b *Bot) handleResetPassword(c tele.Context) error {
 	}
 
 	return c.Send(
-		"*🔑 Пароль сброшен*\n"+brandLine+"\n\n"+
-			"Логин: `"+loginName+"`\n"+
-			"Новый пароль: `"+newPw+"`\n\n"+
+		"🔑 *Пароль сброшен!*\n"+brandLine+"\n\n"+
+			"👤  Логин: `"+loginName+"`\n"+
+			"🔒  Новый пароль: `"+newPw+"`\n\n"+
 			"_Рекомендуем сменить пароль в настройках._\n"+
 			"_Все активные сессии завершены._",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
@@ -1506,9 +1511,9 @@ func (b *Bot) RegisterBuyCallbacks() {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(fmt.Sprintf(
-			"*✅ Расширение активировано*\n"+brandLine+"\n\n"+
-				"Устройства: +%d (до %d)\n"+
-				"Действует до: `%s`",
+			"🎉 *Расширение активировано!*\n"+brandLine+"\n\n"+
+				"📱  Устройства: +%d (до %d)\n"+
+				"📅  Действует до: `%s`",
 			expansion.ExtraDevices,
 			domain.DeviceMaxPerUser+expansion.ExtraDevices,
 			expansion.ExpiresAt.Format("02.01.2006"),
@@ -1536,10 +1541,10 @@ func (b *Bot) RegisterBuyCallbacks() {
 		rm.Inline(rm.Row(btnPay), rm.Row(backBtn(rm)))
 
 		return c.Send(fmt.Sprintf(
-			"*Оплата расширения*\n"+brandLine+"\n\n"+
-				"Сумма: *%.0f ₽*\n"+
-				"Платёж: `%s`\n\n"+
-				"_Ссылка действительна 15 минут._",
+			"💳 *Оплата расширения*\n"+brandLine+"\n\n"+
+				"💰  Сумма: *%.0f ₽*\n"+
+				"🔖  Платёж: `%s`\n\n"+
+				"_⏱ Ссылка действительна 15 минут._",
 			float64(payment.AmountKopecks)/100,
 			payment.ID.String(),
 		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
@@ -1564,9 +1569,9 @@ func (b *Bot) RegisterBuyCallbacks() {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(fmt.Sprintf(
-			"*✅ Расширение продлено*\n"+brandLine+"\n\n"+
-				"Устройства: +%d\n"+
-				"Действует до: `%s`",
+			"🎉 *Расширение продлено!*\n"+brandLine+"\n\n"+
+				"📱  Устройства: +%d\n"+
+				"📅  Действует до: `%s`",
 			expansion.ExtraDevices,
 			expansion.ExpiresAt.Format("02.01.2006"),
 		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
@@ -1602,7 +1607,7 @@ func (b *Bot) RegisterBuyCallbacks() {
 		rm.Inline(rows...)
 
 		return c.Send(
-			"*✕ Отключить устройство*\n"+brandLine+"\n\nВыберите устройство:",
+			"✕ *Отключить устройство*\n"+brandLine+"\n\n_Выберите устройство:_",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	})
@@ -1634,9 +1639,9 @@ func (b *Bot) RegisterBuyCallbacks() {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(
-			"*🎟 Промокод*\n"+brandLine+"\n\n"+
-				"Формат: `/promo КОД`\n"+
-				"Пример: `/promo SUMMER2024`",
+			"🎟 *Промокод*\n"+brandLine+"\n\n"+
+				"✉️  Формат: `/promo КОД`\n"+
+				"📝  Пример: `/promo SUMMER2024`",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	})
@@ -1649,9 +1654,9 @@ func (b *Bot) RegisterBuyCallbacks() {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
 		return c.Send(
-			"*✏️ Создать тикет*\n"+brandLine+"\n\n"+
-				"Формат: `/newticket Тема сообщения`\n\n"+
-				"Пример:\n`/newticket Не подключается VPN на iPhone`",
+			"✏️ *Создать тикет*\n"+brandLine+"\n\n"+
+				"✉️  Формат: `/newticket Тема сообщения`\n\n"+
+				"📝  Пример:\n`/newticket Не подключается VPN на iPhone`",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	})
@@ -1702,14 +1707,13 @@ func (b *Bot) RegisterBuyCallbacks() {
 		btnShop := rm.URL("🏪 Открыть магазин", webURL+"/shop")
 		rm.Inline(rm.Row(btnShop), rm.Row(backBtn(rm)))
 		return c.Send(fmt.Sprintf(
-			"*🏪 Магазин ЯД*\n"+brandLine+"\n\n"+
-				"Баланс: *%d ЯД* (~%.0f ₽)\n\n"+
-				"Подписки за ЯД дешевле:\n"+
-				"◽ 1 неделя — *%d ЯД*\n"+
-				"◽ 1 месяц — *%d ЯД*\n"+
-				"◽ 3 месяца — *%d ЯД*",
+			"🏪 *Магазин ЯД*\n"+brandLine+"\n\n"+
+				"💎  Баланс: *%d ЯД*\n\n"+
+				"💸 *Подписки за ЯД дешевле:*\n"+
+				"  ▸ 1 неделя — *%d ЯД*\n"+
+				"  ▸ 1 месяц — *%d ЯД*\n"+
+				"  ▸ 3 месяца — *%d ЯД*",
 			user.YADBalance,
-			float64(user.YADBalance)*2.5,
 			domain.PlanYADPrice(domain.PlanWeek),
 			domain.PlanYADPrice(domain.PlanMonth),
 			domain.PlanYADPrice(domain.PlanThreeMonth),
@@ -1730,8 +1734,8 @@ func (b *Bot) RegisterBuyCallbacks() {
 		btnPanel := rm.URL("⚙️ Открыть панель", webURL+"/admin")
 		rm.Inline(rm.Row(btnPanel), rm.Row(backBtn(rm)))
 		return c.Send(
-			"*⚙️ Панель администратора*\n"+brandLine+"\n\n"+
-				"Откройте веб-панель для управления платформой.",
+			"⚙️ *Панель администратора*\n"+brandLine+"\n\n"+
+				"💻  Откройте веб-панель для\nуправления платформой.",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	})
@@ -1802,7 +1806,7 @@ func (b *Bot) sendVPNLink(c tele.Context, url string) error {
 	btnOpen := rm.URL("🔗 Открыть ссылку", url)
 	rm.Inline(rm.Row(btnOpen), rm.Row(backBtn(rm)))
 	return c.Send(
-		"*🔗 Подключение VPN*\n"+brandLine+"\n\n"+
+		"🌐 *Подключение VPN*\n"+brandLine+"\n\n"+
 			"`"+url+"`\n\n"+
 			"_Вставьте в Happ, V2RayN, Hiddify или другой клиент._",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
@@ -1847,17 +1851,17 @@ func (b *Bot) handleTFACallback(c tele.Context, challengeID string, approve bool
 	}
 
 	newStatus := redisrepo.TFADenied
-	text := "❌ Вход отклонён."
+	text := "❌ *Вход отклонён*\n\n_Попытка входа заблокирована._"
 	if approve {
 		newStatus = redisrepo.TFAApproved
-		text = "✅ Вход подтверждён."
+		text = "✅ *Вход подтверждён*\n\n_Вы успешно авторизованы._"
 	}
 
 	if err := redisrepo.Resolve2FAChallenge(ctx, b.rdb, challengeID, newStatus); err != nil {
 		return c.Send("Ошибка обработки — попробуйте ещё раз.")
 	}
 
-	return c.Send(text)
+	return c.Send(text, &tele.SendOptions{ParseMode: tele.ModeMarkdown})
 }
 
 func (b *Bot) handleDisconnectCallback(c tele.Context, hwidID string) error {
@@ -1878,7 +1882,7 @@ func (b *Bot) handleDisconnectCallback(c tele.Context, hwidID string) error {
 	rm := &tele.ReplyMarkup{}
 	btnDevices := rm.Data("📱 Устройства", "menu_devices")
 	rm.Inline(rm.Row(btnDevices), rm.Row(backBtn(rm)))
-	return c.Send("✅ Устройство отключено.", rm)
+	return c.Send("✅ *Устройство отключено*", &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
 // Unused import avoidance

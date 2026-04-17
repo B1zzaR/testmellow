@@ -174,6 +174,9 @@ function TelegramSection() {
             <p className="text-xs text-gray-400 dark:text-slate-600">
               Код действителен 5 минут. После отправки страницу можно обновить.
             </p>
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              💡 Если у вас уже есть аккаунт в боте — баланс ЯД, подписки и история будут перенесены автоматически.
+            </p>
           </div>
           <Button
             variant="secondary"
@@ -203,6 +206,15 @@ function TelegramSection() {
             </a>
             , и аккаунты свяжутся автоматически.
           </p>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-700/40 dark:bg-amber-500/10">
+            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+              💡 Если вы уже пользовались ботом
+            </p>
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+              При привязке ваш баланс ЯД, подписки, устройства и вся история будут автоматически перенесены
+              с аккаунта бота на этот аккаунт. Старый аккаунт бота будет удалён.
+            </p>
+          </div>
           <p className="text-xs text-gray-400 dark:text-slate-600">
             🔑 После привязки вы сможете восстановить пароль через бота командой /resetpassword
           </p>

@@ -1672,3 +1672,96 @@ func (r *UserRepo) UpdateDeviceExpansionExtra(ctx context.Context, tx pgx.Tx, ex
 	_, err := tx.Exec(ctx, `UPDATE device_expansions SET extra_devices = $1 WHERE id = $2`, extra, expansionID)
 	return err
 }
+
+// MergeUsers transfers all data from srcID to dstID inside a single transaction,
+// then deletes the source user. Used when a Telegram-created account is merged
+// into an existing website account.
+func (r *UserRepo) MergeUsers(ctx context.Context, srcID, dstID uuid.UUID) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Read source user for balance/ltv/trial_used
+	var srcBalance, srcLTV int64
+	var srcTrialUsed bool
+	err = tx.QueryRow(ctx,
+		`SELECT yad_balance, ltv, trial_used FROM users WHERE id=$1 FOR UPDATE`, srcID,
+	).Scan(&srcBalance, &srcLTV, &srcTrialUsed)
+	if err != nil {
+		return fmt.Errorf("read src user: %w", err)
+	}
+
+	// 2. Transfer YAD balance, LTV, trial_used flag to destination
+	_, err = tx.Exec(ctx, `
+		UPDATE users
+		SET yad_balance = yad_balance + $1,
+		    ltv         = ltv + $2,
+		    trial_used  = trial_used OR $3,
+		    updated_at  = NOW()
+		WHERE id = $4`, srcBalance, srcLTV, srcTrialUsed, dstID)
+	if err != nil {
+		return fmt.Errorf("transfer balance: %w", err)
+	}
+
+	// 3. Reassign child records
+	reassign := []string{
+		`UPDATE subscriptions       SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE payments            SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE yad_transactions    SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE tickets             SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE ticket_messages     SET sender_id  = $1 WHERE sender_id  = $2`,
+		`UPDATE shop_orders         SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE devices             SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE device_expansions   SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE account_activity    SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE risk_events         SET user_id    = $1 WHERE user_id    = $2`,
+		`UPDATE referral_rewards    SET referrer_id = $1 WHERE referrer_id = $2`,
+	}
+	for _, q := range reassign {
+		if _, err := tx.Exec(ctx, q, dstID, srcID); err != nil {
+			return fmt.Errorf("reassign: %w", err)
+		}
+	}
+
+	// 4. Referrals: transfer referrer relationships (skip if creates self-referral)
+	_, err = tx.Exec(ctx,
+		`UPDATE referrals SET referrer_id = $1 WHERE referrer_id = $2 AND referee_id <> $1`, dstID, srcID)
+	if err != nil {
+		return fmt.Errorf("reassign referrals referrer: %w", err)
+	}
+	// If src was a referee — delete that referral (can't reassign referee_id easily due to UNIQUE)
+	_, err = tx.Exec(ctx, `DELETE FROM referrals WHERE referee_id = $2`, dstID, srcID)
+	if err != nil {
+		return fmt.Errorf("clean referrals referee: %w", err)
+	}
+
+	// 5. Promo code uses: transfer, skip duplicates
+	_, err = tx.Exec(ctx, `
+		UPDATE promocode_uses SET user_id = $1
+		WHERE user_id = $2
+		  AND promo_code_id NOT IN (SELECT promo_code_id FROM promocode_uses WHERE user_id = $1)`,
+		dstID, srcID)
+	if err != nil {
+		return fmt.Errorf("transfer promo uses: %w", err)
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM promocode_uses WHERE user_id = $1`, srcID)
+	if err != nil {
+		return fmt.Errorf("clean promo uses: %w", err)
+	}
+
+	// 6. Unlink Telegram from source
+	_, err = tx.Exec(ctx, `UPDATE users SET telegram_id = NULL WHERE id = $1`, srcID)
+	if err != nil {
+		return fmt.Errorf("unlink src telegram: %w", err)
+	}
+
+	// 7. Delete source user
+	_, err = tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, srcID)
+	if err != nil {
+		return fmt.Errorf("delete src user: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
