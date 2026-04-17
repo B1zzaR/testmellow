@@ -1116,9 +1116,10 @@ func (w *Worker) enqueueNotify(ctx context.Context, tgID int64, msg string) {
 	})
 }
 
-// periodicExpiryWarnings sends Telegram notifications 3 days before subscription expires.
+// periodicExpiryWarnings sends Telegram notifications during the last 3 days before subscription expires.
+// Days 2-3: one notification per 24 h. Last day (<24 h left): up to 3 notifications (~every 8 h).
 func (w *Worker) periodicExpiryWarnings(ctx context.Context) {
-	ticker := time.NewTicker(6 * time.Hour)
+	ticker := time.NewTicker(4 * time.Hour)
 	defer ticker.Stop()
 	for {
 		select {
@@ -1140,9 +1141,24 @@ func (w *Worker) sendExpiryWarnings(ctx context.Context) {
 		return
 	}
 	for _, sub := range subs {
-		// Deduplicate: only send once per subscription per warning cycle
-		dedupKey := fmt.Sprintf("notify:expiry3d:%s", sub.ID.String())
-		ok, _ := redisrepo.SetNX(ctx, w.rdb, dedupKey, 7*24*time.Hour)
+		hoursLeft := time.Until(sub.ExpiresAt).Hours()
+		daysLeft := int(hoursLeft / 24)
+
+		// Determine dedup key and TTL based on time remaining:
+		// Last day (<24h): dedup for 8h → up to 3 notifications per day
+		// Days 2-3: dedup for 24h → 1 notification per day
+		var dedupKey string
+		var dedupTTL time.Duration
+		if hoursLeft < 24 {
+			slot := int(hoursLeft) / 8 // 0, 1, or 2
+			dedupKey = fmt.Sprintf("notify:expiry:%s:d0:s%d", sub.ID.String(), slot)
+			dedupTTL = 8 * time.Hour
+		} else {
+			dedupKey = fmt.Sprintf("notify:expiry:%s:d%d", sub.ID.String(), daysLeft)
+			dedupTTL = 24 * time.Hour
+		}
+
+		ok, _ := redisrepo.SetNX(ctx, w.rdb, dedupKey, dedupTTL)
 		if !ok {
 			continue
 		}
@@ -1150,8 +1166,17 @@ func (w *Worker) sendExpiryWarnings(ctx context.Context) {
 		if err != nil || user == nil || user.TelegramID == nil {
 			continue
 		}
-		daysLeft := int(time.Until(sub.ExpiresAt).Hours() / 24)
-		msg := fmt.Sprintf("⚠️ <b>Ваша подписка истекает через %d дн.</b>\n\nПродлите её в личном кабинете, чтобы не потерять доступ к VPN.", daysLeft)
+
+		var msg string
+		if hoursLeft < 24 {
+			h := int(hoursLeft)
+			if h < 1 {
+				h = 1
+			}
+			msg = fmt.Sprintf("🔴 <b>Ваша подписка истекает менее чем через %d ч!</b>\n\nСрочно продлите её в личном кабинете, чтобы не потерять доступ к VPN.", h)
+		} else {
+			msg = fmt.Sprintf("⚠️ <b>Ваша подписка истекает через %d дн.</b>\n\nПродлите её в личном кабинете, чтобы не потерять доступ к VPN.", daysLeft)
+		}
 		w.enqueueNotify(ctx, *user.TelegramID, msg)
 	}
 }
