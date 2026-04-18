@@ -2,6 +2,7 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/vpnplatform/internal/integration/remnawave"
 	"github.com/vpnplatform/internal/middleware"
 	"github.com/vpnplatform/internal/repository/postgres"
+	"github.com/vpnplatform/internal/worker"
 )
 
 type Handler struct {
@@ -319,6 +321,15 @@ func (h *Handler) ReplyToTicket(c *gin.Context) {
 		return
 	}
 	_ = h.repo.UpdateTicketStatus(c.Request.Context(), ticketID, domain.TicketAnswered)
+
+	// Notify user via Telegram about admin reply.
+	if user, err := h.repo.GetByID(c.Request.Context(), ticket.UserID); err == nil && user != nil && user.TelegramID != nil {
+		notifyMsg := fmt.Sprintf("💬 <b>Ответ на тикет</b>\n\n📌 %s\n\n%s", ticket.Subject, req.Message)
+		_ = worker.Enqueue(context.Background(), h.rdb, worker.QueueNotifyTelegram, worker.NotifyTelegramJob{
+			TelegramID: *user.TelegramID,
+			Message:    notifyMsg,
+		})
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "reply sent"})
 }

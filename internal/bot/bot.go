@@ -724,6 +724,22 @@ func (b *Bot) handleNewTicket(c tele.Context) error {
 		return c.Send("Ошибка: " + err.Error())
 	}
 
+	// Limit: 1 open/answered ticket per user.
+	openCount, err := b.repo.CountOpenTickets(ctx, user.ID)
+	if err != nil {
+		b.log.Error("handleNewTicket: count open tickets", zap.Error(err))
+		return c.Send("Не удалось проверить тикеты — попробуйте позже.")
+	}
+	if openCount > 0 {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(
+			"⚠️ *У вас уже есть открытый тикет*\n"+brandLine+"\n\n"+
+				"Дождитесь его закрытия или проверьте статус: /ticket",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	}
+
 	parts := strings.SplitN(strings.TrimSpace(c.Text()), " ", 2)
 	if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
 		rm := &tele.ReplyMarkup{}

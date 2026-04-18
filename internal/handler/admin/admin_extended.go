@@ -177,9 +177,31 @@ func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 		return
 	}
 
+	// Expired locally — mark as expired without querying Platega.
+	if payment.ExpiresAt != nil && payment.ExpiresAt.Before(time.Now()) {
+		_ = h.repo.UpdatePaymentStatus(c.Request.Context(), nil, id, domain.PaymentStatusExpired)
+		h.audit(c, "payment.check", strPtr("payment"), uidPtr(id), strPtr("expired"))
+		c.JSON(http.StatusOK, gin.H{
+			"payment_id":     payment.ID,
+			"platega_status": "EXPIRED",
+			"db_status":      domain.PaymentStatusExpired,
+			"message":        "payment expired",
+		})
+		return
+	}
+
 	resp, err := h.platega.GetPaymentStatus(c.Request.Context(), payment.ID.String())
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "platega check failed: " + err.Error()})
+		// Platega may return 404 for old/expired transactions — don't crash.
+		h.log.Warn("platega status check failed", zap.String("payment_id", id.String()), zap.Error(err))
+		_ = h.repo.UpdatePaymentStatus(c.Request.Context(), nil, id, domain.PaymentStatusExpired)
+		h.audit(c, "payment.check", strPtr("payment"), uidPtr(id), strPtr("expired (platega unavailable)"))
+		c.JSON(http.StatusOK, gin.H{
+			"payment_id":     payment.ID,
+			"platega_status": "UNKNOWN",
+			"db_status":      domain.PaymentStatusExpired,
+			"message":        "платёж не найден в Platega — помечен как истёкший",
+		})
 		return
 	}
 
