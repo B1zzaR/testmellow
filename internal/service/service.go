@@ -188,9 +188,11 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User
 		return nil, err
 	}
 	if user == nil || user.PasswordHash == nil {
+		s.anti.RecordFailedLogin(ctx, input.IP+":"+username)
 		return nil, errors.New("неверный логин или пароль")
 	}
 	if !password.Verify(*user.PasswordHash, input.Password) {
+		s.anti.RecordFailedLogin(ctx, input.IP+":"+username)
 		return nil, errors.New("неверный логин или пароль")
 	}
 	if user.IsBanned {
@@ -401,7 +403,7 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 		PaymentMethod:  platega.MethodSBPQR,
 		PlategaPayload: userID.String(),
 		RedirectURL:    platResp.Redirect,
-		ExpiresAt:      func() *time.Time { t := time.Now().Add(30 * time.Minute); return &t }(),
+		ExpiresAt:      func() *time.Time { t := time.Now().Add(15 * time.Minute); return &t }(),
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}

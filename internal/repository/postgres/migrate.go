@@ -443,6 +443,15 @@ ALTER TABLE payments ADD CONSTRAINT payments_plan_check
     CHECK (plan IN ('1week','1month','3months','device_expansion','device_expansion_extend'));
 `,
 		},
+		{
+			version: "016_expand_subscriptions_plan",
+			sql: `
+ALTER TABLE subscriptions ALTER COLUMN plan TYPE VARCHAR(32);
+ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_plan_check;
+ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_plan_check
+    CHECK (plan IN ('1week','1month','3months','99years'));
+`,
+		},
 	}
 
 	for _, m := range migrations {
@@ -454,13 +463,23 @@ ALTER TABLE payments ADD CONSTRAINT payments_plan_check
 			continue // already applied
 		}
 
-		if _, err := db.Exec(ctx, m.sql); err != nil {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("begin tx for migration %s: %w", m.version, err)
+		}
+
+		if _, err := tx.Exec(ctx, m.sql); err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("migration %s: %w", m.version, err)
 		}
-		if _, err := db.Exec(ctx,
+		if _, err := tx.Exec(ctx,
 			`INSERT INTO schema_migrations (version) VALUES ($1)`, m.version,
 		); err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("record migration %s: %w", m.version, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit migration %s: %w", m.version, err)
 		}
 	}
 	return nil

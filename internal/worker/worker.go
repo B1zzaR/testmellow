@@ -864,8 +864,38 @@ func (w *Worker) handleReferralPayout(ctx context.Context, payload string) error
 	}
 	defer redisrepo.Unlock(ctx, w.rdb, lockKey, lockToken)
 
-	// We operate directly on the DB here via a helper –
-	// handled by periodicRewardSweep which queries the rewards table
+	tx, err := w.repo.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Fetch the reward and credit it
+	reward, err := w.repo.GetRewardByID(ctx, rewardID)
+	if err != nil {
+		return fmt.Errorf("get reward %s: %w", rewardID, err)
+	}
+	if reward == nil || reward.Status != domain.SplitPending {
+		return nil // already processed or not found
+	}
+
+	refID := reward.ID
+	if err := w.repo.AdjustYADBalance(ctx, tx, reward.ReferrerID,
+		reward.ImmediateYAD, domain.YADTxReferralReward, &refID,
+		"Referral reward (100% immediate)"); err != nil {
+		return fmt.Errorf("credit yad: %w", err)
+	}
+	if err := w.repo.UpdateRewardStatus(ctx, tx, reward.ID, domain.SplitImmediate); err != nil {
+		return fmt.Errorf("update reward status: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	w.log.Info("referral reward paid via queue",
+		zap.String("referrer_id", reward.ReferrerID.String()),
+		zap.Int64("yad", reward.ImmediateYAD),
+	)
 	return nil
 }
 

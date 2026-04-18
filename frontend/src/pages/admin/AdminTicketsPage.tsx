@@ -67,7 +67,7 @@ export function AdminTicketsPage() {
           },
           {
             key: 'status',
-            header: 'Status',
+            header: 'Статус',
             render: (t) => ticketStatusBadge(t.status),
           },
           {

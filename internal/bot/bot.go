@@ -490,15 +490,12 @@ func (b *Bot) handleBuyYAD(plan domain.SubscriptionPlan) tele.HandlerFunc {
 	return func(c tele.Context) error {
 		ctx := context.Background()
 		_ = c.Respond()
-		_, err := b.getUser(ctx, c)
+		user, err := b.getUser(ctx, c)
 		if err != nil {
 			return c.Send("Ошибка: " + err.Error())
 		}
 
-		sub, err := b.ecoSvc.BuySubscriptionWithYAD(ctx, (func() uuid.UUID {
-			u, _ := b.getUser(ctx, c)
-			return u.ID
-		})(), plan)
+		sub, err := b.ecoSvc.BuySubscriptionWithYAD(ctx, user.ID, plan)
 		if err != nil {
 			rm := &tele.ReplyMarkup{}
 			rm.Inline(rm.Row(backBtn(rm)))

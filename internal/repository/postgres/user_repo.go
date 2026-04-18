@@ -238,6 +238,39 @@ func (r *UserRepo) List(ctx context.Context, limit, offset int) ([]*domain.User,
 	return users, rows.Err()
 }
 
+// ListHighRisk returns users whose risk_score is at or above the given threshold.
+func (r *UserRepo) ListHighRisk(ctx context.Context, minRisk int, limit, offset int) ([]*domain.User, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, telegram_id, username, email, password_hash,
+		       yad_balance, referrer_id, referral_code, ltv,
+		       risk_score, is_admin, is_banned, remna_user_uuid,
+		       device_fingerprint, last_known_ip::text, trial_used,
+		       tfa_enabled, created_at, updated_at
+		FROM users WHERE risk_score >= $1
+		ORDER BY risk_score DESC, created_at DESC
+		LIMIT $2 OFFSET $3`, minRisk, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []*domain.User
+	for rows.Next() {
+		u := &domain.User{}
+		if err := rows.Scan(
+			&u.ID, &u.TelegramID, &u.Username, &u.Email, &u.PasswordHash,
+			&u.YADBalance, &u.ReferrerID, &u.ReferralCode, &u.LTV,
+			&u.RiskScore, &u.IsAdmin, &u.IsBanned, &u.RemnaUserUUID,
+			&u.DeviceFingerprint, &u.LastKnownIP, &u.TrialUsed,
+			&u.TFAEnabled, &u.CreatedAt, &u.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
 // Search returns users matching an optional query string (by username or UUID prefix)
 // together with the total count of matching rows for pagination.
 func (r *UserRepo) Search(ctx context.Context, q string, limit, offset int) ([]*domain.User, int, error) {
@@ -245,7 +278,7 @@ func (r *UserRepo) Search(ctx context.Context, q string, limit, offset int) ([]*
 		       yad_balance, referrer_id, referral_code, ltv,
 		       risk_score, is_admin, is_banned, remna_user_uuid,
 		       device_fingerprint, last_known_ip::text, trial_used,
-		       created_at, updated_at`
+		       tfa_enabled, created_at, updated_at`
 
 	var total int
 	var rows pgx.Rows
@@ -287,7 +320,7 @@ func (r *UserRepo) Search(ctx context.Context, q string, limit, offset int) ([]*
 			&u.YADBalance, &u.ReferrerID, &u.ReferralCode, &u.LTV,
 			&u.RiskScore, &u.IsAdmin, &u.IsBanned, &u.RemnaUserUUID,
 			&u.DeviceFingerprint, &u.LastKnownIP, &u.TrialUsed,
-			&u.CreatedAt, &u.UpdatedAt,
+			&u.TFAEnabled, &u.CreatedAt, &u.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -297,7 +330,7 @@ func (r *UserRepo) Search(ctx context.Context, q string, limit, offset int) ([]*
 }
 
 func (r *UserRepo) BeginTx(ctx context.Context) (pgx.Tx, error) {
-	return r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	return r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 }
 
 // UpdateFingerprint stores the latest device fingerprint and IP
@@ -617,6 +650,24 @@ func (r *UserRepo) GetDeferredRewardsDue(ctx context.Context) ([]*domain.Referra
 func (r *UserRepo) UpdateRewardStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, status domain.RewardSplitStatus) error {
 	_, err := tx.Exec(ctx, `UPDATE referral_rewards SET status=$1 WHERE id=$2`, status, id)
 	return err
+}
+
+// GetRewardByID fetches a single referral reward by its ID.
+func (r *UserRepo) GetRewardByID(ctx context.Context, id uuid.UUID) (*domain.ReferralReward, error) {
+	rr := &domain.ReferralReward{}
+	err := r.db.QueryRow(ctx, `
+		SELECT id, referral_id, payment_id, referrer_id,
+		       amount_yad, immediate_yad, deferred_yad,
+		       status, risk_score, scheduled_at, deferred_at, paid_at, created_at
+		FROM referral_rewards WHERE id=$1`, id).Scan(
+		&rr.ID, &rr.ReferralID, &rr.PaymentID, &rr.ReferrerID,
+		&rr.AmountYAD, &rr.ImmediateYAD, &rr.DeferredYAD,
+		&rr.Status, &rr.RiskScore, &rr.ScheduledAt, &rr.DeferredAt, &rr.PaidAt, &rr.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return rr, err
 }
 
 func scanReferralRewards(rows pgx.Rows) ([]*domain.ReferralReward, error) {
@@ -1153,6 +1204,14 @@ func (r *UserRepo) UpdateTicketStatus(ctx context.Context, ticketID uuid.UUID, s
 }
 
 // ─── Shop ─────────────────────────────────────────────────────────────────────
+
+func (r *UserRepo) CreateShopItem(ctx context.Context, item *domain.ShopItem) error {
+	_, err := r.db.Exec(ctx,
+		`INSERT INTO shop_items (id, name, description, price_yad, stock, is_active, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		item.ID, item.Name, item.Description, item.PriceYAD, item.Stock, item.IsActive, item.CreatedAt)
+	return err
+}
 
 func (r *UserRepo) ListShopItems(ctx context.Context) ([]*domain.ShopItem, error) {
 	rows, err := r.db.Query(ctx,

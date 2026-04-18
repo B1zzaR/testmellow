@@ -45,11 +45,11 @@ func NewAuthHandler(auth *service.AuthService, repo *postgres.UserRepo, jwtMgr *
 // setAuthCookies writes access and refresh tokens as HttpOnly cookies (H-7).
 // The refresh cookie is scoped to /api/auth/refresh to prevent inadvertent
 // transmission. The Secure flag is set in production mode.
-func setAuthCookies(c *gin.Context, token, refresh string) {
+func setAuthCookies(c *gin.Context, token, refresh string, accessTTL, refreshTTL time.Duration) {
 	secure := gin.Mode() == gin.ReleaseMode
 	c.SetSameSite(http.SameSiteStrictMode)
-	c.SetCookie("access_token", token, int((24 * time.Hour).Seconds()), "/", "", secure, true)
-	c.SetCookie("refresh_token", refresh, int((30 * 24 * time.Hour).Seconds()), "/api/auth/refresh", "", secure, true)
+	c.SetCookie("access_token", token, int(accessTTL.Seconds()), "/", "", secure, true)
+	c.SetCookie("refresh_token", refresh, int(refreshTTL.Seconds()), "/api/auth/refresh", "", secure, true)
 }
 
 // clearAuthCookies expires both auth cookies (for logout).
@@ -111,7 +111,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	// H-7: deliver tokens via HttpOnly cookies, not in response body.
-	setAuthCookies(c, token, refreshToken)
+	setAuthCookies(c, token, refreshToken, h.jwtMgr.AccessTTL(), h.jwtMgr.RefreshTTL())
 
 	c.JSON(http.StatusCreated, gin.H{
 		"user_id":       user.ID,
@@ -197,7 +197,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	// H-7: deliver tokens via HttpOnly cookies.
-	setAuthCookies(c, token, refreshToken)
+	setAuthCookies(c, token, refreshToken, h.jwtMgr.AccessTTL(), h.jwtMgr.RefreshTTL())
 
 	c.JSON(http.StatusOK, gin.H{
 		"user_id":  user.ID,
@@ -261,13 +261,19 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	// H-7: deliver new tokens via HttpOnly cookies.
-	setAuthCookies(c, token, newRefresh)
+	setAuthCookies(c, token, newRefresh, h.jwtMgr.AccessTTL(), h.jwtMgr.RefreshTTL())
 
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
 // POST /api/auth/logout
 func (h *AuthHandler) Logout(c *gin.Context) {
+	// Revoke the refresh token from the Redis allowlist (H-8).
+	if cookie, err := c.Cookie("refresh_token"); err == nil && cookie != "" {
+		if claims, err := h.jwtMgr.ParseRefresh(cookie); err == nil {
+			_ = redisrepo.RevokeRefreshToken(c.Request.Context(), h.rdb, claims.ID)
+		}
+	}
 	// Clear auth cookies on client
 	clearAuthCookies(c)
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
@@ -318,7 +324,7 @@ func (h *AuthHandler) TFACheck(c *gin.Context) {
 		if err := redisrepo.RegisterRefreshToken(c.Request.Context(), h.rdb, jti, userID, h.jwtMgr.RefreshTTL()); err != nil {
 			h.log.Warn("register refresh token failed (2FA)", zap.Error(err))
 		}
-		setAuthCookies(c, token, refreshToken)
+		setAuthCookies(c, token, refreshToken, h.jwtMgr.AccessTTL(), h.jwtMgr.RefreshTTL())
 		c.JSON(http.StatusOK, gin.H{
 			"status":   "approved",
 			"user_id":  uid,

@@ -1,5 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom'
 import { PrivateRoute } from './PrivateRoute'
+import { PublicRoute } from './PublicRoute'
 import { AdminRoute } from './AdminRoute'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { AdminLayout } from '@/components/layout/AdminLayout'
@@ -42,8 +43,8 @@ import { AdminNotificationsPage } from '@/pages/admin/AdminNotificationsPage'
 
 export const router = createBrowserRouter([
   // Public routes
-  { path: '/login', element: <LoginPage /> },
-  { path: '/register', element: <RegisterPage /> },
+  { path: '/login', element: <PublicRoute><LoginPage /></PublicRoute> },
+  { path: '/register', element: <PublicRoute><RegisterPage /></PublicRoute> },
   { path: '/', element: <LandingPage /> },
   { path: '/PrivacyPolicy', element: <PrivacyPolicyPage /> },
   { path: '/UserAgreement', element: <UserAgreementPage /> },

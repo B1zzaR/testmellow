@@ -1,20 +1,22 @@
 // Package webhook implements the Platega payment callback endpoint.
 //
 // Platega documentation:
-//   POST your-callback-url
-//   Headers: X-MerchantId, X-Secret
-//   Body: { id, amount, currency, status, paymentMethod, payload }
-//   Statuses: CONFIRMED | CANCELED | CHARGEBACKED
-//   Retry: up to 3 times with 5-minute intervals if no 200 response within 60s.
+//
+//	POST your-callback-url
+//	Headers: X-MerchantId, X-Secret
+//	Body: { id, amount, currency, status, paymentMethod, payload }
+//	Statuses: CONFIRMED | CANCELED | CHARGEBACKED
+//	Retry: up to 3 times with 5-minute intervals if no 200 response within 60s.
 //
 // Security:
-//   1. Verify X-MerchantId and X-Secret match our stored credentials.
-//   2. Use DB-level idempotency (webhook_events table, UNIQUE source+external_id+event_type).
-//   3. All financial processing delegated to the worker queue — never inline.
+//  1. Verify X-MerchantId and X-Secret match our stored credentials.
+//  2. Use DB-level idempotency (webhook_events table, UNIQUE source+external_id+event_type).
+//  3. All financial processing delegated to the worker queue — never inline.
 package webhook
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -128,7 +130,7 @@ func (h *PlategalHandler) Handle(c *gin.Context) {
 
 	// ── Step 5: Enqueue payment processing to worker ──────────────────────
 	// Amount from Platega is in rubles; convert to kopecks for internal use.
-	amountKopecks := int64(cb.Amount * 100)
+	amountKopecks := int64(math.Round(cb.Amount * 100))
 
 	job := worker.PaymentProcessJob{
 		TransactionID: cb.ID,

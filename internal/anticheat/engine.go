@@ -46,9 +46,10 @@ func NewEngine(rdb *redis.Client, log *zap.Logger) *Engine {
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 
-// CheckLoginRateLimit returns error if login attempts exceed threshold (brute-force)
+// CheckLoginRateLimit returns error if login attempts exceed threshold (brute-force).
+// It only reads the current counter — use RecordFailedLogin after a confirmed failure.
 func (e *Engine) CheckLoginRateLimit(ctx context.Context, identifier string) error {
-	count, err := redisrepo.RecordFailedLogin(ctx, e.rdb, identifier)
+	count, err := redisrepo.GetFailedLoginCount(ctx, e.rdb, identifier)
 	if err != nil {
 		return nil // fail open on Redis error, log separately
 	}
@@ -56,6 +57,11 @@ func (e *Engine) CheckLoginRateLimit(ctx context.Context, identifier string) err
 		return fmt.Errorf("слишком много попыток входа — попробуйте через 15 минут")
 	}
 	return nil
+}
+
+// RecordFailedLogin increments the brute-force counter after a failed login attempt.
+func (e *Engine) RecordFailedLogin(ctx context.Context, identifier string) {
+	_, _ = redisrepo.RecordFailedLogin(ctx, e.rdb, identifier)
 }
 
 // ResetLoginAttempts clears the brute-force counter after a successful login

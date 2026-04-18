@@ -93,6 +93,16 @@ func RecordFailedLogin(ctx context.Context, rdb *redis.Client, identifier string
 	return Increment(ctx, rdb, key, 15*time.Minute)
 }
 
+// GetFailedLoginCount returns the current brute-force counter without incrementing it.
+func GetFailedLoginCount(ctx context.Context, rdb *redis.Client, identifier string) (int64, error) {
+	key := fmt.Sprintf("bf:login:%s", identifier)
+	val, err := rdb.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return val, err
+}
+
 func ResetFailedLogin(ctx context.Context, rdb *redis.Client, identifier string) error {
 	return rdb.Del(ctx, fmt.Sprintf("bf:login:%s", identifier)).Err()
 }

@@ -42,7 +42,7 @@ const typeStyles = {
 }
 
 export function NotificationAlert({ notification, onDismiss }: NotificationAlertProps) {
-  const style = typeStyles[notification.type]
+  const style = typeStyles[notification.type] ?? typeStyles.info
 
   return (
     <div className={`rounded-lg border ${style.bg} ${style.border} p-4 mb-4`}>

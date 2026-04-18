@@ -117,7 +117,7 @@ export function AdminNotificationsPage() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">System Notifications</h1>
+        <h1 className="text-2xl font-bold">Системные уведомления</h1>
         <Button
           onClick={() => {
             setEditingId(null)
@@ -127,46 +127,46 @@ export function AdminNotificationsPage() {
           className="gap-2"
         >
           <Icon name="bell" size={16} />
-          Create Notification
+          Создать уведомление
         </Button>
       </div>
 
       {/* Form Modal */}
-      <Modal open={showForm} onClose={handleCancel} title={editingId ? 'Edit Notification' : 'Create Notification'}>
+      <Modal open={showForm} onClose={handleCancel} title={editingId ? 'Редактировать уведомление' : 'Создать уведомление'}>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-2">Type</label>
+            <label className="block text-sm font-medium mb-2">Тип</label>
             <select
               value={formData.type}
               onChange={(e) => setFormData({ ...formData, type: e.target.value as NotificationType })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-surface-600 rounded-lg bg-white dark:bg-surface-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              <option value="info">Info</option>
-              <option value="success">Success</option>
-              <option value="warning">Warning</option>
-              <option value="error">Error</option>
+              <option value="info">Информация</option>
+              <option value="success">Успех</option>
+              <option value="warning">Предупреждение</option>
+              <option value="error">Ошибка</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-2">Title</label>
+            <label className="block text-sm font-medium mb-2">Заголовок</label>
             <Input
               value={formData.title}
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              placeholder="Notification title"
+              placeholder="Заголовок уведомления"
               maxLength={100}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-2">Message</label>
+            <label className="block text-sm font-medium mb-2">Сообщение</label>
             <textarea
               value={formData.message}
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setFormData({ ...formData, message: e.target.value })}
-              placeholder="Notification message"
+              placeholder="Текст уведомления"
               maxLength={500}
               rows={4}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-surface-600 rounded-lg bg-white dark:bg-surface-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
             />
             <p className="text-xs text-gray-500 mt-1">{formData.message.length}/500</p>
           </div>
@@ -179,14 +179,14 @@ export function AdminNotificationsPage() {
               {createMutation.isPending || updateMutation.isPending ? (
                 <>
                   <Spinner className="h-4 w-4" />
-                  Saving...
+                  Сохранение...
                 </>
               ) : (
-                'Save'
+                'Сохранить'
               )}
             </Button>
             <Button variant="secondary" onClick={handleCancel}>
-              Cancel
+              Отмена
             </Button>
           </div>
         </form>
@@ -199,7 +199,7 @@ export function AdminNotificationsPage() {
         </div>
       ) : notifications.length === 0 ? (
         <Card className="text-center py-8 text-gray-500">
-          No notifications yet
+          Уведомлений пока нет
         </Card>
       ) : (
         <div className="space-y-3">
@@ -214,7 +214,7 @@ export function AdminNotificationsPage() {
                       <h3 className="font-semibold text-sm">{notif.title}</h3>
                       <p className="text-sm mt-1 break-words">{notif.message}</p>
                       <div className="flex items-center gap-2 mt-2 text-xs opacity-75">
-                        <span>Status: {notif.is_active ? '✓ Active' : '○ Inactive'}</span>
+                        <span>Статус: {notif.is_active ? '✓ Активно' : '○ Неактивно'}</span>
                         <span>•</span>
                         <span>{new Date(notif.created_at).toLocaleDateString()}</span>
                       </div>
@@ -226,7 +226,7 @@ export function AdminNotificationsPage() {
                       disabled={toggleActiveMutation.isPending}
                       className="px-2 py-1 text-xs rounded bg-gray-200 dark:bg-surface-700 hover:bg-gray-300 dark:hover:bg-surface-600 transition disabled:opacity-50 text-gray-900 dark:text-gray-100"
                     >
-                      {notif.is_active ? 'Deactivate' : 'Activate'}
+                      {notif.is_active ? 'Деактивировать' : 'Активировать'}
                     </button>
                     <Button
                       size="sm"
@@ -235,7 +235,7 @@ export function AdminNotificationsPage() {
                       className="gap-1"
                     >
                       <Icon name="settings" size={12} />
-                      Edit
+                      Изменить
                     </Button>
                     <Button
                       size="sm"
@@ -245,7 +245,7 @@ export function AdminNotificationsPage() {
                       className="gap-1 text-red-600 hover:text-red-700"
                     >
                       <Icon name="close" size={12} />
-                      Delete
+                      Удалить
                     </Button>
                   </div>
                 </div>

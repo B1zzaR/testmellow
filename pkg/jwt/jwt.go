@@ -67,6 +67,11 @@ func (m *Manager) RefreshTTL() time.Duration {
 	return m.refreshTTL
 }
 
+// AccessTTL returns the access token lifetime (for cookie MaxAge).
+func (m *Manager) AccessTTL() time.Duration {
+	return m.accessTTL
+}
+
 func (m *Manager) Parse(tokenStr string) (*Claims, error) {
 	token, err := gojwt.ParseWithClaims(tokenStr, &Claims{}, func(t *gojwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*gojwt.SigningMethodHMAC); !ok {

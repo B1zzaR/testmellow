@@ -413,9 +413,10 @@ func (h *Handler) CreateShopItem(c *gin.Context) {
 		CreatedAt:   time.Now(),
 	}
 
-	// Direct insert via repo
-	_, err := c.Request.Context().Deadline()
-	_ = err
-	// This is handled inline for simplicity — in production inject a ShopRepo
+	if err := h.repo.CreateShopItem(c.Request.Context(), item); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create shop item"})
+		return
+	}
+
 	c.JSON(http.StatusCreated, item)
 }

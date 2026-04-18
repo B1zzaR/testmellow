@@ -24,8 +24,8 @@ async function tryRefresh(): Promise<void> {
   _refreshing = (async () => {
     // Cookies are sent automatically — no body needed.
     await axios.post(`${BASE_URL}/api/auth/refresh`, undefined, { withCredentials: true })
-  })()
-  _refreshing.finally(() => { _refreshing = null })
+  })();
+  _refreshing = _refreshing.finally(() => { _refreshing = null })
   return _refreshing
 }
 

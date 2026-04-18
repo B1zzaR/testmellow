@@ -548,20 +548,12 @@ func (h *Handler) RevenueAnalytics(c *gin.Context) {
 
 // GET /admin/risk?limit=&offset= — lists high-risk users ordered by risk_score desc.
 func (h *Handler) ListHighRiskUsers(c *gin.Context) {
-	users, err := h.repo.List(c.Request.Context(), queryInt(c, "limit", 50), queryInt(c, "offset", 0))
+	users, err := h.repo.ListHighRisk(c.Request.Context(), 40, queryInt(c, "limit", 50), queryInt(c, "offset", 0))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load users"})
 		return
 	}
-	// Filter to risk >= 40, already sorted by created_at; re-sort client-side is acceptable
-	// since we return all and the frontend sorts. For clarity we filter server-side here.
-	var risky []*domain.User
-	for _, u := range users {
-		if u.RiskScore >= 40 {
-			risky = append(risky, u)
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{"users": risky})
+	c.JSON(http.StatusOK, gin.H{"users": users})
 }
 
 // ─── Platform Settings ────────────────────────────────────────────────────────
