@@ -357,10 +357,27 @@ func (h *Handler) CloseTicket(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ticket id"})
 		return
 	}
+
+	ticket, err := h.repo.GetTicketByID(c.Request.Context(), ticketID)
+	if err != nil || ticket == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ticket not found"})
+		return
+	}
+
 	if err := h.repo.UpdateTicketStatus(c.Request.Context(), ticketID, domain.TicketClosed); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to close ticket"})
 		return
 	}
+
+	// Notify user via Telegram that the ticket has been closed.
+	if user, err := h.repo.GetByID(c.Request.Context(), ticket.UserID); err == nil && user != nil && user.TelegramID != nil {
+		notifyMsg := fmt.Sprintf("🔒 <b>Тикет закрыт</b>\n\n📌 %s\n\nЕсли проблема не решена — создайте новый тикет.", ticket.Subject)
+		_ = worker.Enqueue(context.Background(), h.rdb, worker.QueueNotifyTelegram, worker.NotifyTelegramJob{
+			TelegramID: *user.TelegramID,
+			Message:    notifyMsg,
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "ticket closed"})
 }
 

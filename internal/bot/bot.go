@@ -686,7 +686,14 @@ func (b *Bot) handleTicketMenu(c tele.Context) error {
 		return c.Send("Ошибка: " + err.Error())
 	}
 
-	tickets, _ := b.repo.ListTickets(ctx, &user.ID, "", 10, 0)
+	allTickets, _ := b.repo.ListTickets(ctx, &user.ID, "", 10, 0)
+	// Show only open and answered tickets.
+	var tickets []*domain.Ticket
+	for _, t := range allTickets {
+		if t.Status != domain.TicketClosed {
+			tickets = append(tickets, t)
+		}
+	}
 	rm := &tele.ReplyMarkup{}
 	btnNew := rm.Data("✏️ Создать тикет", "menu_newticket")
 	rm.Inline(rm.Row(btnNew), rm.Row(backBtn(rm)))
@@ -703,15 +710,12 @@ func (b *Bot) handleTicketMenu(c tele.Context) error {
 	msg := "*🎫 Поддержка*\n" + brandLine + "\n\n"
 	for _, t := range tickets {
 		status := "●"
-		switch t.Status {
-		case domain.TicketClosed:
-			status = "○"
-		case domain.TicketAnswered:
+		if t.Status == domain.TicketAnswered {
 			status = "◉"
 		}
 		msg += fmt.Sprintf("%s `%s` — %s\n", status, t.ID.String()[:8], t.Subject)
 	}
-	msg += "\n_● открыт · ◉ ответ · ○ закрыт_"
+	msg += "\n_● открыт · ◉ ответ_"
 	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
