@@ -105,6 +105,7 @@ services:
       DATABASE_DSN: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vpnplatform}?sslmode=prefer
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
       PLATEGA_MERCHANT_ID: ${PLATEGA_MERCHANT_ID}
       PLATEGA_SECRET: ${PLATEGA_SECRET}
       PLATEGA_BASE_URL: https://app.platega.io
