@@ -85,11 +85,11 @@ export function AdminSuggestionsPage() {
       ) : (
         <div className="space-y-3">
           {suggestions.map((s) => (
-            <Card
+            <div
               key={s.id}
               className={[
-                'p-4 cursor-pointer transition-colors',
-                s.status === 'new' ? 'border-blue-500/20' : '',
+                'rounded-xl border bg-surface-800 p-4 cursor-pointer transition-colors',
+                s.status === 'new' ? 'border-blue-500/20' : 'border-surface-700',
               ].join(' ')}
               onClick={() => setExpanded(expanded === s.id ? null : s.id)}
             >
@@ -162,7 +162,7 @@ export function AdminSuggestionsPage() {
                   )}
                 </div>
               )}
-            </Card>
+            </div>
           ))}
         </div>
       )}
