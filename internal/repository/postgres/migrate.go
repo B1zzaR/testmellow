@@ -452,6 +452,25 @@ ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_plan_check
     CHECK (plan IN ('1week','1month','3months','99years'));
 `,
 		},
+		{
+			version: "017_suggestions",
+			sql: `
+DO $$ BEGIN
+    CREATE TYPE suggestion_status AS ENUM ('new', 'read', 'archived');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE TABLE IF NOT EXISTS suggestions (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    body       TEXT NOT NULL CHECK (char_length(body) BETWEEN 1 AND 3000),
+    status     suggestion_status NOT NULL DEFAULT 'new',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS suggestions_status_idx     ON suggestions (status);
+CREATE INDEX IF NOT EXISTS suggestions_created_at_idx ON suggestions (created_at DESC);
+`,
+		},
 	}
 
 	for _, m := range migrations {
