@@ -11,15 +11,17 @@ interface NavItem {
 }
 
 const adminNavItems: NavItem[] = [
-  { to: '/admin',               label: 'Дашборд',          icon: 'chart',   end: true },
-  { to: '/admin/users',         label: 'Пользователи',     icon: 'users'              },
-  { to: '/admin/payments',      label: 'Платежи',          icon: 'coins'              },
-  { to: '/admin/subscriptions', label: 'Подписки',         icon: 'shield'             },
-  { to: '/admin/referrals',     label: 'Рефералы',         icon: 'gem'                },
-  { to: '/admin/yad',           label: 'ЯД-экономика',    icon: 'diamond'            },
-  { to: '/admin/tickets',       label: 'Тикеты',           icon: 'ticket'             },
-  { to: '/admin/promo',         label: 'Промокоды',        icon: 'tag'                },
-  { to: '/admin/notifications', label: 'Уведомления',      icon: 'bell'               },
+  { to: '/admin',               label: 'Дашборд',          icon: 'chart',     end: true },
+  { to: '/admin/users',         label: 'Пользователи',     icon: 'users'                },
+  { to: '/admin/payments',      label: 'Платежи',          icon: 'coins'                },
+  { to: '/admin/subscriptions', label: 'Подписки',         icon: 'shield'               },
+  { to: '/admin/referrals',     label: 'Рефералы',         icon: 'gem'                  },
+  { to: '/admin/yad',           label: 'ЯД-экономика',    icon: 'diamond'              },
+  { to: '/admin/tickets',       label: 'Тикеты',           icon: 'ticket'               },
+  { to: '/admin/promo',         label: 'Промокоды',        icon: 'tag'                  },
+  { to: '/admin/notifications', label: 'Уведомления',      icon: 'bell'                 },
+  { to: '/admin/broadcast',     label: 'Рассылка',         icon: 'megaphone'            },
+  { to: '/admin/suggestions',   label: 'Предложения',      icon: 'lightbulb'            },
 ]
 
 interface AdminSidebarProps {

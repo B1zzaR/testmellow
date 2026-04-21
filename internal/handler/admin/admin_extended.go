@@ -1,4 +1,4 @@
-// admin_extended.go — additional admin handlers for payments, subscriptions,
+﻿// admin_extended.go вЂ” additional admin handlers for payments, subscriptions,
 // YAD economy, referrals, user profile, audit logs, and analytics.
 package admin
 
@@ -16,7 +16,7 @@ import (
 	"github.com/vpnplatform/internal/worker"
 )
 
-// ─── User sub-resources ───────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ User sub-resources в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 // GET /admin/users/:id/subscriptions
 func (h *Handler) GetUserSubscriptions(c *gin.Context) {
@@ -102,7 +102,7 @@ func (h *Handler) AdjustUserYAD(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "balance adjusted"})
 }
 
-// ─── Payments ─────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Payments в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 // GET /admin/payments?status=&from=&to=&limit=&offset=
 func (h *Handler) ListPayments(c *gin.Context) {
@@ -146,7 +146,7 @@ func (h *Handler) GetPayment(c *gin.Context) {
 	c.JSON(http.StatusOK, payment)
 }
 
-// POST /admin/payments/:id/check — calls Platega for current status, updates DB, and
+// POST /admin/payments/:id/check вЂ” calls Platega for current status, updates DB, and
 // enqueues subscription activation if the payment is now CONFIRMED.
 func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
@@ -165,7 +165,7 @@ func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 		return
 	}
 
-	// Already in a terminal state — no need to query Platega.
+	// Already in a terminal state вЂ” no need to query Platega.
 	if payment.Status != domain.PaymentStatusPending {
 		h.audit(c, "payment.check", strPtr("payment"), uidPtr(id), strPtr(string(payment.Status)))
 		c.JSON(http.StatusOK, gin.H{
@@ -177,7 +177,7 @@ func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 		return
 	}
 
-	// Expired locally — just report, don't query Platega.
+	// Expired locally вЂ” just report, don't query Platega.
 	if payment.ExpiresAt != nil && payment.ExpiresAt.Before(time.Now()) {
 		h.audit(c, "payment.check", strPtr("payment"), uidPtr(id), strPtr("expired"))
 		c.JSON(http.StatusOK, gin.H{
@@ -191,13 +191,13 @@ func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 
 	resp, err := h.platega.GetPaymentStatus(c.Request.Context(), payment.ID.String())
 	if err != nil {
-		// Platega may return 404 for old/expired transactions — just report current DB status.
+		// Platega may return 404 for old/expired transactions вЂ” just report current DB status.
 		h.log.Warn("platega status check failed", zap.String("payment_id", id.String()), zap.Error(err))
 		c.JSON(http.StatusOK, gin.H{
 			"payment_id":     payment.ID,
 			"platega_status": "UNKNOWN",
 			"db_status":      payment.Status,
-			"message":        "не удалось проверить статус в Platega",
+			"message":        "РЅРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕРІРµСЂРёС‚СЊ СЃС‚Р°С‚СѓСЃ РІ Platega",
 		})
 		return
 	}
@@ -229,14 +229,14 @@ func (h *Handler) CheckPaymentStatus(c *gin.Context) {
 	})
 }
 
-// ─── Subscriptions ────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Subscriptions в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 type assignSubscriptionRequest struct {
 	Login string `json:"login" binding:"required"`
 	Plan  string `json:"plan"  binding:"required,oneof=1week 1month 3months 99years"`
 }
 
-// POST /admin/subscriptions/assign — find user by login, activate subscription
+// POST /admin/subscriptions/assign вЂ” find user by login, activate subscription
 func (h *Handler) AssignSubscription(c *gin.Context) {
 	var req assignSubscriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -416,7 +416,7 @@ func (h *Handler) ExtendSubscription(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"subscription": sub, "message": fmt.Sprintf("extended by %d days", req.Days)})
 }
 
-// ─── YAD Economy ─────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ YAD Economy в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 // GET /admin/yad?login=&type=&limit=&offset=
 func (h *Handler) ListYADTransactions(c *gin.Context) {
@@ -480,7 +480,7 @@ func (h *Handler) AdjustYAD(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "balance adjusted"})
 }
 
-// ─── Referrals ────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Referrals в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 // GET /admin/referrals?login=&limit=&offset=
 func (h *Handler) ListReferrals(c *gin.Context) {
@@ -503,7 +503,7 @@ func (h *Handler) ListReferrals(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"referrals": refs})
 }
 
-// ─── Audit Logs ───────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Audit Logs в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 // GET /admin/audit-logs?limit=&offset=
 func (h *Handler) ListAuditLogs(c *gin.Context) {
@@ -518,7 +518,7 @@ func (h *Handler) ListAuditLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"logs": logs})
 }
 
-// ─── Extended Analytics ───────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Extended Analytics в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 // GET /admin/analytics/revenue?days=30
 func (h *Handler) RevenueAnalytics(c *gin.Context) {
@@ -544,9 +544,9 @@ func (h *Handler) RevenueAnalytics(c *gin.Context) {
 	})
 }
 
-// ─── Risk Events ──────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Risk Events в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-// GET /admin/risk?limit=&offset= — lists high-risk users ordered by risk_score desc.
+// GET /admin/risk?limit=&offset= вЂ” lists high-risk users ordered by risk_score desc.
 func (h *Handler) ListHighRiskUsers(c *gin.Context) {
 	users, err := h.repo.ListHighRisk(c.Request.Context(), 40, queryInt(c, "limit", 50), queryInt(c, "offset", 0))
 	if err != nil {
@@ -556,7 +556,7 @@ func (h *Handler) ListHighRiskUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"users": users})
 }
 
-// ─── Platform Settings ────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Platform Settings в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 // GET /admin/settings
 func (h *Handler) GetSettings(c *gin.Context) {
@@ -604,7 +604,7 @@ func (h *Handler) ToggleBlockRealMoney(c *gin.Context) {
 	c.JSON(http.StatusOK, settings)
 }
 
-// ─── System Notifications ────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ System Notifications в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 type createNotificationRequest struct {
 	Type    string `json:"type" binding:"required,oneof=warning error info success"`
@@ -733,7 +733,7 @@ func (h *Handler) DeleteNotification(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "notification deleted"})
 }
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ helpers в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 func queryInt(c *gin.Context, key string, def int) int {
 	if s := c.Query(key); s != "" {

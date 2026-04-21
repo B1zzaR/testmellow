@@ -26,6 +26,7 @@ import { BalancePage } from '@/pages/user/BalancePage'
 import { ChangePasswordPage } from '../pages/user/ChangePasswordPage'
 import { SettingsPage } from '@/pages/user/SettingsPage'
 import { PaymentHistoryPage } from '@/pages/user/PaymentHistoryPage'
+import { SuggestionsPage } from '@/pages/user/SuggestionsPage'
 import { NotFoundPage } from '../pages/NotFoundPage'
 
 // Admin pages
@@ -40,6 +41,8 @@ import { AdminSubscriptionsPage } from '@/pages/admin/AdminSubscriptionsPage'
 import { AdminReferralsPage } from '@/pages/admin/AdminReferralsPage'
 import { AdminYADPage } from '@/pages/admin/AdminYADPage'
 import { AdminNotificationsPage } from '@/pages/admin/AdminNotificationsPage'
+import { AdminBroadcastPage } from '@/pages/admin/AdminBroadcastPage'
+import { AdminSuggestionsPage } from '@/pages/admin/AdminSuggestionsPage'
 
 export const router = createBrowserRouter([
   // Public routes
@@ -68,6 +71,7 @@ export const router = createBrowserRouter([
           { path: '/settings', element: <ErrorBoundary><SettingsPage /></ErrorBoundary> },
           { path: '/settings/password', element: <ErrorBoundary><ChangePasswordPage /></ErrorBoundary> },
           { path: '/payments/history', element: <ErrorBoundary><PaymentHistoryPage /></ErrorBoundary> },
+          { path: '/suggestions', element: <ErrorBoundary><SuggestionsPage /></ErrorBoundary> },
         ],
       },
     ],
@@ -91,6 +95,8 @@ export const router = createBrowserRouter([
           { path: '/admin/referrals', element: <ErrorBoundary><AdminReferralsPage /></ErrorBoundary> },
           { path: '/admin/yad', element: <ErrorBoundary><AdminYADPage /></ErrorBoundary> },
           { path: '/admin/notifications', element: <ErrorBoundary><AdminNotificationsPage /></ErrorBoundary> },
+          { path: '/admin/broadcast', element: <ErrorBoundary><AdminBroadcastPage /></ErrorBoundary> },
+          { path: '/admin/suggestions', element: <ErrorBoundary><AdminSuggestionsPage /></ErrorBoundary> },
         ],
       },
     ],

@@ -93,6 +93,7 @@ func main() {
 	deviceH := httpHandler.NewDeviceHandler(deviceSvc, userRepo, log)
 	ticketH := httpHandler.NewTicketHandler(userRepo, log)
 	shopH := httpHandler.NewShopHandler(userRepo, ecoSvc, subSvc, log)
+	suggestionH := httpHandler.NewSuggestionHandler(userRepo, rdb, log)
 	webhookH := webhookHandler.NewPlategalHandler(platClient, userRepo, rdb, log)
 	adminH := adminHandler.NewHandler(userRepo, rdb, antiEngine, platClient, remnaClient, log)
 
@@ -188,6 +189,9 @@ func main() {
 		api.GET("/devices", deviceH.List)
 		api.POST("/devices/:id/disconnect", deviceH.Disconnect)
 
+		// Anonymous suggestions
+		api.POST("/suggestions", suggestionH.Submit)
+
 		api.GET("/notifications", func(c *gin.Context) {
 			notifs, err := userRepo.GetActiveNotifications(c.Request.Context())
 			if err != nil {
@@ -267,6 +271,13 @@ func main() {
 		adm.GET("/notifications/:id", adminH.GetNotification)
 		adm.PATCH("/notifications/:id", adminH.UpdateNotification)
 		adm.DELETE("/notifications/:id", adminH.DeleteNotification)
+
+		// Broadcast via Telegram bot
+		adm.POST("/broadcast", adminH.Broadcast)
+
+		// Anonymous suggestions
+		adm.GET("/suggestions", adminH.ListSuggestions)
+		adm.PATCH("/suggestions/:id", adminH.UpdateSuggestionStatus)
 	}
 
 	// ── HTTP Server ───────────────────────────────────────────────────────

@@ -463,3 +463,22 @@ type AccountActivity struct {
 	Details   *string   `db:"details" json:"details"`
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 }
+
+// ─── Suggestion ───────────────────────────────────────────────────────────────
+
+type SuggestionStatus string
+
+const (
+	SuggestionNew      SuggestionStatus = "new"
+	SuggestionRead     SuggestionStatus = "read"
+	SuggestionArchived SuggestionStatus = "archived"
+)
+
+// Suggestion is an anonymous feedback item submitted by any authenticated user.
+// No user identity is stored — only the body text and creation time.
+type Suggestion struct {
+	ID        uuid.UUID        `db:"id"         json:"id"`
+	Body      string           `db:"body"       json:"body"`
+	Status    SuggestionStatus `db:"status"     json:"status"`
+	CreatedAt time.Time        `db:"created_at" json:"created_at"`
+}

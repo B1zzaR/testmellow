@@ -1874,3 +1874,89 @@ func (r *UserRepo) MergeUsers(ctx context.Context, srcID, dstID uuid.UUID) error
 
 	return tx.Commit(ctx)
 }
+
+// ─── Broadcast helpers ────────────────────────────────────────────────────────
+
+// ListUsersWithTelegramID returns all users that have a linked Telegram account.
+// Only the user ID and Telegram ID are fetched to keep the query lightweight.
+func (r *UserRepo) ListUsersWithTelegramID(ctx context.Context) ([]struct {
+	UserID     string
+	TelegramID int64
+}, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, telegram_id
+		FROM users
+		WHERE telegram_id IS NOT NULL
+		  AND is_banned = FALSE
+		ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []struct {
+		UserID     string
+		TelegramID int64
+	}
+	for rows.Next() {
+		var e struct {
+			UserID     string
+			TelegramID int64
+		}
+		if err := rows.Scan(&e.UserID, &e.TelegramID); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ─── Suggestions ──────────────────────────────────────────────────────────────
+
+// CreateSuggestion inserts an anonymous suggestion.
+func (r *UserRepo) CreateSuggestion(ctx context.Context, body string) (*domain.Suggestion, error) {
+	s := &domain.Suggestion{}
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO suggestions (id, body, status, created_at)
+		VALUES (gen_random_uuid(), $1, 'new', NOW())
+		RETURNING id, body, status, created_at`, body).Scan(
+		&s.ID, &s.Body, &s.Status, &s.CreatedAt)
+	return s, err
+}
+
+// ListSuggestions returns suggestions ordered by creation time (newest first).
+func (r *UserRepo) ListSuggestions(ctx context.Context, status string, limit, offset int) ([]*domain.Suggestion, error) {
+	q := `SELECT id, body, status, created_at FROM suggestions WHERE 1=1`
+	args := []any{}
+	n := 1
+	if status != "" {
+		q += fmt.Sprintf(" AND status = $%d", n)
+		args = append(args, status)
+		n++
+	}
+	q += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*domain.Suggestion
+	for rows.Next() {
+		s := &domain.Suggestion{}
+		if err := rows.Scan(&s.ID, &s.Body, &s.Status, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// UpdateSuggestionStatus changes the status of a suggestion.
+func (r *UserRepo) UpdateSuggestionStatus(ctx context.Context, id string, status domain.SuggestionStatus) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE suggestions SET status = $1 WHERE id = $2`, status, id)
+	return err
+}

@@ -361,52 +361,64 @@ function HowItWorksSection() {
 
 // ─── Pricing Section ──────────────────────────────────────────────────────────
 
+const COMMON_FEATURES = [
+  'Протокол VLESS/Reality',
+  'Все доступные серверы',
+  'До 4 устройств одновременно',
+  'IP-адреса не хранятся',
+  'Все VLESS-совместимые клиенты',
+  'Реферальная программа и бонусы ЯД',
+  'Поддержка в Telegram',
+]
+
 interface PricingPlan {
   name: string
   price: string
+  pricePerDay: string
   unit: string
   period: string
   badge?: string
-  features: string[]
+  tagline: string
+  accent: string
+  accentText: string
+  accentBg: string
 }
 
 const plans: PricingPlan[] = [
   {
     name: 'Недельный',
     price: '₽40',
+    pricePerDay: '≈ 5.7 ₽/день',
     unit: 'неделю',
     period: '7 дней доступа',
-    features: [
-      'Протокол VLESS/Reality',
-      'Все доступные серверы',      '4 устройства (расширение до 6)',      'IP-адреса не хранятся',
-      'Все VLESS-совместимые клиенты',
-      'Поддержка в Telegram',
-    ],
+    tagline: 'Попробовать без лишних обязательств',
+    accent: 'border-slate-600',
+    accentText: 'text-slate-100',
+    accentBg: 'bg-surface-800',
   },
   {
     name: 'Месячный',
     price: '₽100',
+    pricePerDay: '≈ 3.3 ₽/день',
     unit: 'месяц',
     period: '30 дней доступа',
     badge: 'Популярный',
-    features: [
-      'Всё из недельного',
-      'Реферальная программа',
-      'Бонусы ЯД',
-      'Пробный период при регистрации',
-    ],
+    tagline: 'Оптимальный выбор большинства',
+    accent: 'border-primary-500/60',
+    accentText: 'text-primary-400',
+    accentBg: 'bg-surface-800',
   },
   {
     name: '3 Месяца',
     price: '₽270',
+    pricePerDay: '≈ 3 ₽/день',
     unit: '3 месяца',
     period: '90 дней — экономия 30 ₽',
     badge: 'Выгоднее',
-    features: [
-      'Всё из месячного',
-      'Двойные бонусы ЯД',
-      'Экономия 30 ₽ против трёх месяцев',
-    ],
+    tagline: 'Плати меньше, не думай про оплату',
+    accent: 'border-amber-500/40',
+    accentText: 'text-amber-400',
+    accentBg: 'bg-surface-800',
   },
 ]
 
@@ -422,21 +434,25 @@ function PricingSection() {
             Доступная защита
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-slate-400">
-            Без скрытых платежей и поднятия цен. Платите только за то, чем пользуетесь.
+            Без скрытых платежей и поднятия цен. Один набор функций — три срока на выбор.
           </p>
         </div>
 
+        {/* Plan cards */}
         <div className="mt-14 grid gap-6 sm:grid-cols-2 md:grid-cols-3">
           {plans.map((plan) => {
             const isPopular = plan.badge === 'Популярный'
+            const isBest = plan.badge === 'Выгоднее'
             return (
               <div
                 key={plan.name}
                 className={[
-                  'relative flex flex-col rounded-2xl border p-7 transition-all',
+                  'relative flex flex-col rounded-2xl border p-7 transition-all duration-200',
                   isPopular
-                    ? 'border-primary-500/50 bg-surface-800 shadow-glow-md'
-                    : 'border-surface-700 bg-surface-800 hover:border-primary-500/30',
+                    ? 'border-primary-500/60 bg-surface-800 shadow-glow-md scale-[1.02]'
+                    : isBest
+                    ? 'border-amber-500/40 bg-surface-800 hover:border-amber-400/60'
+                    : 'border-surface-700 bg-surface-800 hover:border-slate-500/50',
                 ].join(' ')}
               >
                 {/* Badge */}
@@ -446,47 +462,79 @@ function PricingSection() {
                       'absolute right-5 top-5 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest',
                       isPopular
                         ? 'bg-primary-500/20 text-primary-400 ring-1 ring-primary-500/40'
-                        : 'bg-surface-600 text-slate-400',
+                        : 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30',
                     ].join(' ')}
                   >
                     {plan.badge}
                   </span>
                 )}
 
+                {/* Header */}
                 <div>
-                  <p className="text-sm font-semibold uppercase tracking-wider text-slate-500">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                     {plan.name}
                   </p>
-                  <div className="mt-3 flex items-end gap-1">
+                  <p className={['mt-1 text-sm font-medium', plan.accentText].join(' ')}>
+                    {plan.tagline}
+                  </p>
+                  <div className="mt-4 flex items-end gap-1">
                     <span
                       className={[
-                        'text-4xl font-extrabold',
-                        isPopular ? 'text-primary-400' : 'text-slate-100',
+                        'text-4xl font-extrabold tracking-tight',
+                        isPopular ? 'text-primary-400' : isBest ? 'text-amber-400' : 'text-slate-100',
                       ].join(' ')}
                     >
                       {plan.price}
                     </span>
-                    <span className="mb-1 text-sm text-slate-500">/{plan.unit}</span>
+                    <span className="mb-1.5 text-sm text-slate-500">/{plan.unit}</span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-600">{plan.period}</p>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <span className="text-xs text-slate-600">{plan.period}</span>
+                    <span
+                      className={[
+                        'rounded-md px-1.5 py-0.5 text-[10px] font-semibold',
+                        isPopular
+                          ? 'bg-primary-500/10 text-primary-500'
+                          : isBest
+                          ? 'bg-amber-500/10 text-amber-500'
+                          : 'bg-surface-700 text-slate-500',
+                      ].join(' ')}
+                    >
+                      {plan.pricePerDay}
+                    </span>
+                  </div>
                 </div>
 
-                <ul className="mt-6 flex-1 space-y-3">
-                  {plan.features.map((feat) => (
-                    <li key={feat} className="flex items-start gap-2.5 text-sm text-slate-300">
-                      <Icon name="check" size={14} className="mt-0.5 shrink-0 text-primary-500" />
-                      {feat}
-                    </li>
-                  ))}
-                </ul>
+                <div className={['mt-6 border-t pt-5', isBest ? 'border-amber-500/20' : isPopular ? 'border-primary-500/20' : 'border-surface-700'].join(' ')}>
+                  <p className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                    Включено
+                  </p>
+                  <ul className="space-y-2.5">
+                    {COMMON_FEATURES.map((feat) => (
+                      <li key={feat} className="flex items-start gap-2 text-sm text-slate-400">
+                        <Icon
+                          name="check"
+                          size={13}
+                          className={[
+                            'mt-0.5 shrink-0',
+                            isPopular ? 'text-primary-500' : isBest ? 'text-amber-500' : 'text-slate-500',
+                          ].join(' ')}
+                        />
+                        {feat}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
 
                 <Link
                   to="/register"
                   className={[
-                    'mt-8 block rounded-xl py-3 text-center text-sm font-bold transition-all active:scale-95',
+                    'mt-7 block rounded-xl py-3 text-center text-sm font-bold transition-all active:scale-95',
                     isPopular
                       ? 'bg-primary-500 text-white shadow-glow-sm hover:bg-primary-400 hover:shadow-glow-md'
-                      : 'border border-surface-600 text-slate-300 hover:border-primary-500/40 hover:bg-surface-700 hover:text-slate-100',
+                      : isBest
+                      ? 'border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 hover:border-amber-400/60'
+                      : 'border border-surface-600 text-slate-300 hover:border-slate-500 hover:bg-surface-700 hover:text-slate-100',
                   ].join(' ')}
                 >
                   Начать
@@ -496,7 +544,7 @@ function PricingSection() {
           })}
         </div>
 
-        <p className="mt-8 text-center text-sm text-slate-600">
+        <p className="mt-10 text-center text-sm text-slate-600">
           Автопродления нет. Оплата через СБП. Пробный период — при регистрации.
         </p>
       </div>

@@ -21,6 +21,7 @@ const navItems: NavItem[] = [
   { to: '/tickets',          label: 'Поддержка',       icon: 'message'              },
   { to: '/promo',            label: 'Промокод',        icon: 'tag'                  },
   { to: '/payments/history', label: 'Платежи',         icon: 'coins'                },
+  { to: '/suggestions',      label: 'Предложения',     icon: 'lightbulb'            },
   { to: '/settings',         label: 'Настройки',       icon: 'sliders'              },
 ]
 

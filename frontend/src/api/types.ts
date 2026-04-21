@@ -344,3 +344,23 @@ export interface UpdateNotificationRequest {
   message?: string
   is_active?: boolean
 }
+
+// ─── Suggestions ──────────────────────────────────────────────────────────────
+
+export type SuggestionStatus = 'new' | 'read' | 'archived'
+
+export interface Suggestion {
+  id: string
+  body: string
+  status: SuggestionStatus
+  created_at: string
+}
+
+export interface BroadcastRequest {
+  message: string
+}
+
+export interface BroadcastResponse {
+  queued: number
+  total: number
+}

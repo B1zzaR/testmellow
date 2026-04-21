@@ -24,6 +24,9 @@ import type {
   SystemNotification,
   CreateNotificationRequest,
   UpdateNotificationRequest,
+  Suggestion,
+  BroadcastRequest,
+  BroadcastResponse,
 } from './types'
 
 export const adminApi = {
@@ -273,5 +276,26 @@ export const adminApi = {
 
   deleteNotification: async (id: string): Promise<{ message: string }> => {
     const res = await apiClient.delete<{ message: string }>(`/api/admin/notifications/${id}`)
+    return res.data
+  },
+
+  // ─── Broadcast ───────────────────────────────────────────────────────────────
+  broadcast: async (data: BroadcastRequest): Promise<BroadcastResponse> => {
+    const res = await apiClient.post<BroadcastResponse>('/api/admin/broadcast', data)
+    return res.data
+  },
+
+  // ─── Suggestions ─────────────────────────────────────────────────────────────
+  listSuggestions: async (params?: {
+    status?: string
+    limit?: number
+    offset?: number
+  }): Promise<{ suggestions: Suggestion[] }> => {
+    const res = await apiClient.get<{ suggestions: Suggestion[] }>('/api/admin/suggestions', { params })
+    return res.data
+  },
+
+  updateSuggestionStatus: async (id: string, status: string): Promise<{ message: string }> => {
+    const res = await apiClient.patch<{ message: string }>(`/api/admin/suggestions/${id}`, { status })
     return res.data
   },}
