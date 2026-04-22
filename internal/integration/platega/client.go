@@ -139,11 +139,11 @@ func (c *Client) CreatePayment(ctx context.Context, req CreatePaymentRequest) (*
 	return &result, nil
 }
 
-// GetPaymentStatus calls GET /transaction/process/{transactionId}
+// GetPaymentStatus calls GET /transaction/{transactionId}
 func (c *Client) GetPaymentStatus(ctx context.Context, transactionID string) (*CreatePaymentResponse, error) {
 	httpReq, err := http.NewRequestWithContext(ctx,
 		http.MethodGet,
-		c.cfg.BaseURL+"/transaction/process/"+transactionID,
+		c.cfg.BaseURL+"/transaction/"+transactionID,
 		nil,
 	)
 	if err != nil {
