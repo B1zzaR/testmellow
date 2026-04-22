@@ -1721,13 +1721,14 @@ func (r *UserRepo) DeleteDeviceExpansionsByUser(ctx context.Context, userID uuid
 }
 
 // ExtendDeviceExpansion extends an existing active device expansion's expiry.
-// Pass incrementCount=true when the extension is a paid renewal (to increment extend_count).
+// Pass incrementCount=true when the extension is a paid renewal (to reset extend_count to 0).
+// Pass incrementCount=false for free extensions within the same subscription (to increment extend_count).
 func (r *UserRepo) ExtendDeviceExpansion(ctx context.Context, tx pgx.Tx, expansionID uuid.UUID, newExpiry time.Time, incrementCount bool) error {
 	if incrementCount {
-		_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1, extend_count = extend_count + 1 WHERE id = $2`, newExpiry, expansionID)
+		_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1, extend_count = 0 WHERE id = $2`, newExpiry, expansionID)
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1 WHERE id = $2`, newExpiry, expansionID)
+	_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1, extend_count = extend_count + 1 WHERE id = $2`, newExpiry, expansionID)
 	return err
 }
 

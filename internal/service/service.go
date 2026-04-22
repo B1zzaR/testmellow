@@ -1277,7 +1277,7 @@ func (s *EconomyService) ExtendDeviceExpansionYAD(ctx context.Context, userID uu
 		return nil, err
 	}
 
-	if err := s.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt, false); err != nil {
+	if err := s.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt, true); err != nil {
 		return nil, err
 	}
 
