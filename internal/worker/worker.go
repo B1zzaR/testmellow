@@ -700,7 +700,7 @@ func (w *Worker) handleDeviceExpansionExtend(ctx context.Context, payload string
 	}
 	defer tx.Rollback(ctx)
 
-	if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt, true); err != nil {
+	if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt, false); err != nil {
 		return err
 	}
 
