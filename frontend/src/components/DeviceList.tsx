@@ -25,11 +25,23 @@ const PRICE_RUB = 40
 const PRICE_YAD = 16
 const MAX_EXTRA = 2
 
-// Extension prices (per extra device) depending on current subscription plan
-const EXTENSION_PRICES: Record<string, { rub: number; yad: number }> = {
+// Base extension prices (per extra device) depending on current subscription plan
+const EXTENSION_BASE_PRICES: Record<string, { rub: number; yad: number }> = {
   '1week':   { rub: 19, yad: 8 },
   '1month':  { rub: 39, yad: 16 },
   '3months': { rub: 119, yad: 48 },
+}
+
+// Calculate extension price based on subscription plan and renewal count
+// Price multiplies by (extendCount + 1) to make each renewal more expensive
+function getExtensionPrice(plan: SubscriptionPlan | undefined, extendCount: number): { rub: number; yad: number } | null {
+  if (!plan) return null
+  const basePrice = EXTENSION_BASE_PRICES[plan]
+  if (!basePrice) return null
+  return {
+    rub: basePrice.rub * (extendCount + 1),
+    yad: basePrice.yad * (extendCount + 1),
+  }
 }
 
 interface DeviceListProps {
@@ -128,7 +140,7 @@ export function DeviceList({ data, isTrial = false, subscriptionPlan, subscripti
   // Check if expansion needs to be extended to match new subscription
   const needsExtension = expansion && subscriptionExpiry &&
     new Date(expansion.expires_at).getTime() < new Date(subscriptionExpiry).getTime()
-  const extensionPrices = subscriptionPlan ? EXTENSION_PRICES[subscriptionPlan] : null
+  const extensionPrices = expansion ? getExtensionPrice(subscriptionPlan, expansion.extend_count) : null
 
   const activeDevices = devices.filter(d => d.is_active && !d.is_blocked)
   const blockedDevices = devices.filter(d => d.is_blocked)
