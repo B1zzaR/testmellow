@@ -15,28 +15,28 @@ import (
 
 // ListAllPayments returns all payments with optional filters.
 func (r *UserRepo) ListAllPayments(ctx context.Context, status string, from, to *time.Time, limit, offset int) ([]*domain.Payment, error) {
-	q := `SELECT id, user_id, amount_kopecks, currency, status, plan, payment_method,
-	             redirect_url, expires_at, created_at, updated_at
-	      FROM payments WHERE 1=1`
+	q := `SELECT p.id, p.user_id, p.amount_kopecks, p.currency, p.status, p.plan, p.payment_method,
+	             p.redirect_url, p.expires_at, p.created_at, p.updated_at, u.username
+	      FROM payments p LEFT JOIN users u ON u.id = p.user_id WHERE 1=1`
 	args := []any{}
 	n := 1
 
 	if status != "" {
-		q += fmt.Sprintf(" AND status = $%d", n)
+		q += fmt.Sprintf(" AND p.status = $%d", n)
 		args = append(args, status)
 		n++
 	}
 	if from != nil {
-		q += fmt.Sprintf(" AND created_at >= $%d", n)
+		q += fmt.Sprintf(" AND p.created_at >= $%d", n)
 		args = append(args, *from)
 		n++
 	}
 	if to != nil {
-		q += fmt.Sprintf(" AND created_at <= $%d", n)
+		q += fmt.Sprintf(" AND p.created_at <= $%d", n)
 		args = append(args, *to)
 		n++
 	}
-	q += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
+	q += fmt.Sprintf(" ORDER BY p.created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
 	args = append(args, limit, offset)
 
 	rows, err := r.db.Query(ctx, q, args...)
@@ -50,7 +50,7 @@ func (r *UserRepo) ListAllPayments(ctx context.Context, status string, from, to 
 		p := &domain.Payment{}
 		if err := rows.Scan(
 			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.PaymentMethod,
-			&p.RedirectURL, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
+			&p.RedirectURL, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt, &p.Username,
 		); err != nil {
 			return nil, err
 		}
@@ -132,22 +132,22 @@ func (r *UserRepo) ListPaymentsByUser(ctx context.Context, userID uuid.UUID, lim
 
 // ListAllSubscriptions returns all subscriptions with optional filters.
 func (r *UserRepo) ListAllSubscriptions(ctx context.Context, status string, userID *uuid.UUID, limit, offset int) ([]*domain.Subscription, error) {
-	q := `SELECT id, user_id, plan, status, starts_at, expires_at, remna_sub_uuid, paid_kopecks, payment_id, created_at, updated_at
-	      FROM subscriptions WHERE 1=1`
+	q := `SELECT s.id, s.user_id, s.plan, s.status, s.starts_at, s.expires_at, s.remna_sub_uuid, s.paid_kopecks, s.payment_id, s.created_at, s.updated_at, u.username
+	      FROM subscriptions s LEFT JOIN users u ON u.id = s.user_id WHERE 1=1`
 	args := []any{}
 	n := 1
 
 	if status != "" {
-		q += fmt.Sprintf(" AND status = $%d", n)
+		q += fmt.Sprintf(" AND s.status = $%d", n)
 		args = append(args, status)
 		n++
 	}
 	if userID != nil {
-		q += fmt.Sprintf(" AND user_id = $%d", n)
+		q += fmt.Sprintf(" AND s.user_id = $%d", n)
 		args = append(args, *userID)
 		n++
 	}
-	q += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
+	q += fmt.Sprintf(" ORDER BY s.created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
 	args = append(args, limit, offset)
 
 	rows, err := r.db.Query(ctx, q, args...)
@@ -160,7 +160,7 @@ func (r *UserRepo) ListAllSubscriptions(ctx context.Context, status string, user
 	for rows.Next() {
 		s := &domain.Subscription{}
 		if err := rows.Scan(&s.ID, &s.UserID, &s.Plan, &s.Status, &s.StartsAt, &s.ExpiresAt,
-			&s.RemnaSubUUID, &s.PaidKopecks, &s.PaymentID, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			&s.RemnaSubUUID, &s.PaidKopecks, &s.PaymentID, &s.CreatedAt, &s.UpdatedAt, &s.Username); err != nil {
 			return nil, err
 		}
 		subs = append(subs, s)

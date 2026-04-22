@@ -82,7 +82,7 @@ type User struct {
 	YADBalance            int64      `db:"yad_balance" json:"yad_balance"`
 	ReferrerID            *uuid.UUID `db:"referrer_id" json:"referrer_id"`
 	ReferralCode          string     `db:"referral_code" json:"referral_code"`
-	LTV                   int64      `db:"ltv" json:"ltv"`
+	LTV                   int64      `db:"ltv" json:"ltv_kopecks"`
 	RiskScore             int        `db:"risk_score" json:"-"`
 	IsAdmin               bool       `db:"is_admin" json:"is_admin"`
 	IsBanned              bool       `db:"is_banned" json:"is_banned"`
@@ -190,6 +190,7 @@ type Subscription struct {
 	PaymentID    *uuid.UUID         `db:"payment_id" json:"payment_id"`
 	CreatedAt    time.Time          `db:"created_at" json:"created_at"`
 	UpdatedAt    time.Time          `db:"updated_at" json:"updated_at"`
+	Username     *string            `json:"username,omitempty"`
 }
 
 // ─── Payment ──────────────────────────────────────────────────────────────────
@@ -209,6 +210,7 @@ type Payment struct {
 	Idempotency       string           `db:"idempotency" json:"-"`
 	CreatedAt         time.Time        `db:"created_at" json:"created_at"`
 	UpdatedAt         time.Time        `db:"updated_at" json:"updated_at"`
+	Username          *string          `json:"username,omitempty"`
 }
 
 // ─── Referral ─────────────────────────────────────────────────────────────────
@@ -368,31 +370,39 @@ func DeviceExpansionQuantity(plan SubscriptionPlan) int {
 }
 
 // DeviceExpansionExtensionPriceKopecks returns the ruble price (in kopecks) for
-// extending existing device expansions to match a new subscription plan.
-func DeviceExpansionExtensionPriceKopecks(plan SubscriptionPlan) int64 {
+// a device expansion purchase or renewal. extendCount is the current stored
+// extend_count value (0 for first purchase, 1 after first renewal, etc.);
+// price multiplies by (extendCount + 1) to make each renewal more expensive.
+func DeviceExpansionExtensionPriceKopecks(plan SubscriptionPlan, extendCount int) int64 {
+	var base int64
 	switch plan {
 	case PlanWeek:
-		return 1900 // 19₽
+		base = 1900 // 19₽
 	case PlanMonth:
-		return 3900 // 39₽
+		base = 3900 // 39₽
 	case PlanThreeMonth:
-		return 11900 // 119₽
+		base = 11900 // 119₽
+	default:
+		return 0
 	}
-	return 0
+	return base * int64(extendCount+1)
 }
 
-// DeviceExpansionExtensionPriceYAD returns the ЯД price for extending
-// existing device expansions to match a new subscription plan.
-func DeviceExpansionExtensionPriceYAD(plan SubscriptionPlan) int64 {
+// DeviceExpansionExtensionPriceYAD returns the ЯД price for a device expansion
+// purchase or renewal. Same multiplier logic as DeviceExpansionExtensionPriceKopecks.
+func DeviceExpansionExtensionPriceYAD(plan SubscriptionPlan, extendCount int) int64 {
+	var base int64
 	switch plan {
 	case PlanWeek:
-		return 8
+		base = 8
 	case PlanMonth:
-		return 16
+		base = 16
 	case PlanThreeMonth:
-		return 48
+		base = 48
+	default:
+		return 0
 	}
-	return 0
+	return base * int64(extendCount+1)
 }
 
 // DeviceExpansion tracks an active device-limit expansion purchase.
@@ -400,6 +410,7 @@ type DeviceExpansion struct {
 	ID           uuid.UUID `db:"id"            json:"id"`
 	UserID       uuid.UUID `db:"user_id"       json:"user_id"`
 	ExtraDevices int       `db:"extra_devices" json:"extra_devices"`
+	ExtendCount  int       `db:"extend_count"  json:"extend_count"`
 	ExpiresAt    time.Time `db:"expires_at"    json:"expires_at"`
 	CreatedAt    time.Time `db:"created_at"    json:"created_at"`
 }

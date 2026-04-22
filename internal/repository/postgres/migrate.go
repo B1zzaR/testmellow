@@ -471,6 +471,10 @@ CREATE INDEX IF NOT EXISTS suggestions_status_idx     ON suggestions (status);
 CREATE INDEX IF NOT EXISTS suggestions_created_at_idx ON suggestions (created_at DESC);
 `,
 		},
+		{
+			version: "018_device_expansion_extend_count",
+			sql:     `ALTER TABLE device_expansions ADD COLUMN IF NOT EXISTS extend_count SMALLINT NOT NULL DEFAULT 0;`,
+		},
 	}
 
 	for _, m := range migrations {

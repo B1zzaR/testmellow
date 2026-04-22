@@ -72,9 +72,9 @@ export function AdminUsersPage() {
             render: (u) => formatYAD(u.yad_balance),
           },
           {
-            key: 'ltv_kopecks',
+            key: 'ltv',
             header: 'LTV',
-            render: (u) => formatRubles(u.ltv_kopecks),
+            render: (u) => formatRubles(u.ltv),
           },
           {
             key: 'risk_score',

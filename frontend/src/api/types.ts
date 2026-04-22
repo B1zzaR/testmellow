@@ -18,7 +18,7 @@ export interface User {
   telegram_photo_url: string | null
   yad_balance: number
   referral_code: string
-  ltv_kopecks: number
+  ltv: number
   trial_used: boolean
   is_admin: boolean
   is_banned: boolean
@@ -40,6 +40,7 @@ export interface Subscription {
   payment_id: string | null
   created_at: string
   updated_at: string
+  username?: string | null
 }
 
 export interface Payment {
@@ -53,6 +54,7 @@ export interface Payment {
   expires_at: string | null
   created_at: string
   updated_at: string
+  username?: string | null
 }
 
 export interface Referral {

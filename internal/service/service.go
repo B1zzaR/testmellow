@@ -515,7 +515,7 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 	}
 
 	plan := domain.PlanDeviceExpansion
-	priceKopecks := int64(domain.DeviceExpansionPriceKopecks)
+	priceKopecks := domain.DeviceExpansionExtensionPriceKopecks(activeSub.Plan, 0)
 	description := "Расширение лимита устройств +1"
 
 	// Re-use existing pending device expansion payment if present
@@ -614,7 +614,7 @@ func (s *SubscriptionService) InitiateDeviceExpansionExtendPayment(ctx context.C
 	}
 
 	plan := domain.PlanDeviceExpansionExtend
-	priceKopecks := domain.DeviceExpansionExtensionPriceKopecks(activeSub.Plan)
+	priceKopecks := domain.DeviceExpansionExtensionPriceKopecks(activeSub.Plan, existing.ExtendCount)
 	if priceKopecks == 0 {
 		return "", nil, errors.New("продление для данного тарифа недоступно")
 	}
@@ -1097,8 +1097,6 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 
 // BuyDeviceExpansion purchases a device limit expansion for the user using ЯД.
 func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUID) (*domain.DeviceExpansion, error) {
-	yadPrice := int64(domain.DeviceExpansionPriceYAD)
-
 	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil || user == nil {
 		return nil, errors.New("пользователь не найден")
@@ -1116,10 +1114,6 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 		return nil, errors.New("расширение устройств недоступно на пробной подписке — оформите платный тариф")
 	}
 
-	if user.YADBalance < yadPrice {
-		return nil, errors.New("недостаточно ЯД на балансе")
-	}
-
 	// Expiry = end of active subscription
 	newExpiry := activeSub.ExpiresAt
 
@@ -1130,13 +1124,23 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 	}
 
 	currentExtra := 0
+	currentExtendCount := 0
 	if existing != nil {
 		currentExtra = existing.ExtraDevices
+		currentExtendCount = existing.ExtendCount
 	}
 	if currentExtra+1 > domain.DeviceExpansionMaxExtra {
 		return nil, errors.New("превышен максимум дополнительных устройств")
 	}
 	newExtra := currentExtra + 1
+
+	yadPrice := domain.DeviceExpansionExtensionPriceYAD(activeSub.Plan, currentExtendCount)
+	if yadPrice == 0 {
+		return nil, errors.New("расширение для данного тарифа недоступно")
+	}
+	if user.YADBalance < yadPrice {
+		return nil, errors.New("недостаточно ЯД на балансе")
+	}
 
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
@@ -1151,7 +1155,7 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 
 	var expansion *domain.DeviceExpansion
 	if existing != nil {
-		if err := s.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, newExpiry); err != nil {
+		if err := s.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, newExpiry, false); err != nil {
 			return nil, err
 		}
 		// Also update extra_devices count
@@ -1166,6 +1170,7 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 			ID:           ref,
 			UserID:       userID,
 			ExtraDevices: newExtra,
+			ExtendCount:  1,
 			ExpiresAt:    newExpiry,
 			CreatedAt:    time.Now(),
 		}
@@ -1229,7 +1234,7 @@ func (s *EconomyService) ExtendDeviceExpansionYAD(ctx context.Context, userID uu
 		return nil, errors.New("расширение устройств уже действует до конца подписки")
 	}
 
-	yadPrice := domain.DeviceExpansionExtensionPriceYAD(activeSub.Plan)
+	yadPrice := domain.DeviceExpansionExtensionPriceYAD(activeSub.Plan, existing.ExtendCount)
 	if yadPrice == 0 {
 		return nil, errors.New("продление для данного тарифа недоступно")
 	}
@@ -1250,7 +1255,7 @@ func (s *EconomyService) ExtendDeviceExpansionYAD(ctx context.Context, userID uu
 		return nil, err
 	}
 
-	if err := s.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt); err != nil {
+	if err := s.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt, true); err != nil {
 		return nil, err
 	}
 

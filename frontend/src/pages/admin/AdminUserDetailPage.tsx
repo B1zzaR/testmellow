@@ -10,8 +10,8 @@ import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { subscriptionStatusBadge, paymentStatusBadge } from '@/components/ui/Badge'
-import { formatDateTime, formatRubles, formatYAD } from '@/utils/formatters'
-import type { YADTxType } from '@/api/types'
+import { formatDateTime, formatRubles, formatYAD, planLabel } from '@/utils/formatters'
+import type { YADTxType, SubscriptionStatus } from '@/api/types'
 
 type Tab = 'info' | 'subscriptions' | 'payments' | 'yad'
 
@@ -35,6 +35,12 @@ export function AdminUserDetailPage() {
   const [adjNote, setAdjNote] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+
+  // Subscriptions tab actions
+  const [extendSubId, setExtendSubId] = useState<string | null>(null)
+  const [extendSubDays, setExtendSubDays] = useState('30')
+  const [setSubStatusId, setSetSubStatusId] = useState<string | null>(null)
+  const [newSubStatus, setNewSubStatus] = useState<SubscriptionStatus>('active')
 
   const { data: user, isLoading } = useQuery({
     queryKey: ['admin-user', id],
@@ -97,6 +103,37 @@ export function AdminUserDetailPage() {
       setAdjNote('')
       queryClient.invalidateQueries({ queryKey: ['admin-user', id] })
       queryClient.invalidateQueries({ queryKey: ['admin-user-yad', id] })
+    },
+    onError: (e: Error) => setErrorMsg(e.message),
+  })
+
+  const extendSubMutation = useMutation({
+    mutationFn: ({ subId, days }: { subId: string; days: number }) =>
+      adminApi.extendSubscription(subId, { days }),
+    onSuccess: (res) => {
+      setSuccessMsg(res.message)
+      setExtendSubId(null)
+      queryClient.invalidateQueries({ queryKey: ['admin-user-subs', id] })
+    },
+    onError: (e: Error) => setErrorMsg(e.message),
+  })
+
+  const setSubStatusMutation = useMutation({
+    mutationFn: ({ subId, status }: { subId: string; status: SubscriptionStatus }) =>
+      adminApi.setSubscriptionStatus(subId, { status }),
+    onSuccess: (res) => {
+      setSuccessMsg(res.message)
+      setSetSubStatusId(null)
+      queryClient.invalidateQueries({ queryKey: ['admin-user-subs', id] })
+    },
+    onError: (e: Error) => setErrorMsg(e.message),
+  })
+
+  const checkPaymentMutation = useMutation({
+    mutationFn: (paymentId: string) => adminApi.checkPaymentStatus(paymentId),
+    onSuccess: (res) => {
+      setSuccessMsg(`Platega: ${res.platega_status} / БД: ${res.db_status}`)
+      queryClient.invalidateQueries({ queryKey: ['admin-user-payments', id] })
     },
     onError: (e: Error) => setErrorMsg(e.message),
   })
@@ -182,7 +219,7 @@ export function AdminUserDetailPage() {
                 </div>
                 <div>
                   <dt className="text-slate-500">LTV</dt>
-                  <dd className="mt-0.5 font-semibold">{formatRubles(user.ltv_kopecks)}</dd>
+                  <dd className="mt-0.5 font-semibold">{formatRubles(user.ltv)}</dd>
                 </div>
                 <div>
                   <dt className="text-slate-500">Уровень риска</dt>
@@ -251,23 +288,42 @@ export function AdminUserDetailPage() {
                   <th className="pb-3 pr-4">Тариф</th>
                   <th className="pb-3 pr-4">Статус</th>
                   <th className="pb-3 pr-4">Истекает</th>
-                  <th className="pb-3">Оплачено</th>
+                  <th className="pb-3 pr-4">Оплачено</th>
+                  <th className="pb-3">Действия</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-700">
                 {(subsData?.subscriptions ?? []).length === 0 && (
                   <tr>
-                    <td colSpan={4} className="py-8 text-center text-slate-500">
+                    <td colSpan={5} className="py-8 text-center text-slate-500">
                       Нет подписок
                     </td>
                   </tr>
                 )}
                 {(subsData?.subscriptions ?? []).map((s) => (
                   <tr key={s.id} className="text-slate-300 hover:bg-surface-700/30">
-                    <td className="py-3 pr-4 capitalize">{s.plan}</td>
+                    <td className="py-3 pr-4">{planLabel(s.plan)}</td>
                     <td className="py-3 pr-4">{subscriptionStatusBadge(s.status)}</td>
                     <td className="py-3 pr-4 text-slate-400">{formatDateTime(s.expires_at)}</td>
-                    <td className="py-3 font-semibold">{formatRubles(s.paid_kopecks)}</td>
+                    <td className="py-3 pr-4 font-semibold">{formatRubles(s.paid_kopecks)}</td>
+                    <td className="py-3">
+                      <div className="flex gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => { setExtendSubId(s.id); setExtendSubDays('30') }}
+                        >
+                          Продлить
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => { setSetSubStatusId(s.id); setNewSubStatus(s.status) }}
+                        >
+                          Статус
+                        </Button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -286,23 +342,36 @@ export function AdminUserDetailPage() {
                   <th className="pb-3 pr-4">Тариф</th>
                   <th className="pb-3 pr-4">Сумма</th>
                   <th className="pb-3 pr-4">Статус</th>
-                  <th className="pb-3">Дата</th>
+                  <th className="pb-3 pr-4">Дата</th>
+                  <th className="pb-3">Действия</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-700">
                 {(paymentsData?.payments ?? []).length === 0 && (
                   <tr>
-                    <td colSpan={4} className="py-8 text-center text-slate-500">
+                    <td colSpan={5} className="py-8 text-center text-slate-500">
                       Нет платежей
                     </td>
                   </tr>
                 )}
                 {(paymentsData?.payments ?? []).map((p) => (
                   <tr key={p.id} className="text-slate-300 hover:bg-surface-700/30">
-                    <td className="py-3 pr-4 capitalize">{p.plan}</td>
+                    <td className="py-3 pr-4">{planLabel(p.plan)}</td>
                     <td className="py-3 pr-4 font-semibold">{formatRubles(p.amount_kopecks)}</td>
                     <td className="py-3 pr-4">{paymentStatusBadge(p.status)}</td>
-                    <td className="py-3 text-slate-400">{formatDateTime(p.created_at)}</td>
+                    <td className="py-3 pr-4 text-slate-400">{formatDateTime(p.created_at)}</td>
+                    <td className="py-3">
+                      {p.status === 'PENDING' && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          loading={checkPaymentMutation.isPending && checkPaymentMutation.variables === p.id}
+                          onClick={() => checkPaymentMutation.mutate(p.id)}
+                        >
+                          Проверить
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -425,6 +494,72 @@ export function AdminUserDetailPage() {
             value={adjNote}
             onChange={(e) => setAdjNote(e.target.value)}
           />
+        </div>
+      </Modal>
+
+      {/* Extend subscription modal */}
+      <Modal
+        open={extendSubId !== null}
+        onClose={() => setExtendSubId(null)}
+        title="Продлить подписку"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setExtendSubId(null)}>
+              Отмена
+            </Button>
+            <Button
+              loading={extendSubMutation.isPending}
+              onClick={() => {
+                if (extendSubId) extendSubMutation.mutate({ subId: extendSubId, days: Number(extendSubDays) })
+              }}
+            >
+              Продлить
+            </Button>
+          </>
+        }
+      >
+        <Input
+          label="Количество дней"
+          type="number"
+          min={1}
+          value={extendSubDays}
+          onChange={(e) => setExtendSubDays(e.target.value)}
+        />
+      </Modal>
+
+      {/* Set subscription status modal */}
+      <Modal
+        open={setSubStatusId !== null}
+        onClose={() => setSetSubStatusId(null)}
+        title="Изменить статус подписки"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setSetSubStatusId(null)}>
+              Отмена
+            </Button>
+            <Button
+              loading={setSubStatusMutation.isPending}
+              onClick={() => {
+                if (setSubStatusId) setSubStatusMutation.mutate({ subId: setSubStatusId, status: newSubStatus })
+              }}
+            >
+              Сохранить
+            </Button>
+          </>
+        }
+      >
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-400">Новый статус</label>
+          <select
+            value={newSubStatus}
+            onChange={(e) => setNewSubStatus(e.target.value as SubscriptionStatus)}
+            className="w-full rounded-lg border border-surface-600 bg-surface-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+          >
+            <option value="active">Активна</option>
+            <option value="expired">Истекла</option>
+            <option value="canceled">Отменена</option>
+            <option value="trial">Пробная</option>
+          </select>
         </div>
       </Modal>
     </div>

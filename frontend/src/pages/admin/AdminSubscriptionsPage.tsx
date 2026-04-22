@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '@/api/admin'
 import { Card } from '@/components/ui/Card'
@@ -21,6 +22,7 @@ const STATUS_OPTIONS = [
 
 export function AdminSubscriptionsPage() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [statusFilter, setStatusFilter] = useState('')
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const [page, setPage] = useState(1)
@@ -143,7 +145,14 @@ export function AdminSubscriptionsPage() {
               )}
               {subs.map((s) => (
                 <tr key={s.id} className="text-slate-300 hover:bg-surface-700/30">
-                  <td className="py-3 pr-4 font-mono text-xs text-slate-400">{s.user_id.slice(0, 8)}…</td>
+                  <td className="py-3 pr-4">
+                    <button
+                      className="font-mono text-xs text-yellow-400 hover:underline"
+                      onClick={() => navigate(`/admin/users/${s.user_id}`)}
+                    >
+                      {s.username ?? `${s.user_id.slice(0, 8)}…`}
+                    </button>
+                  </td>
                   <td className="py-3 pr-4 capitalize">{s.plan}</td>
                   <td className="py-3 pr-4">{subscriptionStatusBadge(s.status)}</td>
                   <td className="py-3 pr-4 text-slate-400">{formatDateTime(s.expires_at)}</td>

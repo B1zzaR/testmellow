@@ -1641,9 +1641,9 @@ func (r *UserRepo) DeleteNotification(ctx context.Context, id uuid.UUID) error {
 // CreateDeviceExpansion inserts a new device expansion record inside the given transaction.
 func (r *UserRepo) CreateDeviceExpansion(ctx context.Context, tx pgx.Tx, de *domain.DeviceExpansion) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO device_expansions (id, user_id, extra_devices, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5)`,
-		de.ID, de.UserID, de.ExtraDevices, de.ExpiresAt, de.CreatedAt)
+		INSERT INTO device_expansions (id, user_id, extra_devices, extend_count, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		de.ID, de.UserID, de.ExtraDevices, de.ExtendCount, de.ExpiresAt, de.CreatedAt)
 	return err
 }
 
@@ -1651,11 +1651,11 @@ func (r *UserRepo) CreateDeviceExpansion(ctx context.Context, tx pgx.Tx, de *dom
 func (r *UserRepo) GetActiveDeviceExpansion(ctx context.Context, userID uuid.UUID) (*domain.DeviceExpansion, error) {
 	de := &domain.DeviceExpansion{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, extra_devices, expires_at, created_at
+		SELECT id, user_id, extra_devices, extend_count, expires_at, created_at
 		FROM device_expansions
 		WHERE user_id = $1 AND expires_at > NOW()
 		ORDER BY expires_at DESC
-		LIMIT 1`, userID).Scan(&de.ID, &de.UserID, &de.ExtraDevices, &de.ExpiresAt, &de.CreatedAt)
+		LIMIT 1`, userID).Scan(&de.ID, &de.UserID, &de.ExtraDevices, &de.ExtendCount, &de.ExpiresAt, &de.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -1721,7 +1721,12 @@ func (r *UserRepo) DeleteDeviceExpansionsByUser(ctx context.Context, userID uuid
 }
 
 // ExtendDeviceExpansion extends an existing active device expansion's expiry.
-func (r *UserRepo) ExtendDeviceExpansion(ctx context.Context, tx pgx.Tx, expansionID uuid.UUID, newExpiry time.Time) error {
+// Pass incrementCount=true when the extension is a paid renewal (to increment extend_count).
+func (r *UserRepo) ExtendDeviceExpansion(ctx context.Context, tx pgx.Tx, expansionID uuid.UUID, newExpiry time.Time, incrementCount bool) error {
+	if incrementCount {
+		_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1, extend_count = extend_count + 1 WHERE id = $2`, newExpiry, expansionID)
+		return err
+	}
 	_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1 WHERE id = $2`, newExpiry, expansionID)
 	return err
 }

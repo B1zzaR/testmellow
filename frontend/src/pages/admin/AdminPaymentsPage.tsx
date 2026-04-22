@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '@/api/admin'
 import { Card } from '@/components/ui/Card'
@@ -21,6 +22,7 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
 
 export function AdminPaymentsPage() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [status, setStatus] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
@@ -131,7 +133,12 @@ export function AdminPaymentsPage() {
                     <span className="font-mono text-xs text-slate-500">{p.id.slice(0, 8)}…</span>
                   </td>
                   <td className="py-3 pr-4">
-                    <span className="font-mono text-xs">{p.user_id.slice(0, 8)}…</span>
+                    <button
+                      className="font-mono text-xs text-yellow-400 hover:underline"
+                      onClick={() => navigate(`/admin/users/${p.user_id}`)}
+                    >
+                      {p.username ?? `${p.user_id.slice(0, 8)}…`}
+                    </button>
                   </td>
                   <td className="py-3 pr-4 capitalize">{p.plan}</td>
                   <td className="py-3 pr-4 font-semibold">{formatRubles(p.amount_kopecks)}</td>

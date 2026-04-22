@@ -585,7 +585,7 @@ func (w *Worker) handleDeviceExpansionActivate(ctx context.Context, payload stri
 	defer tx.Rollback(ctx)
 
 	if existing != nil {
-		if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, newExpiry); err != nil {
+		if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, newExpiry, false); err != nil {
 			return err
 		}
 		if err := w.repo.UpdateDeviceExpansionExtra(ctx, tx, existing.ID, newExtra); err != nil {
@@ -596,6 +596,7 @@ func (w *Worker) handleDeviceExpansionActivate(ctx context.Context, payload stri
 			ID:           uuid.New(),
 			UserID:       userID,
 			ExtraDevices: newExtra,
+			ExtendCount:  1,
 			ExpiresAt:    newExpiry,
 			CreatedAt:    time.Now(),
 		}
@@ -695,7 +696,7 @@ func (w *Worker) handleDeviceExpansionExtend(ctx context.Context, payload string
 	}
 	defer tx.Rollback(ctx)
 
-	if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt); err != nil {
+	if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt, true); err != nil {
 		return err
 	}
 

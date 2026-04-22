@@ -963,7 +963,7 @@ func (b *Bot) handleExtendDevices(c tele.Context) error {
 		return c.Send("Расширение не требует продления.", rm)
 	}
 
-	price := domain.DeviceExpansionExtensionPriceYAD(activeSub.Plan)
+	price := domain.DeviceExpansionExtensionPriceYAD(activeSub.Plan, expansion.ExtendCount)
 
 	rm := &tele.ReplyMarkup{}
 	btnConfirm := rm.Data(fmt.Sprintf("✅ Продлить за %d ЯД", price), "confirm_extend")
