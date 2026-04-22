@@ -605,6 +605,10 @@ func (w *Worker) handleDeviceExpansionActivate(ctx context.Context, payload stri
 		}
 	}
 
+	if err := w.repo.IncrementDeviceExpansionCount(ctx, tx, userID); err != nil {
+		return fmt.Errorf("increment device expansion count: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -698,6 +702,10 @@ func (w *Worker) handleDeviceExpansionExtend(ctx context.Context, payload string
 
 	if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt, true); err != nil {
 		return err
+	}
+
+	if err := w.repo.IncrementDeviceExpansionCount(ctx, tx, userID); err != nil {
+		return fmt.Errorf("increment device expansion count: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

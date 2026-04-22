@@ -1737,6 +1737,27 @@ func (r *UserRepo) UpdateDeviceExpansionExtra(ctx context.Context, tx pgx.Tx, ex
 	return err
 }
 
+// GetDeviceExpansionCount returns how many times the user has purchased or extended
+// a device expansion (persistent across record deletions).
+func (r *UserRepo) GetDeviceExpansionCount(ctx context.Context, userID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx,
+		`SELECT device_expansion_count FROM users WHERE id = $1`, userID).Scan(&count)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	return count, err
+}
+
+// IncrementDeviceExpansionCount atomically increments the user's device expansion
+// purchase counter. Must be called inside a transaction when the purchase is confirmed.
+func (r *UserRepo) IncrementDeviceExpansionCount(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	_, err := tx.Exec(ctx,
+		`UPDATE users SET device_expansion_count = device_expansion_count + 1, updated_at = NOW() WHERE id = $1`,
+		userID)
+	return err
+}
+
 // MergeUsers transfers all data from srcID to dstID inside a single transaction,
 // then deletes the source user. Used when a Telegram-created account is merged
 // into an existing website account.
