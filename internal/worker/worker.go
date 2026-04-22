@@ -944,6 +944,8 @@ func (w *Worker) syncStalePayments(ctx context.Context) {
 
 		platResp, err := w.platega.GetPaymentStatus(ctx, p.ID.String())
 		if err != nil {
+			// Release the dedup key so the next periodic cycle can retry immediately.
+			_ = w.rdb.Del(ctx, dedupKey)
 			w.log.Warn("platega status sync failed",
 				zap.String("payment_id", p.ID.String()),
 				zap.Error(err))
@@ -951,6 +953,13 @@ func (w *Worker) syncStalePayments(ctx context.Context) {
 		}
 
 		newStatus := domain.PaymentStatus(platResp.Status)
+		// Ignore unrecognised statuses — never store garbage in the DB.
+		if !domain.IsValidPaymentStatus(newStatus) {
+			w.log.Warn("unexpected payment status from Platega",
+				zap.String("payment_id", p.ID.String()),
+				zap.String("status", string(platResp.Status)))
+			continue
+		}
 		if newStatus == p.Status {
 			continue
 		}

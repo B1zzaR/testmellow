@@ -403,7 +403,7 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 		PaymentMethod:  platega.MethodSBPQR,
 		PlategaPayload: userID.String(),
 		RedirectURL:    platResp.Redirect,
-		ExpiresAt:      func() *time.Time { t := time.Now().Add(15 * time.Minute); return &t }(),
+		ExpiresAt:      func() *time.Time { t := time.Now().Add(30 * time.Minute); return &t }(),
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
@@ -555,7 +555,7 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		return "", nil, fmt.Errorf("invalid platega transaction id: %w", err)
 	}
 
-	expiresAt := time.Now().Add(15 * time.Minute)
+	expiresAt := time.Now().Add(30 * time.Minute)
 	payment := &domain.Payment{
 		ID:             txID,
 		UserID:         userID,
@@ -655,7 +655,7 @@ func (s *SubscriptionService) InitiateDeviceExpansionExtendPayment(ctx context.C
 		return "", nil, fmt.Errorf("invalid platega transaction id: %w", err)
 	}
 
-	expiresAt := time.Now().Add(15 * time.Minute)
+	expiresAt := time.Now().Add(30 * time.Minute)
 	payment := &domain.Payment{
 		ID:             txID,
 		UserID:         userID,
@@ -746,6 +746,13 @@ func (s *SubscriptionService) CheckPaymentStatus(ctx context.Context, userID, pa
 	}
 
 	newStatus := domain.PaymentStatus(platResp.Status)
+	// Reject unrecognised statuses so we never persist garbage to the DB.
+	if !domain.IsValidPaymentStatus(newStatus) {
+		s.log.Warn("unexpected payment status from Platega",
+			zap.String("payment_id", paymentID.String()),
+			zap.String("status", string(platResp.Status)))
+		return payment, nil
+	}
 	if newStatus == payment.Status {
 		return payment, nil // nothing changed
 	}

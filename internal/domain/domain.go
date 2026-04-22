@@ -18,6 +18,18 @@ const (
 	PaymentStatusExpired      PaymentStatus = "EXPIRED"
 )
 
+// IsValidPaymentStatus returns true for statuses the system recognises.
+// Used to reject unexpected values returned by the payment gateway so
+// they are never stored in the database.
+func IsValidPaymentStatus(s PaymentStatus) bool {
+	switch s {
+	case PaymentStatusPending, PaymentStatusConfirmed, PaymentStatusCanceled,
+		PaymentStatusChargebacked, PaymentStatusExpired:
+		return true
+	}
+	return false
+}
+
 type SubscriptionStatus string
 
 const (

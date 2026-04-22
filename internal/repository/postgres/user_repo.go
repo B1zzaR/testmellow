@@ -935,7 +935,7 @@ func (r *UserRepo) GetStalePendingPayments(ctx context.Context) ([]*domain.Payme
 		       expires_at, created_at, updated_at
 		FROM payments
 		WHERE status='PENDING'
-		  AND expires_at IS NOT NULL AND expires_at <= NOW() + INTERVAL '2 minutes'
+		  AND expires_at IS NOT NULL AND expires_at <= NOW() + INTERVAL '5 minutes'
 		ORDER BY expires_at ASC
 		LIMIT 100`)
 	if err != nil {
