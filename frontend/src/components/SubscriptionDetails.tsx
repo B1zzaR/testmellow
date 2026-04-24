@@ -4,7 +4,7 @@ import { shopApi } from '@/api/shop'
 import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
 import { Icon } from '@/components/ui/Icons'
-import { formatDate, planLabel, daysUntil } from '@/utils/formatters'
+import { formatDate, planLabel } from '@/utils/formatters'
 import type { Subscription, DeviceExpansion } from '@/api/types'
 
 interface SubscriptionDetailsProps {
@@ -108,7 +108,6 @@ function PeriodCard({ subscription, index, deviceExpansion, onBuyDevices, isLoad
   
   const isActive = subscription.status === 'active' && now >= startsAt && now < expiresAt
   const isQueued = now < startsAt
-  const isExpired = now >= expiresAt
   
   const durationDays = Math.ceil((expiresAt - startsAt) / (1000 * 60 * 60 * 24))
   
