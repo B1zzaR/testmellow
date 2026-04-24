@@ -262,7 +262,7 @@ export function SubscriptionsPage() {
           <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-2.5">
             <Icon name="info" size={14} className="shrink-0 text-yellow-500" />
             <p className="text-xs text-yellow-600 dark:text-yellow-400">
-              При окончании подписки дополнительные устройства сбрасываются. При продлении их нужно приобрести заново.
+              При продлении подписки дополнительные устройства автоматически продлеваются до нового срока.
             </p>
           </div>
         )}
