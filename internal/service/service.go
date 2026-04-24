@@ -517,14 +517,8 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		return "", nil, errors.New("покупки за деньги временно заблокированы администратором")
 	}
 
-	// Proportional pricing based on remaining subscription time
-	now := time.Now()
-	remainingDays := int(activeSub.ExpiresAt.Sub(now).Hours() / 24)
-	if remainingDays < 0 {
-		remainingDays = 0
-	}
-	fullPeriodDays := domain.PlanDurationDays(activeSub.Plan)
-	priceKopecks := domain.DeviceExpansionProportionalKopecks(activeSub.Plan, qty, remainingDays, fullPeriodDays)
+	// Fixed price based on subscription plan — deterministic, not proportional
+	priceKopecks := domain.DeviceExpansionKopecks(activeSub.Plan, qty)
 	if priceKopecks == 0 {
 		return "", nil, errors.New("расширение для данного тарифа недоступно")
 	}
@@ -601,16 +595,15 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 	return platResp.Redirect, payment, nil
 }
 
-// QuoteDeviceExpansion returns the proportional price for buying qty extra devices.
+// QuoteDeviceExpansion returns the fixed price for buying qty extra devices.
 // Used by the UI to show the price before purchase.
 type DeviceExpansionQuote struct {
-	Qty           int    `json:"qty"`
-	PriceKopecks  int64  `json:"price_kopecks"`
-	PriceYAD      int64  `json:"price_yad"`
-	RemainingDays int    `json:"remaining_days"`
-	ExpiresAt     string `json:"expires_at"` // subscription expiry (addon matches this)
-	CurrentExtra  int    `json:"current_extra"`
-	NewTotal      int    `json:"new_total"` // base + current + qty
+	Qty          int    `json:"qty"`
+	PriceKopecks int64  `json:"price_kopecks"`
+	PriceYAD     int64  `json:"price_yad"`
+	ExpiresAt    string `json:"expires_at"` // subscription expiry (addon matches this)
+	CurrentExtra int    `json:"current_extra"`
+	NewTotal     int    `json:"new_total"` // base + current + qty
 }
 
 func (s *SubscriptionService) QuoteDeviceExpansion(ctx context.Context, userID uuid.UUID, qty int) (*DeviceExpansionQuote, error) {
@@ -635,22 +628,15 @@ func (s *SubscriptionService) QuoteDeviceExpansion(ctx context.Context, userID u
 	if currentExtra+qty > domain.DeviceExpansionMaxExtra {
 		return nil, fmt.Errorf("превышен максимум дополнительных устройств (сейчас +%d, максимум +%d)", currentExtra, domain.DeviceExpansionMaxExtra)
 	}
-	now := time.Now()
-	remainingDays := int(activeSub.ExpiresAt.Sub(now).Hours() / 24)
-	if remainingDays < 0 {
-		remainingDays = 0
-	}
-	fullPeriodDays := domain.PlanDurationDays(activeSub.Plan)
-	kopecks := domain.DeviceExpansionProportionalKopecks(activeSub.Plan, qty, remainingDays, fullPeriodDays)
-	yad := domain.DeviceExpansionProportionalYAD(activeSub.Plan, qty, remainingDays, fullPeriodDays)
+	kopecks := domain.DeviceExpansionKopecks(activeSub.Plan, qty)
+	yad := domain.DeviceExpansionYAD(activeSub.Plan, qty)
 	return &DeviceExpansionQuote{
-		Qty:           qty,
-		PriceKopecks:  kopecks,
-		PriceYAD:      yad,
-		RemainingDays: remainingDays,
-		ExpiresAt:     activeSub.ExpiresAt.Format(time.RFC3339),
-		CurrentExtra:  currentExtra,
-		NewTotal:      domain.DeviceMaxPerUser + currentExtra + qty,
+		Qty:          qty,
+		PriceKopecks: kopecks,
+		PriceYAD:     yad,
+		ExpiresAt:    activeSub.ExpiresAt.Format(time.RFC3339),
+		CurrentExtra: currentExtra,
+		NewTotal:     domain.DeviceMaxPerUser + currentExtra + qty,
 	}, nil
 }
 
@@ -1108,14 +1094,8 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 	}
 	newExtra := currentExtra + qty
 
-	// Proportional price
-	now := time.Now()
-	remainingDays := int(activeSub.ExpiresAt.Sub(now).Hours() / 24)
-	if remainingDays < 0 {
-		remainingDays = 0
-	}
-	fullPeriodDays := domain.PlanDurationDays(activeSub.Plan)
-	yadPrice := domain.DeviceExpansionProportionalYAD(activeSub.Plan, qty, remainingDays, fullPeriodDays)
+	// Fixed price based on subscription plan
+	yadPrice := domain.DeviceExpansionYAD(activeSub.Plan, qty)
 	if yadPrice == 0 {
 		return nil, errors.New("расширение для данного тарифа недоступно")
 	}
@@ -1220,13 +1200,8 @@ func (s *EconomyService) ExtendDeviceExpansionYAD(ctx context.Context, userID uu
 	}
 
 	// Price = proportional for remaining time of the subscription that's being extended TO
-	now := time.Now()
-	remainingDays := int(activeSub.ExpiresAt.Sub(now).Hours() / 24)
-	if remainingDays < 0 {
-		remainingDays = 0
-	}
-	fullPeriodDays := domain.PlanDurationDays(activeSub.Plan)
-	yadPrice := domain.DeviceExpansionProportionalYAD(activeSub.Plan, existing.ExtraDevices, remainingDays, fullPeriodDays)
+	// Fixed price based on subscription plan and current extra devices
+	yadPrice := domain.DeviceExpansionYAD(activeSub.Plan, existing.ExtraDevices)
 	if yadPrice == 0 {
 		return nil, errors.New("продление для данного тарифа недоступно")
 	}

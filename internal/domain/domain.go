@@ -367,18 +367,15 @@ func DeviceExpansionQuantity(plan SubscriptionPlan) int {
 
 // ─── Device Expansion pricing ─────────────────────────────────────────────────
 //
-// Prices are proportional to the remaining subscription time.
-// Base prices (for a full period at purchase time):
+// Prices are FIXED per plan at the moment of purchase.
+// The price is the same regardless of when in the subscription period the addon is bought.
 //
 //	+1 device: 1week=12₽, 1month=30₽, 3months=80₽
 //	+2 devices: 1week=22₽, 1month=55₽, 3months=150₽
-//
-// Actual price = base_kopecks * remainingDays / fullPeriodDays
-// Minimum charge: 1₽ (100 kopecks) to avoid 0-price fraud.
 
-// deviceExpansionBaseKopecks returns the BASE full-period price for +qty devices
-// at the given subscription plan. Returns 0 if plan/qty unknown.
-func deviceExpansionBaseKopecks(subPlan SubscriptionPlan, qty int) int64 {
+// DeviceExpansionKopecks returns the fixed ruble price (kopecks) for buying +qty devices
+// on the given subscription plan. Returns 0 if plan/qty unknown.
+func DeviceExpansionKopecks(subPlan SubscriptionPlan, qty int) int64 {
 	type key struct {
 		plan SubscriptionPlan
 		qty  int
@@ -394,8 +391,8 @@ func deviceExpansionBaseKopecks(subPlan SubscriptionPlan, qty int) int64 {
 	return table[key{subPlan, qty}]
 }
 
-// deviceExpansionBaseYAD returns the BASE full-period YAD price for +qty devices.
-func deviceExpansionBaseYAD(subPlan SubscriptionPlan, qty int) int64 {
+// DeviceExpansionYAD returns the fixed YAD price for buying +qty devices.
+func DeviceExpansionYAD(subPlan SubscriptionPlan, qty int) int64 {
 	type key struct {
 		plan SubscriptionPlan
 		qty  int
@@ -409,35 +406,6 @@ func deviceExpansionBaseYAD(subPlan SubscriptionPlan, qty int) int64 {
 		{PlanThreeMonth, 2}: 60,
 	}
 	return table[key{subPlan, qty}]
-}
-
-// DeviceExpansionProportionalKopecks calculates the proportional ruble price (kopecks)
-// for buying qty extra devices given remainingDays of subscription left out of fullPeriodDays.
-// Minimum 100 kopecks (1₽) to prevent zero-price abuse.
-func DeviceExpansionProportionalKopecks(subPlan SubscriptionPlan, qty int, remainingDays, fullPeriodDays int) int64 {
-	base := deviceExpansionBaseKopecks(subPlan, qty)
-	if base == 0 || fullPeriodDays <= 0 {
-		return 0
-	}
-	price := base * int64(remainingDays) / int64(fullPeriodDays)
-	if price < 100 {
-		price = 100 // minimum 1₽
-	}
-	return price
-}
-
-// DeviceExpansionProportionalYAD calculates the proportional YAD price.
-// Minimum 1 ЯД.
-func DeviceExpansionProportionalYAD(subPlan SubscriptionPlan, qty int, remainingDays, fullPeriodDays int) int64 {
-	base := deviceExpansionBaseYAD(subPlan, qty)
-	if base == 0 || fullPeriodDays <= 0 {
-		return 0
-	}
-	price := base * int64(remainingDays) / int64(fullPeriodDays)
-	if price < 1 {
-		price = 1
-	}
-	return price
 }
 
 // DeviceExpansion tracks an active device-limit expansion purchase.

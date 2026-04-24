@@ -275,7 +275,7 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
                 +{buyQty} {buyQty === 1 ? 'устройство' : 'устройства'}
               </p>
               <p className="text-xs text-gray-400 dark:text-slate-500">
-                До конца текущей подписки · цена пропорциональна оставшемуся времени
+                До конца текущей подписки
               </p>
               {quoteLoading ? (
                 <p className="mt-2 text-sm text-gray-400 dark:text-slate-500 animate-pulse">Загрузка цены...</p>
@@ -348,7 +348,7 @@ export function DeviceList({ data, isTrial = false }: DeviceListProps) {
               </strong>?
             </p>
             <p className="mt-2 text-xs text-gray-400 dark:text-slate-600">
-              Цена рассчитана пропорционально: {quote.remaining_days} дн. осталось из тарифа.
+              Фиксированная цена для вашего тарифа.
             </p>
             {buyMethod === 'money' && (
               <p className="mt-1 text-xs text-gray-400 dark:text-slate-600">

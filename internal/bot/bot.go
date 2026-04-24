@@ -926,15 +926,9 @@ func (b *Bot) handleBuyDevice(c tele.Context) error {
 		return c.Send("Нет активной подписки.", rm)
 	}
 
-	now := time.Now()
-	remainingDays := int(activeSub.ExpiresAt.Sub(now).Hours() / 24)
-	if remainingDays < 0 {
-		remainingDays = 0
-	}
-	fullDays := domain.PlanDurationDays(activeSub.Plan)
 	qty := 1
-	priceKopecks := domain.DeviceExpansionProportionalKopecks(activeSub.Plan, qty, remainingDays, fullDays)
-	priceYAD := domain.DeviceExpansionProportionalYAD(activeSub.Plan, qty, remainingDays, fullDays)
+	priceKopecks := domain.DeviceExpansionKopecks(activeSub.Plan, qty)
+	priceYAD := domain.DeviceExpansionYAD(activeSub.Plan, qty)
 
 	rm := &tele.ReplyMarkup{}
 	btnYAD := rm.Data(fmt.Sprintf("💰 %d ЯД", priceYAD), "confirm_buydevice_yad")
@@ -983,14 +977,8 @@ func (b *Bot) handleExtendDevices(c tele.Context) error {
 		return c.Send("Расширение устройств уже действует до конца текущей подписки.", rm)
 	}
 
-	// Calculate proportional price for info
-	now := time.Now()
-	remainingDays := int(activeSub.ExpiresAt.Sub(now).Hours() / 24)
-	if remainingDays < 0 {
-		remainingDays = 0
-	}
-	fullDays := domain.PlanDurationDays(activeSub.Plan)
-	price := domain.DeviceExpansionProportionalYAD(activeSub.Plan, expansion.ExtraDevices, remainingDays, fullDays)
+	// Fixed price for the plan
+	price := domain.DeviceExpansionYAD(activeSub.Plan, expansion.ExtraDevices)
 
 	rm := &tele.ReplyMarkup{}
 	btnConfirm := rm.Data(fmt.Sprintf("✅ Продлить за %d ЯД", price), "confirm_extend")
