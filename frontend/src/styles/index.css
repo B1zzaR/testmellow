@@ -83,6 +83,14 @@
     background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.04) 50%, transparent 100%);
     background-size: 200% 100%;
   }
+
+  /* Expand/collapse animations */
+  .animate-expand {
+    animation: expand 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+  .animate-collapse {
+    animation: collapse 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
 }
 
 @keyframes modal-slide-up {
@@ -110,5 +118,31 @@
 @keyframes shimmer {
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+@keyframes expand {
+  from {
+    opacity: 0;
+    max-height: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    max-height: 1000px;
+    transform: translateY(0);
+  }
+}
+
+@keyframes collapse {
+  from {
+    opacity: 1;
+    max-height: 1000px;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    max-height: 0;
+    transform: translateY(-8px);
+  }
 }
 

@@ -14,6 +14,7 @@ import { Icon } from '@/components/ui/Icons'
 import { formatDate, formatRubles, planLabel, daysUntil, formatBytes } from '@/utils/formatters'
 import { PendingPayments } from '@/components/PendingPayments'
 import { DeviceList } from '@/components/DeviceList'
+import { SubscriptionDetails } from '@/components/SubscriptionDetails'
 import type { SubscriptionPlan } from '@/api/types'
 
 function discountedPrice(price: number, percent: number): number {
@@ -240,6 +241,12 @@ export function SubscriptionsPage() {
           )}
 
           <ConnectionBlock />
+
+          {/* Subscription periods details */}
+          <SubscriptionDetails 
+            subscription={activeSub} 
+            totalDays={daysUntil(activeSub.expires_at)} 
+          />
         </Card>
       )}
 
