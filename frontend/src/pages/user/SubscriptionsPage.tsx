@@ -244,7 +244,8 @@ export function SubscriptionsPage() {
 
           {/* Subscription periods details */}
           <SubscriptionDetails 
-            subscription={activeSub} 
+            allSubscriptions={subs}
+            deviceExpansion={devicesData?.expansion ?? null}
             totalDays={daysUntil(activeSub.expires_at)} 
           />
         </Card>

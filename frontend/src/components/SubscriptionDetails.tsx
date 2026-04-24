@@ -1,36 +1,30 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { subscriptionsApi } from '@/api/subscriptions'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { shopApi } from '@/api/shop'
 import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
 import { Icon } from '@/components/ui/Icons'
-import { formatDate, planLabel } from '@/utils/formatters'
-import type { Subscription, SubscriptionPeriod } from '@/api/types'
+import { formatDate, planLabel, daysUntil } from '@/utils/formatters'
+import type { Subscription, DeviceExpansion } from '@/api/types'
 
 interface SubscriptionDetailsProps {
-  subscription: Subscription
+  allSubscriptions: Subscription[]
+  deviceExpansion: DeviceExpansion | null
   totalDays: number
 }
 
-export function SubscriptionDetails({ subscription, totalDays }: SubscriptionDetailsProps) {
+export function SubscriptionDetails({ allSubscriptions, deviceExpansion, totalDays }: SubscriptionDetailsProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const queryClient = useQueryClient()
 
-  const { data: periodsData, isLoading } = useQuery({
-    queryKey: ['subscription-periods', subscription.id],
-    queryFn: () => subscriptionsApi.getPeriods(subscription.id),
-    enabled: isExpanded,
-  })
-
   const buyDevicesMutation = useMutation({
-    mutationFn: ({ periodId, extraDevices }: { periodId: string; extraDevices: number }) =>
-      subscriptionsApi.buyPeriodDevices(periodId, extraDevices),
+    mutationFn: () => shopApi.buyDeviceExpansion(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['subscription-periods', subscription.id] })
       queryClient.invalidateQueries({ queryKey: ['devices'] })
-      setSuccessMsg('Устройства успешно добавлены к периоду!')
+      queryClient.invalidateQueries({ queryKey: ['balance'] })
+      setSuccessMsg('Устройства успешно добавлены!')
       setErrorMsg('')
     },
     onError: (e: Error) => {
@@ -39,10 +33,13 @@ export function SubscriptionDetails({ subscription, totalDays }: SubscriptionDet
     },
   })
 
-  const periods = periodsData?.periods ?? []
+  // Сортируем подписки по дате начала
+  const sortedSubscriptions = [...allSubscriptions]
+    .filter(s => s.status === 'active' || s.status === 'trial')
+    .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
 
-  const handleBuyDevices = (periodId: string) => {
-    buyDevicesMutation.mutate({ periodId, extraDevices: 1 })
+  const handleBuyDevices = () => {
+    buyDevicesMutation.mutate()
   }
 
   return (
@@ -74,20 +71,17 @@ export function SubscriptionDetails({ subscription, totalDays }: SubscriptionDet
 
       {isExpanded && (
         <div className="mt-4 space-y-2 animate-expand overflow-hidden">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-4">
-              <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
-            </div>
-          ) : periods.length === 0 ? (
+          {sortedSubscriptions.length === 0 ? (
             <p className="text-sm text-gray-400 dark:text-slate-500 py-2">
-              Нет данных о периодах подписки
+              Нет активных подписок
             </p>
           ) : (
-            periods.map((period, index) => (
+            sortedSubscriptions.map((sub, index) => (
               <PeriodCard
-                key={period.id}
-                period={period}
+                key={sub.id}
+                subscription={sub}
                 index={index}
+                deviceExpansion={deviceExpansion}
                 onBuyDevices={handleBuyDevices}
                 isLoading={buyDevicesMutation.isPending}
               />
@@ -100,15 +94,29 @@ export function SubscriptionDetails({ subscription, totalDays }: SubscriptionDet
 }
 
 interface PeriodCardProps {
-  period: SubscriptionPeriod
+  subscription: Subscription
   index: number
-  onBuyDevices: (periodId: string) => void
+  deviceExpansion: DeviceExpansion | null
+  onBuyDevices: () => void
   isLoading: boolean
 }
 
-function PeriodCard({ period, index, onBuyDevices, isLoading }: PeriodCardProps) {
-  const isActive = period.status === 'active'
-  const isQueued = period.status === 'queued'
+function PeriodCard({ subscription, index, deviceExpansion, onBuyDevices, isLoading }: PeriodCardProps) {
+  const now = Date.now()
+  const startsAt = new Date(subscription.starts_at).getTime()
+  const expiresAt = new Date(subscription.expires_at).getTime()
+  
+  const isActive = subscription.status === 'active' && now >= startsAt && now < expiresAt
+  const isQueued = now < startsAt
+  const isExpired = now >= expiresAt
+  
+  const durationDays = Math.ceil((expiresAt - startsAt) / (1000 * 60 * 60 * 24))
+  
+  // Базовое количество устройств (4 для всех тарифов)
+  const baseDevices = 4
+  // Дополнительные устройства применяются только к первому (активному) периоду
+  const extraDevices = index === 0 && deviceExpansion ? deviceExpansion.extra_devices : 0
+  const totalDevices = baseDevices + extraDevices
 
   return (
     <div
@@ -135,7 +143,7 @@ function PeriodCard({ period, index, onBuyDevices, isLoading }: PeriodCardProps)
               ].join(' ')}
             />
             <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">
-              Период {index + 1}: {planLabel(period.plan)}
+              Период {index + 1}: {planLabel(subscription.plan)}
             </p>
             <span
               className={[
@@ -155,35 +163,40 @@ function PeriodCard({ period, index, onBuyDevices, isLoading }: PeriodCardProps)
             <div>
               <p className="text-gray-400 dark:text-slate-600">Длительность</p>
               <p className="mt-0.5 font-medium text-gray-900 dark:text-slate-100">
-                {period.duration_days} дней
+                {durationDays} дней
               </p>
             </div>
             <div>
               <p className="text-gray-400 dark:text-slate-600">Устройств</p>
               <p className="mt-0.5 font-medium text-gray-900 dark:text-slate-100">
-                {period.device_slots}
+                {totalDevices}
+                {extraDevices > 0 && (
+                  <span className="ml-1 text-primary-500">
+                    (+{extraDevices})
+                  </span>
+                )}
               </p>
             </div>
             <div>
               <p className="text-gray-400 dark:text-slate-600">Начало</p>
               <p className="mt-0.5 font-medium text-gray-900 dark:text-slate-100">
-                {formatDate(period.starts_at)}
+                {formatDate(subscription.starts_at)}
               </p>
             </div>
             <div>
               <p className="text-gray-400 dark:text-slate-600">Окончание</p>
               <p className="mt-0.5 font-medium text-gray-900 dark:text-slate-100">
-                {formatDate(period.expires_at)}
+                {formatDate(subscription.expires_at)}
               </p>
             </div>
           </div>
         </div>
 
-        {(isActive || isQueued) && (
+        {isActive && index === 0 && (
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => onBuyDevices(period.id)}
+            onClick={onBuyDevices}
             loading={isLoading}
             className="shrink-0"
           >
@@ -194,12 +207,14 @@ function PeriodCard({ period, index, onBuyDevices, isLoading }: PeriodCardProps)
         )}
       </div>
 
-      <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2">
-        <Icon name="info" size={12} className="shrink-0 text-blue-500" />
-        <p className="text-[11px] text-blue-600 dark:text-blue-400">
-          Дополнительные устройства действуют только в рамках этого периода
-        </p>
-      </div>
+      {index === 0 && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+          <Icon name="info" size={12} className="shrink-0 text-blue-500" />
+          <p className="text-[11px] text-blue-600 dark:text-blue-400">
+            Дополнительные устройства применяются к текущему активному периоду
+          </p>
+        </div>
+      )}
     </div>
   )
 }
