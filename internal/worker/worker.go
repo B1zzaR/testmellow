@@ -310,15 +310,6 @@ func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error
 			if err := Enqueue(ctx, w.rdb, QueueDeviceExpansionActivate, activateJob); err != nil {
 				w.log.Error("failed to enqueue device expansion activation", zap.Error(err))
 			}
-		} else if domain.IsDeviceExpansionExtendPlan(domain.SubscriptionPlan(job.Plan)) {
-			// Device expansion extend payment — enqueue extension
-			extendJob := DeviceExpansionExtendJob{
-				UserID:    userID.String(),
-				PaymentID: txID.String(),
-			}
-			if err := Enqueue(ctx, w.rdb, QueueDeviceExpansionExtend, extendJob); err != nil {
-				w.log.Error("failed to enqueue device expansion extend", zap.Error(err))
-			}
 		} else {
 			// Subscription payment — enqueue subscription activation
 			activateJob := SubscriptionActivateJob{
@@ -513,6 +504,33 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 				)
 			} else {
 				_ = bonusTx.Commit(ctx)
+			}
+		}
+	}
+
+	// Auto-extend device expansion to match new subscription expiry.
+	// addon_expiry <= subscription_expiry is always enforced here.
+	if existing, err := w.repo.GetActiveDeviceExpansion(ctx, userID); err == nil && existing != nil {
+		if existing.ExpiresAt.Before(newExpiry) {
+			extTx, err := w.repo.BeginTx(ctx)
+			if err == nil {
+				if err := w.repo.ExtendDeviceExpansion(ctx, extTx, existing.ID, newExpiry, false); err != nil {
+					extTx.Rollback(ctx)
+					w.log.Warn("failed to auto-extend device expansion",
+						zap.String("user_id", userID.String()), zap.Error(err))
+				} else {
+					_ = extTx.Commit(ctx)
+					// Ensure Remnawave has correct limit after expiry might have reset it
+					if user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
+						limit := domain.DeviceMaxPerUser + existing.ExtraDevices
+						_ = w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, limit)
+					}
+					w.log.Info("device expansion auto-extended with subscription renewal",
+						zap.String("user_id", userID.String()),
+						zap.Int("extra_devices", existing.ExtraDevices),
+						zap.Time("new_expires_at", newExpiry),
+					)
+				}
 			}
 		}
 	}

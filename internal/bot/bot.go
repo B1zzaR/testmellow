@@ -919,12 +919,29 @@ func (b *Bot) handleBuyDevice(c tele.Context) error {
 		)
 	}
 
+	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
+	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send("Нет активной подписки.", rm)
+	}
+
+	now := time.Now()
+	remainingDays := int(activeSub.ExpiresAt.Sub(now).Hours() / 24)
+	if remainingDays < 0 {
+		remainingDays = 0
+	}
+	fullDays := domain.PlanDurationDays(activeSub.Plan)
+	qty := 1
+	priceKopecks := domain.DeviceExpansionProportionalKopecks(activeSub.Plan, qty, remainingDays, fullDays)
+	priceYAD := domain.DeviceExpansionProportionalYAD(activeSub.Plan, qty, remainingDays, fullDays)
+
 	rm := &tele.ReplyMarkup{}
-	btnYAD := rm.Data(fmt.Sprintf("💰 %d ЯД", domain.DeviceExpansionPriceYAD), "confirm_buydevice_yad")
-	btnMoney := rm.Data(fmt.Sprintf("💳 %d ₽", domain.DeviceExpansionPriceKopecks/100), "confirm_buydevice_money")
+	btnYAD := rm.Data(fmt.Sprintf("💰 %d ЯД", priceYAD), "confirm_buydevice_yad")
+	btnMoney := rm.Data(fmt.Sprintf("💳 %d ₽", priceKopecks/100), "confirm_buydevice_money")
 	rm.Inline(rm.Row(btnYAD, btnMoney), rm.Row(backBtn(rm)))
 
-	newTotal := domain.DeviceMaxPerUser + currentExtra + 1
+	newTotal := domain.DeviceMaxPerUser + currentExtra + qty
 	return c.Send(fmt.Sprintf(
 		"➕ *Купить устройство*\n"+brandLine+"\n\n"+
 			"📱  Расширение: *+%d / %d*\n"+
@@ -935,12 +952,15 @@ func (b *Bot) handleBuyDevice(c tele.Context) error {
 			"💎  Баланс: *%d ЯД*",
 		currentExtra, domain.DeviceExpansionMaxExtra,
 		newTotal,
-		domain.DeviceExpansionPriceKopecks/100, domain.DeviceExpansionPriceYAD,
+		priceKopecks/100, priceYAD,
 		user.YADBalance,
 	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
 // ─── /extend ──────────────────────────────────────────────────────────────────
+// Device expansion no longer requires a separate "extend" purchase.
+// Expansions are auto-extended when the subscription is renewed via the worker.
+// This handler now just informs the user of that fact.
 
 func (b *Bot) handleExtendDevices(c tele.Context) error {
 	ctx := context.Background()
@@ -960,11 +980,17 @@ func (b *Bot) handleExtendDevices(c tele.Context) error {
 	if activeSub == nil || !expansion.ExpiresAt.Before(activeSub.ExpiresAt) {
 		rm := &tele.ReplyMarkup{}
 		rm.Inline(rm.Row(backBtn(rm)))
-		return c.Send("Расширение не требует продления.", rm)
+		return c.Send("Расширение устройств уже действует до конца текущей подписки.", rm)
 	}
 
-	purchaseCount, _ := b.repo.GetDeviceExpansionCount(ctx, user.ID)
-	price := domain.DeviceExpansionExtensionPriceYAD(activeSub.Plan, purchaseCount)
+	// Calculate proportional price for info
+	now := time.Now()
+	remainingDays := int(activeSub.ExpiresAt.Sub(now).Hours() / 24)
+	if remainingDays < 0 {
+		remainingDays = 0
+	}
+	fullDays := domain.PlanDurationDays(activeSub.Plan)
+	price := domain.DeviceExpansionProportionalYAD(activeSub.Plan, expansion.ExtraDevices, remainingDays, fullDays)
 
 	rm := &tele.ReplyMarkup{}
 	btnConfirm := rm.Data(fmt.Sprintf("✅ Продлить за %d ЯД", price), "confirm_extend")
@@ -1524,7 +1550,7 @@ func (b *Bot) RegisterBuyCallbacks() {
 			return c.Send("Ошибка: " + err.Error())
 		}
 
-		expansion, err := b.ecoSvc.BuyDeviceExpansion(ctx, user.ID)
+		expansion, err := b.ecoSvc.BuyDeviceExpansion(ctx, user.ID, 1)
 		if err != nil {
 			rm := &tele.ReplyMarkup{}
 			rm.Inline(rm.Row(backBtn(rm)))
@@ -1552,7 +1578,7 @@ func (b *Bot) RegisterBuyCallbacks() {
 			return c.Send("Ошибка: " + err.Error())
 		}
 
-		redirect, payment, err := b.subSvc.InitiateDeviceExpansionPayment(ctx, user.ID, b.cfg.PaymentReturnURL)
+		redirect, payment, err := b.subSvc.InitiateDeviceExpansionPayment(ctx, user.ID, 1, b.cfg.PaymentReturnURL)
 		if err != nil {
 			rm := &tele.ReplyMarkup{}
 			rm.Inline(rm.Row(backBtn(rm)))

@@ -479,6 +479,16 @@ CREATE INDEX IF NOT EXISTS suggestions_created_at_idx ON suggestions (created_at
 			version: "019_user_device_expansion_count",
 			sql:     `ALTER TABLE users ADD COLUMN IF NOT EXISTS device_expansion_count SMALLINT NOT NULL DEFAULT 0;`,
 		},
+		{
+			// Add device_expansion_2 plan (+2 devices) to payments constraint.
+			// Remove the old extend plan (device_expansion_extend) — no longer used.
+			version: "020_device_expansion_2_plan",
+			sql: `
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_plan_check;
+ALTER TABLE payments ADD CONSTRAINT payments_plan_check
+    CHECK (plan IN ('1week','1month','3months','device_expansion','device_expansion_2','device_expansion_extend'));
+`,
+		},
 	}
 
 	for _, m := range migrations {

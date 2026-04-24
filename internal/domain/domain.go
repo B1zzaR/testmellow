@@ -338,71 +338,106 @@ type AdminAuditLog struct {
 // ─── Device ───────────────────────────────────────────────────────────────────
 
 const DeviceMaxPerUser = 4
-const DeviceInactiveDays = 2
+const DeviceInactiveDays = 3
 
 // ─── Device Expansion ─────────────────────────────────────────────────────────
 
 const (
-	DeviceExpansionMaxExtra     = 2    // base 4 → max 6
-	DeviceExpansionPriceKopecks = 4000 // 40₽ per +1 device
-	DeviceExpansionPriceYAD     = 16   // 16 ЯД per +1 device
+	DeviceExpansionMaxExtra = 2 // base 4 → max 6
 )
 
-// PlanDeviceExpansion is a pseudo-plan used for Platega device-expansion payments.
+// PlanDeviceExpansion is a pseudo-plan for Platega device-expansion payments (+1 device).
 const PlanDeviceExpansion SubscriptionPlan = "device_expansion"
 
-// PlanDeviceExpansionExtend is a pseudo-plan for extending existing device expansion via Platega.
-const PlanDeviceExpansionExtend SubscriptionPlan = "device_expansion_extend"
+// PlanDeviceExpansion2 is a pseudo-plan for Platega device-expansion payments (+2 devices).
+const PlanDeviceExpansion2 SubscriptionPlan = "device_expansion_2"
 
 // IsDeviceExpansionPlan returns true when the plan represents a device expansion purchase.
 func IsDeviceExpansionPlan(plan SubscriptionPlan) bool {
-	return plan == PlanDeviceExpansion
+	return plan == PlanDeviceExpansion || plan == PlanDeviceExpansion2
 }
 
-// IsDeviceExpansionExtendPlan returns true when the plan represents a device expansion extension.
-func IsDeviceExpansionExtendPlan(plan SubscriptionPlan) bool {
-	return plan == PlanDeviceExpansionExtend
-}
-
-// DeviceExpansionQuantity returns how many extra devices a device-expansion plan grants.
+// DeviceExpansionQuantity returns how many extra devices the plan grants.
 func DeviceExpansionQuantity(plan SubscriptionPlan) int {
+	if plan == PlanDeviceExpansion2 {
+		return 2
+	}
 	return 1
 }
 
-// DeviceExpansionExtensionPriceKopecks returns the ruble price (in kopecks) for
-// a device expansion purchase or renewal. extendCount is the current stored
-// extend_count value (0 for first purchase, 1 after first renewal, etc.);
-// price multiplies by (extendCount + 1) to make each renewal more expensive.
-func DeviceExpansionExtensionPriceKopecks(plan SubscriptionPlan, extendCount int) int64 {
-	var base int64
-	switch plan {
-	case PlanWeek:
-		base = 1900 // 19₽
-	case PlanMonth:
-		base = 3900 // 39₽
-	case PlanThreeMonth:
-		base = 11900 // 119₽
-	default:
-		return 0
+// ─── Device Expansion pricing ─────────────────────────────────────────────────
+//
+// Prices are proportional to the remaining subscription time.
+// Base prices (for a full period at purchase time):
+//
+//	+1 device: 1week=12₽, 1month=30₽, 3months=80₽
+//	+2 devices: 1week=22₽, 1month=55₽, 3months=150₽
+//
+// Actual price = base_kopecks * remainingDays / fullPeriodDays
+// Minimum charge: 1₽ (100 kopecks) to avoid 0-price fraud.
+
+// deviceExpansionBaseKopecks returns the BASE full-period price for +qty devices
+// at the given subscription plan. Returns 0 if plan/qty unknown.
+func deviceExpansionBaseKopecks(subPlan SubscriptionPlan, qty int) int64 {
+	type key struct {
+		plan SubscriptionPlan
+		qty  int
 	}
-	return base * int64(extendCount+1)
+	table := map[key]int64{
+		{PlanWeek, 1}:       1200,  // 12₽
+		{PlanWeek, 2}:       2200,  // 22₽
+		{PlanMonth, 1}:      3000,  // 30₽
+		{PlanMonth, 2}:      5500,  // 55₽
+		{PlanThreeMonth, 1}: 8000,  // 80₽
+		{PlanThreeMonth, 2}: 15000, // 150₽
+	}
+	return table[key{subPlan, qty}]
 }
 
-// DeviceExpansionExtensionPriceYAD returns the ЯД price for a device expansion
-// purchase or renewal. Same multiplier logic as DeviceExpansionExtensionPriceKopecks.
-func DeviceExpansionExtensionPriceYAD(plan SubscriptionPlan, extendCount int) int64 {
-	var base int64
-	switch plan {
-	case PlanWeek:
-		base = 8
-	case PlanMonth:
-		base = 16
-	case PlanThreeMonth:
-		base = 48
-	default:
+// deviceExpansionBaseYAD returns the BASE full-period YAD price for +qty devices.
+func deviceExpansionBaseYAD(subPlan SubscriptionPlan, qty int) int64 {
+	type key struct {
+		plan SubscriptionPlan
+		qty  int
+	}
+	table := map[key]int64{
+		{PlanWeek, 1}:       5,
+		{PlanWeek, 2}:       9,
+		{PlanMonth, 1}:      12,
+		{PlanMonth, 2}:      22,
+		{PlanThreeMonth, 1}: 32,
+		{PlanThreeMonth, 2}: 60,
+	}
+	return table[key{subPlan, qty}]
+}
+
+// DeviceExpansionProportionalKopecks calculates the proportional ruble price (kopecks)
+// for buying qty extra devices given remainingDays of subscription left out of fullPeriodDays.
+// Minimum 100 kopecks (1₽) to prevent zero-price abuse.
+func DeviceExpansionProportionalKopecks(subPlan SubscriptionPlan, qty int, remainingDays, fullPeriodDays int) int64 {
+	base := deviceExpansionBaseKopecks(subPlan, qty)
+	if base == 0 || fullPeriodDays <= 0 {
 		return 0
 	}
-	return base * int64(extendCount+1)
+	price := base * int64(remainingDays) / int64(fullPeriodDays)
+	if price < 100 {
+		price = 100 // minimum 1₽
+	}
+	return price
+}
+
+// DeviceExpansionProportionalYAD calculates the proportional YAD price.
+// Minimum 1 ЯД.
+func DeviceExpansionProportionalYAD(subPlan SubscriptionPlan, qty int, remainingDays, fullPeriodDays int) int64 {
+	base := deviceExpansionBaseYAD(subPlan, qty)
+	if base == 0 || fullPeriodDays <= 0 {
+		return 0
+	}
+	price := base * int64(remainingDays) / int64(fullPeriodDays)
+	if price < 1 {
+		price = 1
+	}
+	return price
 }
 
 // DeviceExpansion tracks an active device-limit expansion purchase.

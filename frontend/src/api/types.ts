@@ -43,28 +43,6 @@ export interface Subscription {
   username?: string | null
 }
 
-// Subscription period with device expansion
-export interface SubscriptionPeriod {
-  id: string
-  subscription_id: string
-  plan: SubscriptionPlan
-  status: 'active' | 'queued' | 'expired'
-  starts_at: string
-  expires_at: string
-  duration_days: number
-  device_slots: number
-  created_at: string
-}
-
-// Device expansion for a specific period
-export interface PeriodDeviceExpansion {
-  id: string
-  period_id: string
-  extra_devices: number
-  price_paid_kopecks: number
-  created_at: string
-}
-
 export interface Payment {
   id: string
   user_id: string
