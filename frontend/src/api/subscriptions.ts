@@ -1,8 +1,6 @@
 import apiClient from './client'
 import type {
   Subscription,
-  SubscriptionPeriod,
-  PeriodDeviceExpansion,
   BuySubscriptionRequest,
   BuySubscriptionResponse,
 } from './types'
@@ -34,16 +32,5 @@ export const subscriptionsApi = {
     )
     return res.data
   },
-
-  // Get subscription periods with device expansions
-  getPeriods: async (subscriptionId: string): Promise<{ periods: SubscriptionPeriod[] }> => {
-    const res = await apiClient.get<{ periods: SubscriptionPeriod[] }>(`/api/subscriptions/${subscriptionId}/periods`)
-    return res.data
-  },
-
-  // Buy device expansion for a specific period
-  buyPeriodDevices: async (periodId: string, extraDevices: number): Promise<{ expansion: PeriodDeviceExpansion }> => {
-    const res = await apiClient.post<{ expansion: PeriodDeviceExpansion }>(`/api/subscriptions/periods/${periodId}/devices`, { extra_devices: extraDevices })
-    return res.data
-  },
 }
+
