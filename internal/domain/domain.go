@@ -202,6 +202,7 @@ type Payment struct {
 	Currency          string           `db:"currency" json:"currency"`
 	Status            PaymentStatus    `db:"status" json:"status"`
 	Plan              SubscriptionPlan `db:"plan" json:"plan"`
+	AddonQty          int              `db:"addon_qty" json:"addon_qty"` // extra devices to activate alongside subscription (0=none)
 	PaymentMethod     int              `db:"payment_method" json:"payment_method"`
 	PlategaPayload    string           `db:"platega_payload" json:"-"`
 	RedirectURL       string           `db:"redirect_url" json:"redirect_url"`

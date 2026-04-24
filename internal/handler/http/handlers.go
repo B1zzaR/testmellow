@@ -859,6 +859,7 @@ func (h *SubscriptionHandler) GetByID(c *gin.Context) {
 
 type buySubscriptionRequest struct {
 	Plan      string `json:"plan" binding:"required"`
+	AddonQty  int    `json:"addon_qty"` // 0 (default), 1 or 2 extra devices
 	ReturnURL string `json:"return_url"`
 }
 
@@ -869,6 +870,10 @@ func (h *SubscriptionHandler) Buy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.AddonQty < 0 || req.AddonQty > 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "addon_qty должен быть 0, 1 или 2"})
+		return
+	}
 
 	// Check if real money purchases are blocked
 	settings, err := h.repo.GetPlatformSettings(c.Request.Context())
@@ -884,7 +889,7 @@ func (h *SubscriptionHandler) Buy(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	plan := domain.SubscriptionPlan(req.Plan)
 
-	redirect, payment, err := h.svc.InitiatePayment(c.Request.Context(), userID, plan, req.ReturnURL)
+	redirect, payment, err := h.svc.InitiatePayment(c.Request.Context(), userID, plan, req.AddonQty, req.ReturnURL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -895,7 +900,8 @@ func (h *SubscriptionHandler) Buy(c *gin.Context) {
 		"redirect_url": redirect,
 		"amount_rub":   float64(payment.AmountKopecks) / 100,
 		"plan":         req.Plan,
-		"expires_in":   "15 minutes",
+		"addon_qty":    payment.AddonQty,
+		"expires_in":   "30 minutes",
 	})
 }
 
@@ -906,6 +912,10 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.AddonQty < 0 || req.AddonQty > 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "addon_qty должен быть 0, 1 или 2"})
+		return
+	}
 
 	// Check if real money purchases are blocked
 	settings, err := h.repo.GetPlatformSettings(c.Request.Context())
@@ -921,7 +931,7 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	plan := domain.SubscriptionPlan(req.Plan)
 
-	redirect, payment, err := h.svc.InitiateRenewal(c.Request.Context(), userID, plan, req.ReturnURL)
+	redirect, payment, err := h.svc.InitiateRenewal(c.Request.Context(), userID, plan, req.AddonQty, req.ReturnURL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -932,6 +942,7 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 		"redirect_url": redirect,
 		"amount_rub":   float64(payment.AmountKopecks) / 100,
 		"plan":         req.Plan,
+		"addon_qty":    payment.AddonQty,
 	})
 }
 

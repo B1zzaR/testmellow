@@ -52,6 +52,7 @@ type PaymentProcessJob struct {
 	UserID        string `json:"user_id"`
 	AmountKopecks int64  `json:"amount_kopecks"`
 	Plan          string `json:"plan"`
+	AddonQty      int    `json:"addon_qty"` // extra devices to activate alongside subscription (0=none)
 	Status        string `json:"status"`
 }
 
@@ -59,6 +60,7 @@ type SubscriptionActivateJob struct {
 	UserID        string `json:"user_id"`
 	PaymentID     string `json:"payment_id"`
 	Plan          string `json:"plan"`
+	AddonQty      int    `json:"addon_qty"` // extra devices to activate alongside subscription
 	AmountKopecks int64  `json:"amount_kopecks"`
 }
 
@@ -300,7 +302,7 @@ func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error
 		}
 
 		if domain.IsDeviceExpansionPlan(domain.SubscriptionPlan(job.Plan)) {
-			// Device expansion payment — enqueue device expansion activation
+			// Standalone device expansion payment — enqueue device expansion activation
 			activateJob := DeviceExpansionActivateJob{
 				UserID:        userID.String(),
 				PaymentID:     txID.String(),
@@ -311,11 +313,12 @@ func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error
 				w.log.Error("failed to enqueue device expansion activation", zap.Error(err))
 			}
 		} else {
-			// Subscription payment — enqueue subscription activation
+			// Subscription payment — enqueue subscription activation (addon_qty carried in job)
 			activateJob := SubscriptionActivateJob{
 				UserID:        userID.String(),
 				PaymentID:     txID.String(),
 				Plan:          job.Plan,
+				AddonQty:      job.AddonQty,
 				AmountKopecks: job.AmountKopecks,
 			}
 			if err := Enqueue(ctx, w.rdb, QueueSubscriptionActivate, activateJob); err != nil {

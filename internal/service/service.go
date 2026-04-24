@@ -295,11 +295,32 @@ func NewSubscriptionService(
 }
 
 // InitiatePayment creates a Platega payment session and a pending Payment record.
+// addonQty (0, 1 or 2) = extra device slots to activate alongside the subscription.
 // Returns the Platega redirect URL.
-func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.UUID, plan domain.SubscriptionPlan, returnURL string) (string, *domain.Payment, error) {
+func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.UUID, plan domain.SubscriptionPlan, addonQty int, returnURL string) (string, *domain.Payment, error) {
+	if addonQty < 0 || addonQty > 2 {
+		return "", nil, errors.New("addon_qty должен быть 0, 1 или 2")
+	}
+
 	priceKopecks := domain.PlanPriceKopecks(plan)
 	if priceKopecks == 0 {
 		return "", nil, errors.New("неверный тариф подписки")
+	}
+
+	// Validate addon availability before charging
+	if addonQty > 0 {
+		existing, err := s.repo.GetActiveDeviceExpansion(ctx, userID)
+		if err != nil {
+			return "", nil, err
+		}
+		currentExtra := 0
+		if existing != nil {
+			currentExtra = existing.ExtraDevices
+		}
+		if currentExtra+addonQty > domain.DeviceExpansionMaxExtra {
+			return "", nil, fmt.Errorf("превышен максимум дополнительных устройств (сейчас +%d, максимум +%d)", currentExtra, domain.DeviceExpansionMaxExtra)
+		}
+		priceKopecks += domain.DeviceExpansionKopecks(plan, addonQty)
 	}
 
 	// If the user already has a non-expired PENDING payment for this plan,
@@ -319,16 +340,15 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 		return "", nil, errors.New("пользователь не найден")
 	}
 
-	// Apply active discount promo if present
+	// Apply active discount promo if present (applies only to subscription price, not addon)
+	subPrice := domain.PlanPriceKopecks(plan)
 	discountCode, discountPercent, _ := s.repo.GetActiveDiscount(ctx, userID)
 	if discountPercent > 0 {
-		reduction := priceKopecks * int64(discountPercent) / 100
+		reduction := subPrice * int64(discountPercent) / 100
 		priceKopecks -= reduction
 	}
 
 	// ── Free activation (100% discount) ───────────────────────────────────
-	// When a promo brings the price to zero we skip Platega entirely and
-	// directly create a CONFIRMED payment + enqueue subscription activation.
 	if priceKopecks <= 0 {
 		freePaymentID := uuid.New()
 		freePayment := &domain.Payment{
@@ -338,7 +358,8 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 			Currency:       "RUB",
 			Status:         domain.PaymentStatusConfirmed,
 			Plan:           plan,
-			PaymentMethod:  0, // no payment gateway for free promos
+			AddonQty:       addonQty,
+			PaymentMethod:  0,
 			PlategaPayload: userID.String(),
 			RedirectURL:    returnURL,
 			CreatedAt:      time.Now(),
@@ -355,6 +376,7 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 			UserID:        userID.String(),
 			AmountKopecks: 0,
 			Plan:          string(plan),
+			AddonQty:      addonQty,
 			Status:        string(domain.PaymentStatusConfirmed),
 		}
 		if err := worker.Enqueue(ctx, s.rdb, worker.QueuePaymentProcess, job); err != nil {
@@ -363,6 +385,7 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 		s.log.Info("free subscription activated via promo",
 			zap.String("user_id", userID.String()),
 			zap.String("plan", string(plan)),
+			zap.Int("addon_qty", addonQty),
 			zap.String("payment_id", freePaymentID.String()),
 		)
 		return returnURL, freePayment, nil
@@ -374,15 +397,20 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 	}
 	amountRubles := float64(priceKopecks) / 100.0
 
+	desc := fmt.Sprintf("VPN подписка %s", plan)
+	if addonQty > 0 {
+		desc += fmt.Sprintf(" + %d доп. устройства", addonQty)
+	}
+
 	platResp, err := s.platega.CreatePayment(ctx, platega.CreatePaymentRequest{
 		PaymentMethod: platega.MethodSBPQR,
 		PaymentDetails: platega.PaymentDetails{
 			Amount:   amountRubles,
 			Currency: "RUB",
 		},
-		Description: fmt.Sprintf("VPN подписка %s", plan),
+		Description: desc,
 		Return:      returnURL,
-		Payload:     userID.String(), // our payload to identify user on webhook
+		Payload:     userID.String(),
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("initiate payment: %w", err)
@@ -400,6 +428,7 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 		Currency:       "RUB",
 		Status:         domain.PaymentStatusPending,
 		Plan:           plan,
+		AddonQty:       addonQty,
 		PaymentMethod:  platega.MethodSBPQR,
 		PlategaPayload: userID.String(),
 		RedirectURL:    platResp.Redirect,
@@ -420,6 +449,7 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 	s.log.Info("payment initiated",
 		zap.String("user_id", userID.String()),
 		zap.String("plan", string(plan)),
+		zap.Int("addon_qty", addonQty),
 		zap.String("tx_id", txID.String()),
 	)
 	return platResp.Redirect, payment, nil
@@ -472,8 +502,8 @@ func (s *SubscriptionService) GetUserActiveSubscription(ctx context.Context, use
 }
 
 // InitiateRenewal creates a payment for renewing an active or recently expired subscription.
-func (s *SubscriptionService) InitiateRenewal(ctx context.Context, userID uuid.UUID, plan domain.SubscriptionPlan, returnURL string) (string, *domain.Payment, error) {
-	return s.InitiatePayment(ctx, userID, plan, returnURL)
+func (s *SubscriptionService) InitiateRenewal(ctx context.Context, userID uuid.UUID, plan domain.SubscriptionPlan, addonQty int, returnURL string) (string, *domain.Payment, error) {
+	return s.InitiatePayment(ctx, userID, plan, addonQty, returnURL)
 }
 
 // InitiateDeviceExpansionPayment creates a Platega payment for device expansion.

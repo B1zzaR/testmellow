@@ -463,7 +463,7 @@ func (b *Bot) handleBuyRubles(plan domain.SubscriptionPlan) tele.HandlerFunc {
 			return c.Send("Ошибка: " + err.Error())
 		}
 
-		redirect, payment, err := b.subSvc.InitiatePayment(ctx, user.ID, plan, b.cfg.PaymentReturnURL)
+		redirect, payment, err := b.subSvc.InitiatePayment(ctx, user.ID, plan, 0, b.cfg.PaymentReturnURL)
 		if err != nil {
 			return c.Send("Ошибка: " + err.Error())
 		}

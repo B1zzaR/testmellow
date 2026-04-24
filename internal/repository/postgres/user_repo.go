@@ -814,11 +814,11 @@ func (r *UserRepo) CreatePayment(ctx context.Context, p *domain.Payment) error {
 	h := sha256.Sum256([]byte(p.ID.String() + string(p.Status)))
 	idempotency := hex.EncodeToString(h[:])
 	_, err := r.db.Exec(ctx, `
-		INSERT INTO payments (id, user_id, amount_kopecks, currency, status, plan,
+		INSERT INTO payments (id, user_id, amount_kopecks, currency, status, plan, addon_qty,
 		                      payment_method, platega_payload, redirect_url, idempotency,
 		                      expires_at, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		p.ID, p.UserID, p.AmountKopecks, p.Currency, p.Status, p.Plan,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+		p.ID, p.UserID, p.AmountKopecks, p.Currency, p.Status, p.Plan, p.AddonQty,
 		p.PaymentMethod, p.PlategaPayload, p.RedirectURL, idempotency,
 		p.ExpiresAt, p.CreatedAt, p.UpdatedAt,
 	)
@@ -828,11 +828,11 @@ func (r *UserRepo) CreatePayment(ctx context.Context, p *domain.Payment) error {
 func (r *UserRepo) GetPaymentByID(ctx context.Context, id uuid.UUID) (*domain.Payment, error) {
 	p := &domain.Payment{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan,
+		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments WHERE id=$1`, id).Scan(
-		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan,
+		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty,
 		&p.PaymentMethod, &p.PlategaPayload, &p.RedirectURL, &p.WebhookReceivedAt, &p.Idempotency,
 		&p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -846,11 +846,11 @@ func (r *UserRepo) GetPaymentByID(ctx context.Context, id uuid.UUID) (*domain.Pa
 func (r *UserRepo) GetUserPaymentByID(ctx context.Context, userID, paymentID uuid.UUID) (*domain.Payment, error) {
 	p := &domain.Payment{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan,
+		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments WHERE id=$1 AND user_id=$2`, paymentID, userID).Scan(
-		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan,
+		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty,
 		&p.PaymentMethod, &p.PlategaPayload, &p.RedirectURL, &p.WebhookReceivedAt, &p.Idempotency,
 		&p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -861,19 +861,18 @@ func (r *UserRepo) GetUserPaymentByID(ctx context.Context, userID, paymentID uui
 }
 
 // GetPendingPaymentByPlan returns the most recent non-expired PENDING payment for
-// a user+plan combination, or nil if none exists. Used to deduplicate payment
-// initiations and avoid burning through the rate limit on retries.
+// a user+plan combination, or nil if none exists.
 func (r *UserRepo) GetPendingPaymentByPlan(ctx context.Context, userID uuid.UUID, plan domain.SubscriptionPlan) (*domain.Payment, error) {
 	p := &domain.Payment{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan,
+		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments
 		WHERE user_id=$1 AND plan=$2 AND status='PENDING'
 		  AND (expires_at IS NULL OR expires_at > NOW())
 		ORDER BY created_at DESC LIMIT 1`, userID, plan).Scan(
-		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan,
+		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty,
 		&p.PaymentMethod, &p.PlategaPayload, &p.RedirectURL, &p.WebhookReceivedAt, &p.Idempotency,
 		&p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -886,7 +885,7 @@ func (r *UserRepo) GetPendingPaymentByPlan(ctx context.Context, userID uuid.UUID
 // GetPendingPayments returns non-expired PENDING payments for a user.
 func (r *UserRepo) GetPendingPayments(ctx context.Context, userID uuid.UUID) ([]*domain.Payment, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan,
+		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments
@@ -930,7 +929,7 @@ func (r *UserRepo) MarkExpiredPayments(ctx context.Context) (int64, error) {
 // or are already past expires_at — used by worker to sync with Platega before marking expired.
 func (r *UserRepo) GetStalePendingPayments(ctx context.Context) ([]*domain.Payment, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan,
+		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments
@@ -954,7 +953,7 @@ func scanPayments(rows interface {
 	for rows.Next() {
 		p := &domain.Payment{}
 		if err := rows.Scan(
-			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan,
+			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty,
 			&p.PaymentMethod, &p.PlategaPayload, &p.RedirectURL, &p.WebhookReceivedAt, &p.Idempotency,
 			&p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {

@@ -489,6 +489,12 @@ ALTER TABLE payments ADD CONSTRAINT payments_plan_check
     CHECK (plan IN ('1week','1month','3months','device_expansion','device_expansion_2','device_expansion_extend'));
 `,
 		},
+		{
+			// addon_qty: how many extra devices the user chose to add together with
+			// a subscription purchase/renewal. 0 = no addon.
+			version: "021_payments_addon_qty",
+			sql:     `ALTER TABLE payments ADD COLUMN IF NOT EXISTS addon_qty SMALLINT NOT NULL DEFAULT 0 CHECK (addon_qty BETWEEN 0 AND 2);`,
+		},
 	}
 
 	for _, m := range migrations {
