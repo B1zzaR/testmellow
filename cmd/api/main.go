@@ -181,13 +181,7 @@ func main() {
 		api.GET("/shop", shopH.List)
 		api.POST("/shop/buy", shopH.Buy)
 		api.POST("/shop/buy-subscription", shopH.BuySubscription)
-		api.POST("/shop/buy-device-expansion", shopH.BuyDeviceExpansion)
-		api.POST("/shop/buy-device-expansion-money", shopH.BuyDeviceExpansionMoney)
-		api.POST("/shop/extend-device-expansion", shopH.ExtendDeviceExpansion)
-		api.POST("/shop/extend-device-expansion-money", shopH.ExtendDeviceExpansionMoney)
-		api.GET("/devices/expansion/quote", shopH.QuoteDeviceExpansion)
-
-		api.GET("/devices", deviceH.List)
+api.GET("/devices", deviceH.List)
 		api.POST("/devices/:id/disconnect", deviceH.Disconnect)
 
 		// Anonymous suggestions

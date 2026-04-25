@@ -495,6 +495,17 @@ ALTER TABLE payments ADD CONSTRAINT payments_plan_check
 			version: "021_payments_addon_qty",
 			sql:     `ALTER TABLE payments ADD COLUMN IF NOT EXISTS addon_qty SMALLINT NOT NULL DEFAULT 0 CHECK (addon_qty BETWEEN 0 AND 2);`,
 		},
+		{
+			version: "022_remove_device_expansion",
+			sql: `
+DROP TABLE IF EXISTS device_expansions;
+ALTER TABLE users DROP COLUMN IF EXISTS device_expansion_count;
+ALTER TABLE payments DROP COLUMN IF EXISTS addon_qty;
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_plan_check;
+ALTER TABLE payments ADD CONSTRAINT payments_plan_check
+    CHECK (plan IN ('1week','1month','3months'));
+`,
+		},
 	}
 
 	for _, m := range migrations {

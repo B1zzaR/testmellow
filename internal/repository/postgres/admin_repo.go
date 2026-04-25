@@ -15,7 +15,7 @@ import (
 
 // ListAllPayments returns all payments with optional filters.
 func (r *UserRepo) ListAllPayments(ctx context.Context, status string, from, to *time.Time, limit, offset int) ([]*domain.Payment, error) {
-	q := `SELECT p.id, p.user_id, p.amount_kopecks, p.currency, p.status, p.plan, p.addon_qty, p.payment_method,
+	q := `SELECT p.id, p.user_id, p.amount_kopecks, p.currency, p.status, p.plan, p.payment_method,
 	             p.redirect_url, p.expires_at, p.created_at, p.updated_at, u.username
 	      FROM payments p LEFT JOIN users u ON u.id = p.user_id WHERE 1=1`
 	args := []any{}
@@ -49,7 +49,7 @@ func (r *UserRepo) ListAllPayments(ctx context.Context, status string, from, to 
 	for rows.Next() {
 		p := &domain.Payment{}
 		if err := rows.Scan(
-			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty, &p.PaymentMethod,
+			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.PaymentMethod,
 			&p.RedirectURL, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt, &p.Username,
 		); err != nil {
 			return nil, err
@@ -105,7 +105,7 @@ func (r *UserRepo) CountSubscriptions(ctx context.Context, status string, userID
 // ListPaymentsByUser returns the most recent payments for a specific user (admin view).
 func (r *UserRepo) ListPaymentsByUser(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Payment, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty, payment_method,
+		SELECT id, user_id, amount_kopecks, currency, status, plan, payment_method,
 		       redirect_url, expires_at, created_at, updated_at
 		FROM payments WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`,
 		userID, limit)
@@ -118,7 +118,7 @@ func (r *UserRepo) ListPaymentsByUser(ctx context.Context, userID uuid.UUID, lim
 	for rows.Next() {
 		p := &domain.Payment{}
 		if err := rows.Scan(
-			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty, &p.PaymentMethod,
+			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.PaymentMethod,
 			&p.RedirectURL, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err

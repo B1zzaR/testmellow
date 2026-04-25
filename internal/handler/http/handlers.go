@@ -859,7 +859,6 @@ func (h *SubscriptionHandler) GetByID(c *gin.Context) {
 
 type buySubscriptionRequest struct {
 	Plan      string `json:"plan" binding:"required"`
-	AddonQty  int    `json:"addon_qty"` // 0 (default), 1 or 2 extra devices
 	ReturnURL string `json:"return_url"`
 }
 
@@ -868,10 +867,6 @@ func (h *SubscriptionHandler) Buy(c *gin.Context) {
 	var req buySubscriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if req.AddonQty < 0 || req.AddonQty > 2 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "addon_qty должен быть 0, 1 или 2"})
 		return
 	}
 
@@ -889,7 +884,7 @@ func (h *SubscriptionHandler) Buy(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	plan := domain.SubscriptionPlan(req.Plan)
 
-	redirect, payment, err := h.svc.InitiatePayment(c.Request.Context(), userID, plan, req.AddonQty, req.ReturnURL)
+	redirect, payment, err := h.svc.InitiatePayment(c.Request.Context(), userID, plan, req.ReturnURL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -900,7 +895,6 @@ func (h *SubscriptionHandler) Buy(c *gin.Context) {
 		"redirect_url": redirect,
 		"amount_rub":   float64(payment.AmountKopecks) / 100,
 		"plan":         req.Plan,
-		"addon_qty":    payment.AddonQty,
 		"expires_in":   "30 minutes",
 	})
 }
@@ -912,10 +906,6 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.AddonQty < 0 || req.AddonQty > 2 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "addon_qty должен быть 0, 1 или 2"})
-		return
-	}
 
 	// Check if real money purchases are blocked
 	settings, err := h.repo.GetPlatformSettings(c.Request.Context())
@@ -931,7 +921,7 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	plan := domain.SubscriptionPlan(req.Plan)
 
-	redirect, payment, err := h.svc.InitiateRenewal(c.Request.Context(), userID, plan, req.AddonQty, req.ReturnURL)
+	redirect, payment, err := h.svc.InitiateRenewal(c.Request.Context(), userID, plan, req.ReturnURL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -942,7 +932,6 @@ func (h *SubscriptionHandler) Renew(c *gin.Context) {
 		"redirect_url": redirect,
 		"amount_rub":   float64(payment.AmountKopecks) / 100,
 		"plan":         req.Plan,
-		"addon_qty":    payment.AddonQty,
 	})
 }
 
@@ -1399,101 +1388,6 @@ func (h *ShopHandler) BuySubscription(c *gin.Context) {
 	})
 }
 
-// POST /api/shop/buy-device-expansion  (YAD payment — adds +qty devices)
-func (h *ShopHandler) BuyDeviceExpansion(c *gin.Context) {
-	var req struct {
-		Qty int `json:"qty"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || (req.Qty != 1 && req.Qty != 2) {
-		req.Qty = 1 // default to +1
-	}
-
-	userID := middleware.CurrentUserID(c)
-	expansion, err := h.eco.BuyDeviceExpansion(c.Request.Context(), userID, req.Qty)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":       "Расширение устройств активировано",
-		"extra_devices": expansion.ExtraDevices,
-		"expires_at":    expansion.ExpiresAt,
-		"total_limit":   domain.DeviceMaxPerUser + expansion.ExtraDevices,
-	})
-}
-
-type buyDeviceExpansionMoneyRequest struct {
-	Qty       int    `json:"qty"`
-	ReturnURL string `json:"return_url"`
-}
-
-// POST /api/shop/buy-device-expansion-money  (Platega payment — adds +qty devices)
-func (h *ShopHandler) BuyDeviceExpansionMoney(c *gin.Context) {
-	var req buyDeviceExpansionMoneyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if req.Qty != 1 && req.Qty != 2 {
-		req.Qty = 1
-	}
-
-	userID := middleware.CurrentUserID(c)
-	redirect, payment, err := h.subSvc.InitiateDeviceExpansionPayment(c.Request.Context(), userID, req.Qty, req.ReturnURL)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"payment_id":   payment.ID,
-		"redirect_url": redirect,
-		"amount_rub":   float64(payment.AmountKopecks) / 100,
-		"qty":          req.Qty,
-		"expires_in":   "30 minutes",
-	})
-}
-
-// GET /api/devices/expansion/quote  — returns proportional price for buying device expansion
-func (h *ShopHandler) QuoteDeviceExpansion(c *gin.Context) {
-	qtyStr := c.DefaultQuery("qty", "1")
-	qty := 1
-	if qtyStr == "2" {
-		qty = 2
-	}
-	userID := middleware.CurrentUserID(c)
-	quote, err := h.subSvc.QuoteDeviceExpansion(c.Request.Context(), userID, qty)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, quote)
-}
-
-// POST /api/shop/extend-device-expansion  (kept for backward compat — YAD)
-func (h *ShopHandler) ExtendDeviceExpansion(c *gin.Context) {
-	userID := middleware.CurrentUserID(c)
-	expansion, err := h.eco.ExtendDeviceExpansionYAD(c.Request.Context(), userID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":       "Расширение устройств продлено",
-		"extra_devices": expansion.ExtraDevices,
-		"expires_at":    expansion.ExpiresAt,
-		"total_limit":   domain.DeviceMaxPerUser + expansion.ExtraDevices,
-	})
-}
-
-// ExtendDeviceExpansionMoney is no longer needed; devices auto-extend with subscription.
-// Kept as a no-op stub so existing route registrations compile.
-func (h *ShopHandler) ExtendDeviceExpansionMoney(c *gin.Context) {
-	c.JSON(http.StatusGone, gin.H{"error": "устройства автоматически продлеваются при продлении подписки"})
-}
-
 // ─── Device Handler ───────────────────────────────────────────────────────────
 
 type DeviceHandler struct {
@@ -1515,11 +1409,7 @@ func (h *DeviceHandler) List(c *gin.Context) {
 		return
 	}
 
-	// Dynamic device limit based on active expansion
-	limit, _ := h.repo.GetEffectiveDeviceLimit(c.Request.Context(), userID)
-
-	// Get expansion info for the response
-	expansion, _ := h.repo.GetActiveDeviceExpansion(c.Request.Context(), userID)
+	limit := domain.DeviceMaxPerUser
 
 	type deviceResponse struct {
 		ID             string `json:"id"`
@@ -1561,10 +1451,9 @@ func (h *DeviceHandler) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"devices":   result,
-		"count":     activeCount,
-		"limit":     limit,
-		"expansion": expansion,
+		"devices": result,
+		"count":   activeCount,
+		"limit":   limit,
 	})
 }
 

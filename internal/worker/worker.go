@@ -37,9 +37,7 @@ import (
 const (
 	QueuePaymentProcess          = "queue:payment:process"
 	QueueSubscriptionActivate    = "queue:subscription:activate"
-	QueueDeviceExpansionActivate = "queue:device_expansion:activate"
-	QueueDeviceExpansionExtend   = "queue:device_expansion:extend"
-	QueueReferralReward          = "queue:referral:reward"
+QueueReferralReward          = "queue:referral:reward"
 	QueueReferralPayout          = "queue:referral:payout"
 	QueueNotifyTelegram          = "queue:notify:telegram"
 	QueueTFAChallenge            = "queue:tfa:challenge"
@@ -52,7 +50,6 @@ type PaymentProcessJob struct {
 	UserID        string `json:"user_id"`
 	AmountKopecks int64  `json:"amount_kopecks"`
 	Plan          string `json:"plan"`
-	AddonQty      int    `json:"addon_qty"` // extra devices to activate alongside subscription (0=none)
 	Status        string `json:"status"`
 }
 
@@ -60,20 +57,7 @@ type SubscriptionActivateJob struct {
 	UserID        string `json:"user_id"`
 	PaymentID     string `json:"payment_id"`
 	Plan          string `json:"plan"`
-	AddonQty      int    `json:"addon_qty"` // extra devices to activate alongside subscription
 	AmountKopecks int64  `json:"amount_kopecks"`
-}
-
-type DeviceExpansionActivateJob struct {
-	UserID        string `json:"user_id"`
-	PaymentID     string `json:"payment_id"`
-	AmountKopecks int64  `json:"amount_kopecks"`
-	Quantity      int    `json:"quantity"`
-}
-
-type DeviceExpansionExtendJob struct {
-	UserID    string `json:"user_id"`
-	PaymentID string `json:"payment_id"`
 }
 
 type ReferralRewardJob struct {
@@ -136,8 +120,6 @@ func NewWorker(
 func (w *Worker) Run(ctx context.Context) {
 	go w.loop(ctx, QueuePaymentProcess, w.handlePaymentProcess)
 	go w.loop(ctx, QueueSubscriptionActivate, w.handleSubscriptionActivate)
-	go w.loop(ctx, QueueDeviceExpansionActivate, w.handleDeviceExpansionActivate)
-	go w.loop(ctx, QueueDeviceExpansionExtend, w.handleDeviceExpansionExtend)
 	go w.loop(ctx, QueueReferralReward, w.handleReferralReward)
 	go w.loop(ctx, QueueReferralPayout, w.handleReferralPayout)
 
@@ -146,9 +128,7 @@ func (w *Worker) Run(ctx context.Context) {
 	go w.periodicRewardSweep(ctx)
 	go w.periodicPaymentExpirySweep(ctx)
 	go w.periodicExpiryWarnings(ctx)
-	go w.periodicDeviceExpansionSweep(ctx)
-
-	<-ctx.Done()
+<-ctx.Done()
 	w.log.Info("worker shutting down")
 }
 
@@ -301,29 +281,14 @@ func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error
 			return err
 		}
 
-		if domain.IsDeviceExpansionPlan(domain.SubscriptionPlan(job.Plan)) {
-			// Standalone device expansion payment — enqueue device expansion activation
-			activateJob := DeviceExpansionActivateJob{
-				UserID:        userID.String(),
-				PaymentID:     txID.String(),
-				AmountKopecks: job.AmountKopecks,
-				Quantity:      domain.DeviceExpansionQuantity(domain.SubscriptionPlan(job.Plan)),
-			}
-			if err := Enqueue(ctx, w.rdb, QueueDeviceExpansionActivate, activateJob); err != nil {
-				w.log.Error("failed to enqueue device expansion activation", zap.Error(err))
-			}
-		} else {
-			// Subscription payment — enqueue subscription activation (addon_qty carried in job)
-			activateJob := SubscriptionActivateJob{
-				UserID:        userID.String(),
-				PaymentID:     txID.String(),
-				Plan:          job.Plan,
-				AddonQty:      job.AddonQty,
-				AmountKopecks: job.AmountKopecks,
-			}
-			if err := Enqueue(ctx, w.rdb, QueueSubscriptionActivate, activateJob); err != nil {
-				w.log.Error("failed to enqueue subscription activation", zap.Error(err))
-			}
+		activateJob := SubscriptionActivateJob{
+			UserID:        userID.String(),
+			PaymentID:     txID.String(),
+			Plan:          job.Plan,
+			AmountKopecks: job.AmountKopecks,
+		}
+		if err := Enqueue(ctx, w.rdb, QueueSubscriptionActivate, activateJob); err != nil {
+			w.log.Error("failed to enqueue subscription activation", zap.Error(err))
 		}
 
 		// Enqueue referral reward
@@ -509,244 +474,6 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 				_ = bonusTx.Commit(ctx)
 			}
 		}
-	}
-
-	// Auto-extend device expansion to match new subscription expiry.
-	// addon_expiry <= subscription_expiry is always enforced here.
-	if existing, err := w.repo.GetActiveDeviceExpansion(ctx, userID); err == nil && existing != nil {
-		if existing.ExpiresAt.Before(newExpiry) {
-			extTx, err := w.repo.BeginTx(ctx)
-			if err == nil {
-				if err := w.repo.ExtendDeviceExpansion(ctx, extTx, existing.ID, newExpiry, false); err != nil {
-					extTx.Rollback(ctx)
-					w.log.Warn("failed to auto-extend device expansion",
-						zap.String("user_id", userID.String()), zap.Error(err))
-				} else {
-					_ = extTx.Commit(ctx)
-					// Ensure Remnawave has correct limit after expiry might have reset it
-					if user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
-						limit := domain.DeviceMaxPerUser + existing.ExtraDevices
-						_ = w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, limit)
-					}
-					w.log.Info("device expansion auto-extended with subscription renewal",
-						zap.String("user_id", userID.String()),
-						zap.Int("extra_devices", existing.ExtraDevices),
-						zap.Time("new_expires_at", newExpiry),
-					)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// ─── Device Expansion Activation ──────────────────────────────────────────────
-
-func (w *Worker) handleDeviceExpansionActivate(ctx context.Context, payload string) error {
-	var job DeviceExpansionActivateJob
-	if err := json.Unmarshal([]byte(payload), &job); err != nil {
-		return fmt.Errorf("unmarshal device expansion job: %w", err)
-	}
-
-	userID, err := uuid.Parse(job.UserID)
-	if err != nil {
-		return fmt.Errorf("invalid user id %q: %w", job.UserID, err)
-	}
-
-	idempKey := fmt.Sprintf("devexp:activated:%s", job.PaymentID)
-	isNew, err := w.anti.EnsureOnce(ctx, idempKey, 48*time.Hour)
-	if err != nil {
-		return err
-	}
-	if !isNew {
-		w.log.Info("duplicate device expansion activation, skipping",
-			zap.String("payment_id", job.PaymentID),
-		)
-		return nil
-	}
-
-	user, err := w.repo.GetByID(ctx, userID)
-	if err != nil || user == nil {
-		return fmt.Errorf("user %s not found", job.UserID)
-	}
-
-	activeSub, err := w.repo.GetActiveSubscription(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
-		return fmt.Errorf("user %s has no active subscription", job.UserID)
-	}
-
-	newExpiry := activeSub.ExpiresAt
-
-	existing, err := w.repo.GetActiveDeviceExpansion(ctx, userID)
-	if err != nil {
-		return err
-	}
-
-	quantity := job.Quantity
-	if quantity <= 0 {
-		quantity = 1 // backward compat for older jobs
-	}
-
-	newExtra := quantity
-	if existing != nil {
-		if existing.ExtraDevices+quantity > domain.DeviceExpansionMaxExtra {
-			return fmt.Errorf("user %s would exceed max device expansion", job.UserID)
-		}
-		newExtra = existing.ExtraDevices + quantity
-	}
-
-	tx, err := w.repo.BeginTx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	if existing != nil {
-		if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, newExpiry, false); err != nil {
-			return err
-		}
-		if err := w.repo.UpdateDeviceExpansionExtra(ctx, tx, existing.ID, newExtra); err != nil {
-			return err
-		}
-	} else {
-		expansion := &domain.DeviceExpansion{
-			ID:           uuid.New(),
-			UserID:       userID,
-			ExtraDevices: newExtra,
-			ExtendCount:  1,
-			ExpiresAt:    newExpiry,
-			CreatedAt:    time.Now(),
-		}
-		if err := w.repo.CreateDeviceExpansion(ctx, tx, expansion); err != nil {
-			return err
-		}
-	}
-
-	if err := w.repo.IncrementDeviceExpansionCount(ctx, tx, userID); err != nil {
-		return fmt.Errorf("increment device expansion count: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-
-	// Update Remnawave panel device limit
-	if user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
-		newLimit := domain.DeviceMaxPerUser + newExtra
-		if err := w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, newLimit); err != nil {
-			w.log.Error("failed to update remnawave hwid device limit",
-				zap.String("user_id", userID.String()),
-				zap.Int("new_limit", newLimit),
-				zap.Error(err))
-		}
-	}
-
-	w.log.Info("device expansion activated via payment",
-		zap.String("user_id", job.UserID),
-		zap.String("payment_id", job.PaymentID),
-		zap.Int("extra_devices", newExtra),
-		zap.Time("expires_at", newExpiry),
-	)
-
-	// Notify user via Telegram
-	if user.TelegramID != nil {
-		deviceWord := "устройство"
-		if quantity >= 2 && quantity <= 4 {
-			deviceWord = "устройства"
-		} else if quantity >= 5 {
-			deviceWord = "устройств"
-		}
-		msg := fmt.Sprintf("✅ Расширение устройств активировано!\n+%d %s (всего +%d к базовому лимиту)\nДействует до конца подписки.", quantity, deviceWord, newExtra)
-		_ = Enqueue(ctx, w.rdb, QueueNotifyTelegram, NotifyTelegramJob{
-			TelegramID: *user.TelegramID,
-			Message:    msg,
-		})
-	}
-
-	return nil
-}
-
-// ─── Device Expansion Extend ──────────────────────────────────────────────────
-
-func (w *Worker) handleDeviceExpansionExtend(ctx context.Context, payload string) error {
-	var job DeviceExpansionExtendJob
-	if err := json.Unmarshal([]byte(payload), &job); err != nil {
-		return fmt.Errorf("unmarshal device expansion extend job: %w", err)
-	}
-
-	userID, err := uuid.Parse(job.UserID)
-	if err != nil {
-		return fmt.Errorf("invalid user id %q: %w", job.UserID, err)
-	}
-
-	idempKey := fmt.Sprintf("devexp:extended:%s", job.PaymentID)
-	isNew, err := w.anti.EnsureOnce(ctx, idempKey, 48*time.Hour)
-	if err != nil {
-		return err
-	}
-	if !isNew {
-		w.log.Info("duplicate device expansion extend, skipping",
-			zap.String("payment_id", job.PaymentID))
-		return nil
-	}
-
-	user, err := w.repo.GetByID(ctx, userID)
-	if err != nil || user == nil {
-		return fmt.Errorf("user %s not found", job.UserID)
-	}
-
-	activeSub, err := w.repo.GetActiveSubscription(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
-		return fmt.Errorf("user %s has no active subscription", job.UserID)
-	}
-
-	existing, err := w.repo.GetActiveDeviceExpansion(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if existing == nil {
-		return fmt.Errorf("user %s has no active device expansion to extend", job.UserID)
-	}
-
-	tx, err := w.repo.BeginTx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	if err := w.repo.ExtendDeviceExpansion(ctx, tx, existing.ID, activeSub.ExpiresAt, true); err != nil {
-		return err
-	}
-
-	if err := w.repo.IncrementDeviceExpansionCount(ctx, tx, userID); err != nil {
-		return fmt.Errorf("increment device expansion count: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-
-	w.log.Info("device expansion extended via payment",
-		zap.String("user_id", job.UserID),
-		zap.String("payment_id", job.PaymentID),
-		zap.Int("extra_devices", existing.ExtraDevices),
-		zap.Time("new_expires_at", activeSub.ExpiresAt),
-	)
-
-	if user.TelegramID != nil {
-		msg := fmt.Sprintf("✅ Расширение устройств продлено!\n+%d устройств до %s",
-			existing.ExtraDevices, activeSub.ExpiresAt.Format("02.01.2006"))
-		_ = Enqueue(ctx, w.rdb, QueueNotifyTelegram, NotifyTelegramJob{
-			TelegramID: *user.TelegramID,
-			Message:    msg,
-		})
 	}
 
 	return nil
@@ -1054,16 +781,6 @@ func (w *Worker) periodicExpirySweep(ctx context.Context) {
 					_ = w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, domain.DeviceMaxPerUser)
 				}
 
-				// Force-expire device expansions when subscription ends
-				deleted, _ := w.repo.DeleteDeviceExpansionsByUser(ctx, uid)
-				if deleted > 0 {
-					w.log.Info("device expansions reset due to subscription expiry",
-						zap.String("user_id", uid.String()), zap.Int64("deleted", deleted))
-					if user.TelegramID != nil {
-						w.enqueueNotify(ctx, *user.TelegramID,
-							"📱 <b>Подписка истекла</b>\n\nДополнительные устройства сброшены. При продлении подписки вы можете приобрести расширение заново.")
-					}
-				}
 			}
 		}
 	}
@@ -1250,47 +967,3 @@ func (w *Worker) sendExpiryWarnings(ctx context.Context) {
 	}
 }
 
-// periodicDeviceExpansionSweep resets device limits in Remnawave when expansions expire.
-func (w *Worker) periodicDeviceExpansionSweep(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			userIDs, err := w.repo.ExpireDeviceExpansions(ctx)
-			if err != nil {
-				w.log.Error("device expansion sweep: get expired", zap.Error(err))
-				continue
-			}
-			for _, uid := range userIDs {
-				user, err := w.repo.GetByID(ctx, uid)
-				if err != nil || user == nil || user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
-					continue
-				}
-				if err := w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, domain.DeviceMaxPerUser); err != nil {
-					w.log.Error("device expansion sweep: reset remnawave limit",
-						zap.String("user_id", uid.String()), zap.Error(err))
-					continue
-				}
-				w.log.Info("device expansion expired, limit reset",
-					zap.String("user_id", uid.String()),
-					zap.Int("limit", domain.DeviceMaxPerUser))
-
-				// Notify user via Telegram
-				if user.TelegramID != nil {
-					w.enqueueNotify(ctx, *user.TelegramID,
-						"📱 <b>Расширение устройств истекло</b>\n\nЛимит устройств сброшен до стандартного (4). Вы можете приобрести расширение снова в личном кабинете.")
-				}
-			}
-			// Clean up expired records
-			n, err := w.repo.DeleteExpiredDeviceExpansions(ctx)
-			if err != nil {
-				w.log.Error("device expansion sweep: cleanup", zap.Error(err))
-			} else if n > 0 {
-				w.log.Info("cleaned up expired device expansions", zap.Int64("count", n))
-			}
-		}
-	}
-}
