@@ -595,10 +595,14 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		return "", nil, errors.New("расширение устройств уже активно")
 	}
 
-	// Cost: full price for new, difference for upgrade.
-	amountKopecks := domain.DeviceExpansionKopecks(qty)
+	// Tiered cost based on days remaining.
+	daysRemaining := int(time.Until(activeSub.ExpiresAt).Hours() / 24)
+	if daysRemaining < 0 {
+		daysRemaining = 0
+	}
+	amountKopecks := domain.DeviceExpansionKopecks(qty, daysRemaining)
 	if existing != nil {
-		amountKopecks = domain.DeviceExpansionKopecks(qty) - domain.DeviceExpansionKopecks(existing.ExtraDevices)
+		amountKopecks = domain.DeviceExpansionKopecks(qty, daysRemaining) - domain.DeviceExpansionKopecks(existing.ExtraDevices, daysRemaining)
 	}
 
 	// Rate limit (separate key from subscription payments).
@@ -1014,10 +1018,14 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 		return nil, errors.New("расширение устройств уже активно")
 	}
 
-	// Cost: full price for new purchase, difference for upgrade.
-	cost := domain.DeviceExpansionYAD(qty)
+	// Tiered cost based on days remaining in the active subscription.
+	daysRemaining := int(time.Until(activeSub.ExpiresAt).Hours() / 24)
+	if daysRemaining < 0 {
+		daysRemaining = 0
+	}
+	cost := domain.DeviceExpansionYAD(qty, daysRemaining)
 	if existing != nil {
-		cost = domain.DeviceExpansionYAD(qty) - domain.DeviceExpansionYAD(existing.ExtraDevices)
+		cost = domain.DeviceExpansionYAD(qty, daysRemaining) - domain.DeviceExpansionYAD(existing.ExtraDevices, daysRemaining)
 	}
 
 	user, err := s.repo.GetByID(ctx, userID)

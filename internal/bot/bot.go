@@ -941,14 +941,32 @@ func (b *Bot) handleBuyDevice(c tele.Context) error {
 
 	expansion, _ := b.repo.GetActiveDeviceExpansion(ctx, user.ID)
 
+	// Calculate tiered prices based on days remaining in active subscription.
+	daysRemaining := 0
+	if activeSub, err2 := b.repo.GetActiveSubscription(ctx, user.ID); err2 == nil && activeSub != nil {
+		if d := int(time.Until(activeSub.ExpiresAt).Hours() / 24); d > 0 {
+			daysRemaining = d
+		}
+	}
+	p1YAD := domain.DeviceExpansionYAD(1, daysRemaining)
+	p1Rub := domain.DeviceExpansionKopecks(1, daysRemaining) / 100
+	p2YAD := domain.DeviceExpansionYAD(2, daysRemaining)
+	p2Rub := domain.DeviceExpansionKopecks(2, daysRemaining) / 100
+	tierLabel := domain.DeviceExpansionTierLabel(daysRemaining)
+
 	msg := "🔓 *Расширение устройств*\n" + brandLine + "\n\n"
 	if expansion != nil {
 		msg += fmt.Sprintf("✅ Активно: +%d устройств (до %s)\n\n", expansion.ExtraDevices, expansion.ExpiresAt.Format("02.01.2006"))
 	}
-	msg += "+1 устройство:  *50 ЯД*  |  *150 ₽*\n"
-	msg += "+2 устройства:  *90 ЯД*  |  *270 ₽*\n\n"
+	if tierLabel != "" {
+		msg += fmt.Sprintf("🔥 *%s* (осталось %d дн.)\n\n", tierLabel, daysRemaining)
+	}
+	msg += fmt.Sprintf("+1 устройство:  *%d ЯД*  |  *%d ₽*\n", p1YAD, p1Rub)
+	msg += fmt.Sprintf("+2 устройства:  *%d ЯД*  |  *%d ₽*  _(−10%% на 2-й слот)_\n\n", p2YAD, p2Rub)
 	if expansion != nil && expansion.ExtraDevices == 1 {
-		msg += "_Апгрейд +1→+2: 40 ЯД / 120 ₽_\n\n"
+		upYAD := domain.DeviceExpansionYAD(2, daysRemaining) - domain.DeviceExpansionYAD(1, daysRemaining)
+		upRub := (domain.DeviceExpansionKopecks(2, daysRemaining) - domain.DeviceExpansionKopecks(1, daysRemaining)) / 100
+		msg += fmt.Sprintf("_Апгрейд +1→+2: %d ЯД / %d ₽_\n\n", upYAD, upRub)
 	}
 	msg += "_Расширение действует до конца текущей подписки._"
 
@@ -956,13 +974,13 @@ func (b *Bot) handleBuyDevice(c tele.Context) error {
 	var rows []tele.Row
 
 	if expansion == nil || expansion.ExtraDevices < 1 {
-		btn1YAD := rm.Data("+1 за ЯД (50)", "buydev_yad_1")
-		btn1Money := rm.Data("+1 за рубли (150₽)", "buydev_money_1")
+		btn1YAD := rm.Data(fmt.Sprintf("+1 за ЯД (%d)", p1YAD), "buydev_yad_1")
+		btn1Money := rm.Data(fmt.Sprintf("+1 за рубли (%d₽)", p1Rub), "buydev_money_1")
 		rows = append(rows, rm.Row(btn1YAD, btn1Money))
 	}
 	if expansion == nil || expansion.ExtraDevices < 2 {
-		btn2YAD := rm.Data("+2 за ЯД (90)", "buydev_yad_2")
-		btn2Money := rm.Data("+2 за рубли (270₽)", "buydev_money_2")
+		btn2YAD := rm.Data(fmt.Sprintf("+2 за ЯД (%d) 💥", p2YAD), "buydev_yad_2")
+		btn2Money := rm.Data(fmt.Sprintf("+2 за рубли (%d₽) 💥", p2Rub), "buydev_money_2")
 		rows = append(rows, rm.Row(btn2YAD, btn2Money))
 	}
 	rows = append(rows, rm.Row(backBtn(rm)))
@@ -1860,12 +1878,21 @@ func (b *Bot) handleBuyDeviceMoney(c tele.Context, qty int) error {
 	btnPay := rm.URL("💳 Оплатить", redirectURL)
 	rm.Inline(rm.Row(btnPay), rm.Row(backBtn(rm)))
 
+	// Show the actual charged amount (= what the payment was created for).
+	daysRemainingMoney := 0
+	if activeSub, err2 := b.repo.GetActiveSubscription(ctx, user.ID); err2 == nil && activeSub != nil {
+		if d := int(time.Until(activeSub.ExpiresAt).Hours() / 24); d > 0 {
+			daysRemainingMoney = d
+		}
+	}
+	rubles := domain.DeviceExpansionKopecks(qty, daysRemainingMoney) / 100
+
 	return c.Send(fmt.Sprintf(
 		"💳 *Оплата расширения устройств*\n"+brandLine+"\n\n"+
 			"➕ %d устройств\n"+
 			"💰 %d ₽\n\n"+
 			"_Нажмите кнопку для оплаты._",
-		qty, domain.DeviceExpansionKopecks(qty)/100),
+		qty, rubles),
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 

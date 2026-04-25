@@ -364,20 +364,65 @@ func DeviceExpansionQuantity(p SubscriptionPlan) int {
 	return 1
 }
 
-// DeviceExpansionKopecks returns the price in kopecks: 15000 for +1, 27000 for +2.
-func DeviceExpansionKopecks(qty int) int64 {
-	if qty == 2 {
-		return 27000
+// DeviceExpansionUnitKopecks returns the per-slot kopeck price based on days remaining in the subscription.
+//
+//	> 30 days  → 10 000 к (100 ₽)  — стандарт
+//	8–30 days  →  4 000 к ( 40 ₽)  — −60 %
+//	< 8 days   →  2 000 к ( 20 ₽)  — −80 %
+func DeviceExpansionUnitKopecks(daysRemaining int) int64 {
+	switch {
+	case daysRemaining > 30:
+		return 10000
+	case daysRemaining >= 8:
+		return 4000
+	default:
+		return 2000
 	}
-	return 15000
 }
 
-// DeviceExpansionYAD returns the YAD price: 50 for +1, 90 for +2.
-func DeviceExpansionYAD(qty int) int64 {
-	if qty == 2 {
-		return 90
+// DeviceExpansionUnitYAD returns the per-slot YAD price based on days remaining.
+func DeviceExpansionUnitYAD(daysRemaining int) int64 {
+	switch {
+	case daysRemaining > 30:
+		return 50
+	case daysRemaining >= 8:
+		return 20
+	default:
+		return 10
 	}
-	return 50
+}
+
+// DeviceExpansionKopecks returns the total kopeck price for qty extra slots.
+// The second slot gets a 10% discount.
+func DeviceExpansionKopecks(qty int, daysRemaining int) int64 {
+	unit := DeviceExpansionUnitKopecks(daysRemaining)
+	if qty == 2 {
+		return unit + unit*9/10 // second slot: −10%
+	}
+	return unit
+}
+
+// DeviceExpansionYAD returns the total YAD price for qty extra slots.
+// The second slot gets a 10% discount.
+func DeviceExpansionYAD(qty int, daysRemaining int) int64 {
+	unit := DeviceExpansionUnitYAD(daysRemaining)
+	if qty == 2 {
+		return unit + unit*9/10 // second slot: −10%
+	}
+	return unit
+}
+
+// DeviceExpansionTierLabel returns a human-readable tier discount label,
+// or an empty string when the full price applies.
+func DeviceExpansionTierLabel(daysRemaining int) string {
+	switch {
+	case daysRemaining > 30:
+		return ""
+	case daysRemaining >= 8:
+		return "−60% от стандарта"
+	default:
+		return "−80% от стандарта"
+	}
 }
 
 type DeviceExpansion struct {

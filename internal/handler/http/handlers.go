@@ -1443,36 +1443,51 @@ func (h *ShopHandler) BuyDeviceExpansionMoney(c *gin.Context) {
 // GET /api/devices/expansion/quote
 func (h *ShopHandler) DeviceExpansionQuote(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
-	expansion, _ := h.repo.GetActiveDeviceExpansion(c.Request.Context(), userID)
+	ctx := c.Request.Context()
+	expansion, _ := h.repo.GetActiveDeviceExpansion(ctx, userID)
+
+	// Days remaining drives the price tier.
+	daysRemaining := 0
+	if activeSub, err := h.repo.GetActiveSubscription(ctx, userID); err == nil && activeSub != nil {
+		if d := int(time.Until(activeSub.ExpiresAt).Hours() / 24); d > 0 {
+			daysRemaining = d
+		}
+	}
 
 	type priceOption struct {
 		YAD    int64 `json:"yad"`
 		Rubles int64 `json:"rubles"`
 	}
 
-	// Prices for a full purchase (no upgrade)
-	qty1Full := priceOption{YAD: domain.DeviceExpansionYAD(1), Rubles: domain.DeviceExpansionKopecks(1) / 100}
-	qty2Full := priceOption{YAD: domain.DeviceExpansionYAD(2), Rubles: domain.DeviceExpansionKopecks(2) / 100}
+	// Full prices for each qty at the current tier.
+	qty1Full := priceOption{
+		YAD:    domain.DeviceExpansionYAD(1, daysRemaining),
+		Rubles: domain.DeviceExpansionKopecks(1, daysRemaining) / 100,
+	}
+	qty2Full := priceOption{
+		YAD:    domain.DeviceExpansionYAD(2, daysRemaining),
+		Rubles: domain.DeviceExpansionKopecks(2, daysRemaining) / 100,
+	}
 
-	// Adjust prices for upgrade if expansion already exists
+	// Adjust to upgrade-diff prices if an expansion already exists.
 	qty1Price := qty1Full
 	qty2Price := qty2Full
 	if expansion != nil {
-		diff1YAD := domain.DeviceExpansionYAD(1) - domain.DeviceExpansionYAD(expansion.ExtraDevices)
+		diff1YAD := domain.DeviceExpansionYAD(1, daysRemaining) - domain.DeviceExpansionYAD(expansion.ExtraDevices, daysRemaining)
 		if diff1YAD < 0 {
 			diff1YAD = 0
 		}
-		diff1Rub := (domain.DeviceExpansionKopecks(1) - domain.DeviceExpansionKopecks(expansion.ExtraDevices)) / 100
+		diff1Rub := (domain.DeviceExpansionKopecks(1, daysRemaining) - domain.DeviceExpansionKopecks(expansion.ExtraDevices, daysRemaining)) / 100
 		if diff1Rub < 0 {
 			diff1Rub = 0
 		}
 		qty1Price = priceOption{YAD: diff1YAD, Rubles: diff1Rub}
 
-		diff2YAD := domain.DeviceExpansionYAD(2) - domain.DeviceExpansionYAD(expansion.ExtraDevices)
+		diff2YAD := domain.DeviceExpansionYAD(2, daysRemaining) - domain.DeviceExpansionYAD(expansion.ExtraDevices, daysRemaining)
 		if diff2YAD < 0 {
 			diff2YAD = 0
 		}
-		diff2Rub := (domain.DeviceExpansionKopecks(2) - domain.DeviceExpansionKopecks(expansion.ExtraDevices)) / 100
+		diff2Rub := (domain.DeviceExpansionKopecks(2, daysRemaining) - domain.DeviceExpansionKopecks(expansion.ExtraDevices, daysRemaining)) / 100
 		if diff2Rub < 0 {
 			diff2Rub = 0
 		}
@@ -1488,6 +1503,10 @@ func (h *ShopHandler) DeviceExpansionQuote(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"days_remaining":    daysRemaining,
+		"tier_label":        domain.DeviceExpansionTierLabel(daysRemaining),
+		"unit_rubles":       domain.DeviceExpansionUnitKopecks(daysRemaining) / 100,
+		"unit_yad":          domain.DeviceExpansionUnitYAD(daysRemaining),
 		"qty1":              qty1Price,
 		"qty2":              qty2Price,
 		"current_expansion": expansionResp,

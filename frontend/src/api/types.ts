@@ -141,6 +141,10 @@ export interface DeviceExpansion {
 }
 
 export interface DeviceExpansionQuote {
+  days_remaining: number
+  tier_label: string        // '' = standard, '−60% от стандарта', '−80% от стандарта'
+  unit_rubles: number       // per-slot price at current tier (for savings display)
+  unit_yad: number
   qty1: { yad: number; rubles: number }
   qty2: { yad: number; rubles: number }
   current_expansion: DeviceExpansion | null

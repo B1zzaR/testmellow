@@ -227,34 +227,63 @@ export function DeviceList({ data }: DeviceListProps) {
               className="flex items-center gap-2 text-sm text-primary-500 hover:text-primary-600 transition-colors"
             >
               <Icon name="check-circle" size={16} />
-              {expansion ? 'Апгрейд до +2 устройств' : 'Расширить устройства'}
+              {expansion ? 'Апгрейд до +2 устройств' : '🔓 Расширить устройства'}
             </button>
           ) : (
-            <div className="space-y-3">
-              <p className="text-sm font-semibold text-gray-700 dark:text-slate-300">🔓 Расширение устройств</p>
-              <p className="text-xs text-gray-500 dark:text-slate-500">
-                Расширение действует до конца текущей подписки.
-              </p>
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-slate-200">🔓 Расширение устройств</p>
+                  <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">
+                    Действует до конца текущей подписки
+                  </p>
+                </div>
+                {/* Tier badge */}
+                {quote && quote.tier_label && (
+                  <TierBadge label={quote.tier_label} daysRemaining={quote.days_remaining} />
+                )}
+              </div>
+
+              {/* Days remaining hint */}
+              {quote && quote.days_remaining > 0 && (
+                <div className="flex items-center gap-2 rounded-lg bg-gray-50 dark:bg-surface-800 px-3 py-2">
+                  <span className="text-xs text-gray-500 dark:text-slate-400">
+                    📅 Осталось <span className="font-semibold text-gray-700 dark:text-slate-300">{quote.days_remaining} дн.</span> подписки
+                    {quote.tier_label
+                      ? ` — цена снижена`
+                      : ` — стандартная цена`}
+                  </span>
+                </div>
+              )}
+
               <div className="space-y-2">
-                {(!expansion || expansion.extra_devices < 1) && (
+                {(!expansion || expansion.extra_devices < 1) && quote && (
                   <ExpansionOption
                     label="+1 устройство"
-                    yadPrice={quote?.qty1.yad ?? 50}
-                    rublesPrice={quote?.qty1.rubles ?? 150}
+                    yadPrice={quote.qty1.yad}
+                    rublesPrice={quote.qty1.rubles}
+                    unitRubles={quote.unit_rubles}
+                    showDiscount2={false}
                     onBuyYAD={() => buyYADMutation.mutate(1)}
                     onBuyMoney={() => buyMoneyMutation.mutate(1)}
                     loading={buyYADMutation.isPending || buyMoneyMutation.isPending}
                   />
                 )}
-                {(!expansion || expansion.extra_devices < 2) && (
+                {(!expansion || expansion.extra_devices < 2) && quote && (
                   <ExpansionOption
                     label={expansion?.extra_devices === 1 ? 'Апгрейд до +2 устройств' : '+2 устройства'}
-                    yadPrice={quote?.qty2.yad ?? (expansion?.extra_devices === 1 ? 40 : 90)}
-                    rublesPrice={quote?.qty2.rubles ?? (expansion?.extra_devices === 1 ? 120 : 270)}
+                    yadPrice={quote.qty2.yad}
+                    rublesPrice={quote.qty2.rubles}
+                    unitRubles={quote.unit_rubles}
+                    showDiscount2
                     onBuyYAD={() => buyYADMutation.mutate(2)}
                     onBuyMoney={() => buyMoneyMutation.mutate(2)}
                     loading={buyYADMutation.isPending || buyMoneyMutation.isPending}
                   />
+                )}
+                {!quote && (
+                  <p className="text-xs text-gray-400 dark:text-slate-500 py-2">Загрузка цен…</p>
                 )}
               </div>
               <button
@@ -271,29 +300,89 @@ export function DeviceList({ data }: DeviceListProps) {
   )
 }
 
+// ─── Tier badge ───────────────────────────────────────────────────────────────
+
+interface TierBadgeProps {
+  label: string
+  daysRemaining: number
+}
+
+function TierBadge({ label, daysRemaining }: TierBadgeProps) {
+  const isHot = daysRemaining < 8
+  return (
+    <span
+      className={[
+        'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide',
+        isHot
+          ? 'bg-red-500/10 text-red-500 dark:bg-red-500/20 dark:text-red-400'
+          : 'bg-orange-500/10 text-orange-500 dark:bg-orange-400/20 dark:text-orange-400',
+      ].join(' ')}
+    >
+      {isHot ? '⚡' : '🔥'} {label}
+    </span>
+  )
+}
+
+// ─── Expansion option row ─────────────────────────────────────────────────────
+
 interface ExpansionOptionProps {
   label: string
   yadPrice: number
   rublesPrice: number
+  unitRubles: number
+  showDiscount2: boolean
   onBuyYAD: () => void
   onBuyMoney: () => void
   loading: boolean
 }
 
-function ExpansionOption({ label, yadPrice, rublesPrice, onBuyYAD, onBuyMoney, loading }: ExpansionOptionProps) {
+function ExpansionOption({
+  label,
+  yadPrice,
+  rublesPrice,
+  unitRubles,
+  showDiscount2,
+  onBuyYAD,
+  onBuyMoney,
+  loading,
+}: ExpansionOptionProps) {
+  // Savings from the 10% second-slot discount
+  const savedRubles = showDiscount2 ? Math.round(unitRubles * 0.1) : 0
+
   return (
-    <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-surface-700 px-4 py-3">
-      <div>
-        <p className="text-sm font-medium text-gray-800 dark:text-slate-200">{label}</p>
-        <p className="text-xs text-gray-400 dark:text-slate-500">{yadPrice} ЯД / {rublesPrice} ₽</p>
+    <div className="rounded-xl border border-gray-100 dark:border-surface-700 px-4 py-3 space-y-2">
+      {/* Top row: label + discount badge */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-gray-800 dark:text-slate-200">{label}</p>
+        {showDiscount2 && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+            💥 −10% на 2-й слот
+          </span>
+        )}
       </div>
-      <div className="flex gap-2">
-        <Button variant="secondary" size="sm" loading={loading} onClick={onBuyYAD}>
-          За ЯД
-        </Button>
-        <Button variant="primary" size="sm" loading={loading} onClick={onBuyMoney}>
-          За рубли
-        </Button>
+
+      {/* Price row */}
+      <div className="flex items-end justify-between">
+        <div>
+          <p className="text-base font-bold text-gray-900 dark:text-slate-100">
+            {yadPrice} ЯД
+            <span className="mx-1.5 text-gray-300 dark:text-slate-600 font-normal">/</span>
+            {rublesPrice} ₽
+          </p>
+          {showDiscount2 && savedRubles > 0 && (
+            <p className="text-[11px] text-emerald-500 dark:text-emerald-400 mt-0.5">
+              Экономия {savedRubles} ₽ против двух отдельных
+            </p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" loading={loading} onClick={onBuyYAD}>
+            За ЯД
+          </Button>
+          <Button variant="primary" size="sm" loading={loading} onClick={onBuyMoney}>
+            За рубли
+          </Button>
+        </div>
       </div>
     </div>
   )
