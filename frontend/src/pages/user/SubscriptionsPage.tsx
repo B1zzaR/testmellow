@@ -14,7 +14,6 @@ import { Icon } from '@/components/ui/Icons'
 import { formatDate, formatRubles, planLabel, daysUntil, formatBytes } from '@/utils/formatters'
 import { PendingPayments } from '@/components/PendingPayments'
 import { DeviceList } from '@/components/DeviceList'
-import { SubscriptionDetails } from '@/components/SubscriptionDetails'
 import type { SubscriptionPlan } from '@/api/types'
 
 function discountedPrice(price: number, percent: number): number {
@@ -184,7 +183,7 @@ export function SubscriptionsPage() {
               </p>
             </div>
           )}
-          {daysUntil(activeSub.expires_at) > 0 && daysUntil(activeSub.expires_at) <= 7 && (
+          {daysUntil(activeSub.expires_at) > 0 && daysUntil(activeSub.expires_at) <= 15 && (
             <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
               <span className="shrink-0 text-yellow-500">⚠</span>
               <p className="text-sm text-yellow-600 dark:text-yellow-400">
@@ -194,7 +193,6 @@ export function SubscriptionsPage() {
           )}
           <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:gap-6">
             {[
-              { label: 'Тариф',        value: planLabel(activeSub.plan) },
               { label: 'Осталось дней',   value: daysUntil(activeSub.expires_at) > 0 ? `${daysUntil(activeSub.expires_at)} дней` : 'Подписка закончилась' },
               { label: 'Истекает',     value: formatDate(activeSub.expires_at) },
               ...(activeSub.paid_kopecks > 0 ? [{ label: 'Оплачено', value: formatRubles(activeSub.paid_kopecks) }] : []),
@@ -241,20 +239,14 @@ export function SubscriptionsPage() {
           )}
 
           <ConnectionBlock />
-
-          {/* Subscription periods details */}
-          <SubscriptionDetails
-            allSubscriptions={subs}
-            totalDays={daysUntil(activeSub.expires_at)}
-          />
         </Card>
       )}
 
       {/* Devices */}
       {activeSub && devicesData && <DeviceList data={devicesData} isTrial={activeSub.status === 'trial'} />}
 
-      {/* Plan selector */}
-      <Card title={activeSub ? 'Продлить подписку' : 'Выбрать тариф'}>
+      {/* Plan selector — shown when no active sub or ≤15 days remain */}
+      {(!activeSub || daysUntil(activeSub.expires_at) <= 15) && <Card title={activeSub ? 'Продлить подписку' : 'Выбрать тариф'}>
 
         {/* Active discount banner */}
         {discount > 0 && (
@@ -338,7 +330,7 @@ export function SubscriptionsPage() {
             </Button>
           )}
         </div>
-      </Card>
+      </Card>}
 
       {/* History */}
       {subs.length > 0 && (

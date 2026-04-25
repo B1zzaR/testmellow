@@ -417,6 +417,22 @@ func (b *Bot) handleBuy(c tele.Context) error {
 		return c.Send("Ошибка: " + err.Error())
 	}
 
+	// Block renewal if active subscription has more than 15 days left.
+	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
+	if activeSub != nil {
+		daysLeft := int(time.Until(activeSub.ExpiresAt).Hours() / 24)
+		if daysLeft > 15 {
+			rm := &tele.ReplyMarkup{}
+			rm.Inline(rm.Row(backBtn(rm)))
+			return c.Send(fmt.Sprintf(
+				"⏳ *Продление недоступно*\n"+brandLine+"\n\n"+
+					"До окончания подписки ещё *%d дн.*\n\n"+
+					"_Продление откроется за 15 дней до конца._",
+				daysLeft,
+			), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+		}
+	}
+
 	rm := &tele.ReplyMarkup{}
 	btnWeek := rm.Data("1 нед · 40 ₽", "buy_1week")
 	btnMonth := rm.Data("1 мес · 100 ₽", "buy_1month")
@@ -461,6 +477,20 @@ func (b *Bot) handleBuyRubles(plan domain.SubscriptionPlan) tele.HandlerFunc {
 			return c.Send("Ошибка: " + err.Error())
 		}
 
+		activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
+		if activeSub != nil {
+			if daysLeft := int(time.Until(activeSub.ExpiresAt).Hours() / 24); daysLeft > 15 {
+				rm := &tele.ReplyMarkup{}
+				rm.Inline(rm.Row(backBtn(rm)))
+				return c.Send(fmt.Sprintf(
+					"⏳ *Продление недоступно*\n"+brandLine+"\n\n"+
+						"До окончания подписки ещё *%d дн.*\n\n"+
+						"_Продление откроется за 15 дней до конца._",
+					daysLeft,
+				), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+			}
+		}
+
 		redirect, payment, err := b.subSvc.InitiatePayment(ctx, user.ID, plan, b.cfg.PaymentReturnURL)
 		if err != nil {
 			return c.Send("Ошибка: " + err.Error())
@@ -491,6 +521,20 @@ func (b *Bot) handleBuyYAD(plan domain.SubscriptionPlan) tele.HandlerFunc {
 		user, err := b.getUser(ctx, c)
 		if err != nil {
 			return c.Send("Ошибка: " + err.Error())
+		}
+
+		activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
+		if activeSub != nil {
+			if daysLeft := int(time.Until(activeSub.ExpiresAt).Hours() / 24); daysLeft > 15 {
+				rm := &tele.ReplyMarkup{}
+				rm.Inline(rm.Row(backBtn(rm)))
+				return c.Send(fmt.Sprintf(
+					"⏳ *Продление недоступно*\n"+brandLine+"\n\n"+
+						"До окончания подписки ещё *%d дн.*\n\n"+
+						"_Продление откроется за 15 дней до конца._",
+					daysLeft,
+				), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+			}
 		}
 
 		sub, err := b.ecoSvc.BuySubscriptionWithYAD(ctx, user.ID, plan)
@@ -568,9 +612,17 @@ func (b *Bot) handleMySubs(c tele.Context) error {
 		)
 	}
 
-	btnRenew := rm.Data("🔄 Продлить", "menu_buy")
 	btnVPN := rm.Data("🔗 Подключить VPN", "get_vpn_link")
-	rm.Inline(rm.Row(btnVPN), rm.Row(btnRenew), rm.Row(backBtn(rm)))
+	var rows []tele.Row
+	rows = append(rows, rm.Row(btnVPN))
+	// Show renew button only when ≤15 days remain on the active subscription.
+	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
+	if activeSub == nil || int(time.Until(activeSub.ExpiresAt).Hours()/24) <= 15 {
+		btnRenew := rm.Data("🔄 Продлить", "menu_buy")
+		rows = append(rows, rm.Row(btnRenew))
+	}
+	rows = append(rows, rm.Row(backBtn(rm)))
+	rm.Inline(rows...)
 	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
@@ -1040,8 +1092,6 @@ func (b *Bot) handleHelp(c tele.Context) error {
 			"  ▸ /trial — пробный период\n\n"+
 			"📱 *Устройства:*\n"+
 			"  ▸ /devices — список устройств\n"+
-			"  ▸ /buydevice — купить +1 устройство\n"+
-			"  ▸ /extend — продлить расширение\n"+
 			"  ▸ /traffic — статистика трафика\n\n"+
 			"💎 *Кошелёк:*\n"+
 			"  ▸ /balance — баланс ЯД\n"+
