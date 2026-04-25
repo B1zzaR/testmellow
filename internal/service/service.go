@@ -881,14 +881,14 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 
 	now := time.Now()
 
-	// Extend existing active subscription or create new
-	activeSub, err := s.repo.GetActiveSubscription(ctx, userID)
+	// 1-user-1-sub model: find the latest subscription regardless of status.
+	existingSub, err := s.repo.GetLatestSubscription(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	var newExpiry time.Time
-	if activeSub != nil && activeSub.ExpiresAt.After(now) {
-		newExpiry = activeSub.ExpiresAt.Add(time.Duration(durationDays) * 24 * time.Hour)
+	if existingSub != nil && existingSub.ExpiresAt.After(now) {
+		newExpiry = existingSub.ExpiresAt.Add(time.Duration(durationDays) * 24 * time.Hour)
 	} else {
 		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
 	}
@@ -916,13 +916,13 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 	}
 
 	var sub *domain.Subscription
-	if activeSub != nil {
-		if err := s.repo.ExtendSubscription(ctx, tx, activeSub.ID, newExpiry, plan); err != nil {
+	if existingSub != nil {
+		if err := s.repo.ExtendSubscription(ctx, tx, existingSub.ID, newExpiry, plan); err != nil {
 			return nil, err
 		}
-		activeSub.ExpiresAt = newExpiry
-		activeSub.Plan = plan
-		sub = activeSub
+		existingSub.ExpiresAt = newExpiry
+		existingSub.Plan = plan
+		sub = existingSub
 	} else {
 		sub = &domain.Subscription{
 			ID:           subID,

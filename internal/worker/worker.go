@@ -369,17 +369,20 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 		return fmt.Errorf("unknown plan: %s", plan)
 	}
 
-	// Check for existing active subscription to extend
-	activeSub, err := w.repo.GetActiveSubscription(ctx, userID)
+	// 1-user-1-sub model: find the latest subscription regardless of status.
+	// This ensures renewal after expiry extends the existing row instead of
+	// creating a duplicate, which would leave orphaned records.
+	existingSub, err := w.repo.GetLatestSubscription(ctx, userID)
 	if err != nil {
 		return err
 	}
 
 	var newExpiry time.Time
-	if activeSub != nil && activeSub.ExpiresAt.After(now) {
-		// Extend from current expiry
-		newExpiry = activeSub.ExpiresAt.Add(time.Duration(durationDays) * 24 * time.Hour)
+	if existingSub != nil && existingSub.ExpiresAt.After(now) {
+		// Active sub: extend from current expiry
+		newExpiry = existingSub.ExpiresAt.Add(time.Duration(durationDays) * 24 * time.Hour)
 	} else {
+		// No sub or expired: start from now
 		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
 	}
 
@@ -423,21 +426,21 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 	}
 
 	pid := paymentID
-	if activeSub != nil {
-		// Extend in place — wrap in a transaction for consistency.
+	if existingSub != nil {
+		// Extend in place (active or expired) — 1-user-1-sub model.
 		tx, err := w.repo.BeginTx(ctx)
 		if err != nil {
 			return fmt.Errorf("begin extend tx: %w", err)
 		}
 		defer tx.Rollback(ctx)
-		if err := w.repo.ExtendSubscription(ctx, tx, activeSub.ID, newExpiry, plan); err != nil {
+		if err := w.repo.ExtendSubscription(ctx, tx, existingSub.ID, newExpiry, plan); err != nil {
 			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit extend tx: %w", err)
 		}
 	} else {
-		// Create new subscription record — wrap in a transaction for consistency.
+		// First-ever subscription for this user.
 		sub := &domain.Subscription{
 			ID:           uuid.New(),
 			UserID:       userID,

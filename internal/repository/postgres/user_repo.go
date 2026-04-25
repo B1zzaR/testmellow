@@ -730,6 +730,24 @@ func (r *UserRepo) GetActiveSubscription(ctx context.Context, userID uuid.UUID) 
 	return s, err
 }
 
+// GetLatestSubscription returns the most recent subscription for a user regardless of status.
+// Used during renewal to extend an existing (possibly expired) subscription instead of
+// creating a duplicate row (1-user-1-sub model).
+func (r *UserRepo) GetLatestSubscription(ctx context.Context, userID uuid.UUID) (*domain.Subscription, error) {
+	s := &domain.Subscription{}
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_id, plan, status, starts_at, expires_at, remna_sub_uuid, paid_kopecks, payment_id, created_at, updated_at
+		FROM subscriptions WHERE user_id=$1
+		ORDER BY expires_at DESC LIMIT 1`, userID).Scan(
+		&s.ID, &s.UserID, &s.Plan, &s.Status, &s.StartsAt, &s.ExpiresAt,
+		&s.RemnaSubUUID, &s.PaidKopecks, &s.PaymentID, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return s, err
+}
+
 func (r *UserRepo) GetSubscriptionByID(ctx context.Context, id uuid.UUID) (*domain.Subscription, error) {
 	s := &domain.Subscription{}
 	err := r.db.QueryRow(ctx, `
