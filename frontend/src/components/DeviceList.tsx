@@ -226,7 +226,7 @@ export function DeviceList({ data }: DeviceListProps) {
               onClick={() => setShowExpansionPanel(true)}
               className="flex items-center gap-2 text-sm text-primary-500 hover:text-primary-600 transition-colors"
             >
-              <Icon name="plus-circle" size={16} />
+              <Icon name="check-circle" size={16} />
               {expansion ? 'Апгрейд до +2 устройств' : 'Расширить устройства'}
             </button>
           ) : (
