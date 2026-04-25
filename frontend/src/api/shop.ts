@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { ShopItem, BuyShopItemRequest, SubscriptionPlan, DeviceExpansion, DeviceExpansionQuote } from './types'
+import type { ShopItem, BuyShopItemRequest, SubscriptionPlan, DeviceExpansionQuote } from './types'
 
 export const shopApi = {
   list: async (): Promise<{ items: ShopItem[] }> => {
