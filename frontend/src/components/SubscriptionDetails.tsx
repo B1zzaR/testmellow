@@ -1,20 +1,14 @@
 import { formatDate, planLabel } from '@/utils/formatters'
-import type { Subscription, DeviceExpansion } from '@/api/types'
+import type { Subscription } from '@/api/types'
 
 interface SubscriptionDetailsProps {
   allSubscriptions: Subscription[]
-  deviceExpansion: DeviceExpansion | null
   totalDays: number
 }
 
-export function SubscriptionDetails({ allSubscriptions, deviceExpansion, totalDays }: SubscriptionDetailsProps) {
-  // Only one subscription can be active at a time. Show the active one.
+export function SubscriptionDetails({ allSubscriptions, totalDays }: SubscriptionDetailsProps) {
   const activeSub = allSubscriptions.find(s => s.status === 'active' || s.status === 'trial')
   if (!activeSub) return null
-
-  const baseDevices = 4
-  const extraDevices = deviceExpansion?.extra_devices ?? 0
-  const totalDevices = baseDevices + extraDevices
 
   return (
     <div className="mt-5 border-t border-gray-100 dark:border-surface-700 pt-4">
@@ -27,18 +21,7 @@ export function SubscriptionDetails({ allSubscriptions, deviceExpansion, totalDa
         <Row label="Начало" value={formatDate(activeSub.starts_at)} />
         <Row label="Конец" value={formatDate(activeSub.expires_at)} />
         <Row label="Осталось дней" value={`${totalDays} дн.`} />
-        <Row
-          label="Устройства"
-          value={
-            <span>
-              {totalDevices}
-              {extraDevices > 0 && (
-                <span className="ml-1 text-primary-500 text-xs">(+{extraDevices} расширение)</span>
-              )}
-              <span className="ml-1 text-gray-400 dark:text-slate-500 text-xs">/ макс 6</span>
-            </span>
-          }
-        />
+        <Row label="Устройства" value={<span>4<span className="ml-1 text-gray-400 dark:text-slate-500 text-xs">/ макс 4</span></span>} />
       </div>
     </div>
   )

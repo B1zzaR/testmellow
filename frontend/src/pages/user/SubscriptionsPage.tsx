@@ -243,29 +243,18 @@ export function SubscriptionsPage() {
           <ConnectionBlock />
 
           {/* Subscription periods details */}
-          <SubscriptionDetails 
+          <SubscriptionDetails
             allSubscriptions={subs}
-            deviceExpansion={devicesData?.expansion ?? null}
-            totalDays={daysUntil(activeSub.expires_at)} 
+            totalDays={daysUntil(activeSub.expires_at)}
           />
         </Card>
       )}
 
       {/* Devices */}
-      {activeSub && devicesData && <DeviceList data={devicesData} isTrial={activeSub.status === 'trial'} subscriptionPlan={activeSub.plan} subscriptionExpiry={activeSub.expires_at} />}
+      {activeSub && devicesData && <DeviceList data={devicesData} isTrial={activeSub.status === 'trial'} />}
 
       {/* Plan selector */}
       <Card title={activeSub ? 'Продлить подписку' : 'Выбрать тариф'}>
-
-        {/* Device expansion reset warning */}
-        {activeSub && (
-          <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-2.5">
-            <Icon name="info" size={14} className="shrink-0 text-yellow-500" />
-            <p className="text-xs text-yellow-600 dark:text-yellow-400">
-              При продлении подписки дополнительные устройства автоматически продлеваются до нового срока.
-            </p>
-          </div>
-        )}
 
         {/* Active discount banner */}
         {discount > 0 && (

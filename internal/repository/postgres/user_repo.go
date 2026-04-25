@@ -814,11 +814,11 @@ func (r *UserRepo) CreatePayment(ctx context.Context, p *domain.Payment) error {
 	h := sha256.Sum256([]byte(p.ID.String() + string(p.Status)))
 	idempotency := hex.EncodeToString(h[:])
 	_, err := r.db.Exec(ctx, `
-		INSERT INTO payments (id, user_id, amount_kopecks, currency, status, plan, addon_qty,
+		INSERT INTO payments (id, user_id, amount_kopecks, currency, status, plan,
 		                      payment_method, platega_payload, redirect_url, idempotency,
 		                      expires_at, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-		p.ID, p.UserID, p.AmountKopecks, p.Currency, p.Status, p.Plan, p.AddonQty,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		p.ID, p.UserID, p.AmountKopecks, p.Currency, p.Status, p.Plan,
 		p.PaymentMethod, p.PlategaPayload, p.RedirectURL, idempotency,
 		p.ExpiresAt, p.CreatedAt, p.UpdatedAt,
 	)
@@ -828,11 +828,11 @@ func (r *UserRepo) CreatePayment(ctx context.Context, p *domain.Payment) error {
 func (r *UserRepo) GetPaymentByID(ctx context.Context, id uuid.UUID) (*domain.Payment, error) {
 	p := &domain.Payment{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
+		SELECT id, user_id, amount_kopecks, currency, status, plan,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments WHERE id=$1`, id).Scan(
-		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty,
+		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan,
 		&p.PaymentMethod, &p.PlategaPayload, &p.RedirectURL, &p.WebhookReceivedAt, &p.Idempotency,
 		&p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -846,11 +846,11 @@ func (r *UserRepo) GetPaymentByID(ctx context.Context, id uuid.UUID) (*domain.Pa
 func (r *UserRepo) GetUserPaymentByID(ctx context.Context, userID, paymentID uuid.UUID) (*domain.Payment, error) {
 	p := &domain.Payment{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
+		SELECT id, user_id, amount_kopecks, currency, status, plan,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments WHERE id=$1 AND user_id=$2`, paymentID, userID).Scan(
-		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty,
+		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan,
 		&p.PaymentMethod, &p.PlategaPayload, &p.RedirectURL, &p.WebhookReceivedAt, &p.Idempotency,
 		&p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -865,14 +865,14 @@ func (r *UserRepo) GetUserPaymentByID(ctx context.Context, userID, paymentID uui
 func (r *UserRepo) GetPendingPaymentByPlan(ctx context.Context, userID uuid.UUID, plan domain.SubscriptionPlan) (*domain.Payment, error) {
 	p := &domain.Payment{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
+		SELECT id, user_id, amount_kopecks, currency, status, plan,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments
 		WHERE user_id=$1 AND plan=$2 AND status='PENDING'
 		  AND (expires_at IS NULL OR expires_at > NOW())
 		ORDER BY created_at DESC LIMIT 1`, userID, plan).Scan(
-		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty,
+		&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan,
 		&p.PaymentMethod, &p.PlategaPayload, &p.RedirectURL, &p.WebhookReceivedAt, &p.Idempotency,
 		&p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -885,7 +885,7 @@ func (r *UserRepo) GetPendingPaymentByPlan(ctx context.Context, userID uuid.UUID
 // GetPendingPayments returns non-expired PENDING payments for a user.
 func (r *UserRepo) GetPendingPayments(ctx context.Context, userID uuid.UUID) ([]*domain.Payment, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
+		SELECT id, user_id, amount_kopecks, currency, status, plan,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments
@@ -929,7 +929,7 @@ func (r *UserRepo) MarkExpiredPayments(ctx context.Context) (int64, error) {
 // or are already past expires_at — used by worker to sync with Platega before marking expired.
 func (r *UserRepo) GetStalePendingPayments(ctx context.Context) ([]*domain.Payment, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, user_id, amount_kopecks, currency, status, plan, addon_qty,
+		SELECT id, user_id, amount_kopecks, currency, status, plan,
 		       payment_method, platega_payload, redirect_url, webhook_received_at, idempotency,
 		       expires_at, created_at, updated_at
 		FROM payments
@@ -953,7 +953,7 @@ func scanPayments(rows interface {
 	for rows.Next() {
 		p := &domain.Payment{}
 		if err := rows.Scan(
-			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan, &p.AddonQty,
+			&p.ID, &p.UserID, &p.AmountKopecks, &p.Currency, &p.Status, &p.Plan,
 			&p.PaymentMethod, &p.PlategaPayload, &p.RedirectURL, &p.WebhookReceivedAt, &p.Idempotency,
 			&p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
@@ -1635,128 +1635,6 @@ func (r *UserRepo) DeleteNotification(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-// ─── Device Expansion ─────────────────────────────────────────────────────────
-
-// CreateDeviceExpansion inserts a new device expansion record inside the given transaction.
-func (r *UserRepo) CreateDeviceExpansion(ctx context.Context, tx pgx.Tx, de *domain.DeviceExpansion) error {
-	_, err := tx.Exec(ctx, `
-		INSERT INTO device_expansions (id, user_id, extra_devices, extend_count, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		de.ID, de.UserID, de.ExtraDevices, de.ExtendCount, de.ExpiresAt, de.CreatedAt)
-	return err
-}
-
-// GetActiveDeviceExpansion returns the active (non-expired) device expansion for a user, or nil.
-func (r *UserRepo) GetActiveDeviceExpansion(ctx context.Context, userID uuid.UUID) (*domain.DeviceExpansion, error) {
-	de := &domain.DeviceExpansion{}
-	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, extra_devices, extend_count, expires_at, created_at
-		FROM device_expansions
-		WHERE user_id = $1 AND expires_at > NOW()
-		ORDER BY expires_at DESC
-		LIMIT 1`, userID).Scan(&de.ID, &de.UserID, &de.ExtraDevices, &de.ExtendCount, &de.ExpiresAt, &de.CreatedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return de, nil
-}
-
-// GetEffectiveDeviceLimit returns the current device limit for a user (base + active expansion).
-func (r *UserRepo) GetEffectiveDeviceLimit(ctx context.Context, userID uuid.UUID) (int, error) {
-	de, err := r.GetActiveDeviceExpansion(ctx, userID)
-	if err != nil {
-		return domain.DeviceMaxPerUser, err
-	}
-	if de == nil {
-		return domain.DeviceMaxPerUser, nil
-	}
-	return domain.DeviceMaxPerUser + de.ExtraDevices, nil
-}
-
-// ExpireDeviceExpansions returns user IDs whose device expansions just expired (within the last sweep window).
-func (r *UserRepo) ExpireDeviceExpansions(ctx context.Context) ([]uuid.UUID, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT DISTINCT user_id FROM device_expansions
-		WHERE expires_at <= NOW()
-		  AND user_id NOT IN (
-		    SELECT user_id FROM device_expansions WHERE expires_at > NOW()
-		  )`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-// DeleteExpiredDeviceExpansions removes all expired device expansion records.
-func (r *UserRepo) DeleteExpiredDeviceExpansions(ctx context.Context) (int64, error) {
-	tag, err := r.db.Exec(ctx, `DELETE FROM device_expansions WHERE expires_at <= NOW()`)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
-}
-
-// DeleteDeviceExpansionsByUser removes all device expansion records for a user.
-// Used when a subscription expires to ensure expansions are fully reset.
-func (r *UserRepo) DeleteDeviceExpansionsByUser(ctx context.Context, userID uuid.UUID) (int64, error) {
-	tag, err := r.db.Exec(ctx, `DELETE FROM device_expansions WHERE user_id = $1`, userID)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
-}
-
-// ExtendDeviceExpansion extends an existing active device expansion's expiry.
-// Pass incrementCount=true when the extension is a paid renewal (to reset extend_count to 0).
-// Pass incrementCount=false for free extensions within the same subscription (to increment extend_count).
-func (r *UserRepo) ExtendDeviceExpansion(ctx context.Context, tx pgx.Tx, expansionID uuid.UUID, newExpiry time.Time, incrementCount bool) error {
-	if incrementCount {
-		_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1, extend_count = 0 WHERE id = $2`, newExpiry, expansionID)
-		return err
-	}
-	_, err := tx.Exec(ctx, `UPDATE device_expansions SET expires_at = $1, extend_count = extend_count + 1 WHERE id = $2`, newExpiry, expansionID)
-	return err
-}
-
-// UpdateDeviceExpansionExtra updates the extra_devices count on an existing expansion.
-func (r *UserRepo) UpdateDeviceExpansionExtra(ctx context.Context, tx pgx.Tx, expansionID uuid.UUID, extra int) error {
-	_, err := tx.Exec(ctx, `UPDATE device_expansions SET extra_devices = $1 WHERE id = $2`, extra, expansionID)
-	return err
-}
-
-// GetDeviceExpansionCount returns how many times the user has purchased or extended
-// a device expansion (persistent across record deletions).
-func (r *UserRepo) GetDeviceExpansionCount(ctx context.Context, userID uuid.UUID) (int, error) {
-	var count int
-	err := r.db.QueryRow(ctx,
-		`SELECT device_expansion_count FROM users WHERE id = $1`, userID).Scan(&count)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, nil
-	}
-	return count, err
-}
-
-// IncrementDeviceExpansionCount atomically increments the user's device expansion
-// purchase counter. Must be called inside a transaction when the purchase is confirmed.
-func (r *UserRepo) IncrementDeviceExpansionCount(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
-	_, err := tx.Exec(ctx,
-		`UPDATE users SET device_expansion_count = device_expansion_count + 1, updated_at = NOW() WHERE id = $1`,
-		userID)
-	return err
-}
 
 // MergeUsers transfers all data from srcID to dstID inside a single transaction,
 // then deletes the source user. Used when a Telegram-created account is merged
@@ -1799,7 +1677,6 @@ func (r *UserRepo) MergeUsers(ctx context.Context, srcID, dstID uuid.UUID) error
 		`UPDATE ticket_messages     SET sender_id  = $1 WHERE sender_id  = $2`,
 		`UPDATE shop_orders         SET user_id    = $1 WHERE user_id    = $2`,
 		`UPDATE devices             SET user_id    = $1 WHERE user_id    = $2`,
-		`UPDATE device_expansions   SET user_id    = $1 WHERE user_id    = $2`,
 		`UPDATE account_activity    SET user_id    = $1 WHERE user_id    = $2`,
 		`UPDATE risk_events         SET user_id    = $1 WHERE user_id    = $2`,
 		`UPDATE admin_audit_logs    SET admin_id   = $1 WHERE admin_id   = $2`,

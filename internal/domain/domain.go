@@ -202,7 +202,6 @@ type Payment struct {
 	Currency          string           `db:"currency" json:"currency"`
 	Status            PaymentStatus    `db:"status" json:"status"`
 	Plan              SubscriptionPlan `db:"plan" json:"plan"`
-	AddonQty          int              `db:"addon_qty" json:"addon_qty"` // extra devices to activate alongside subscription (0=none)
 	PaymentMethod     int              `db:"payment_method" json:"payment_method"`
 	PlategaPayload    string           `db:"platega_payload" json:"-"`
 	RedirectURL       string           `db:"redirect_url" json:"redirect_url"`
@@ -340,84 +339,6 @@ type AdminAuditLog struct {
 
 const DeviceMaxPerUser = 4
 const DeviceInactiveDays = 3
-
-// ─── Device Expansion ─────────────────────────────────────────────────────────
-
-const (
-	DeviceExpansionMaxExtra = 2 // base 4 → max 6
-)
-
-// PlanDeviceExpansion is a pseudo-plan for Platega device-expansion payments (+1 device).
-const PlanDeviceExpansion SubscriptionPlan = "device_expansion"
-
-// PlanDeviceExpansion2 is a pseudo-plan for Platega device-expansion payments (+2 devices).
-const PlanDeviceExpansion2 SubscriptionPlan = "device_expansion_2"
-
-// IsDeviceExpansionPlan returns true when the plan represents a device expansion purchase.
-func IsDeviceExpansionPlan(plan SubscriptionPlan) bool {
-	return plan == PlanDeviceExpansion || plan == PlanDeviceExpansion2
-}
-
-// DeviceExpansionQuantity returns how many extra devices the plan grants.
-func DeviceExpansionQuantity(plan SubscriptionPlan) int {
-	if plan == PlanDeviceExpansion2 {
-		return 2
-	}
-	return 1
-}
-
-// ─── Device Expansion pricing ─────────────────────────────────────────────────
-//
-// Prices are FIXED per plan at the moment of purchase.
-// The price is the same regardless of when in the subscription period the addon is bought.
-//
-//	+1 device: 1week=12₽, 1month=30₽, 3months=80₽
-//	+2 devices: 1week=22₽, 1month=55₽, 3months=150₽
-
-// DeviceExpansionKopecks returns the fixed ruble price (kopecks) for buying +qty devices
-// on the given subscription plan. Returns 0 if plan/qty unknown.
-func DeviceExpansionKopecks(subPlan SubscriptionPlan, qty int) int64 {
-	type key struct {
-		plan SubscriptionPlan
-		qty  int
-	}
-	table := map[key]int64{
-		{PlanWeek, 1}:       1200,  // 12₽
-		{PlanWeek, 2}:       2200,  // 22₽
-		{PlanMonth, 1}:      3000,  // 30₽
-		{PlanMonth, 2}:      5500,  // 55₽
-		{PlanThreeMonth, 1}: 8000,  // 80₽
-		{PlanThreeMonth, 2}: 15000, // 150₽
-	}
-	return table[key{subPlan, qty}]
-}
-
-// DeviceExpansionYAD returns the fixed YAD price for buying +qty devices.
-func DeviceExpansionYAD(subPlan SubscriptionPlan, qty int) int64 {
-	type key struct {
-		plan SubscriptionPlan
-		qty  int
-	}
-	table := map[key]int64{
-		{PlanWeek, 1}:       5,
-		{PlanWeek, 2}:       9,
-		{PlanMonth, 1}:      12,
-		{PlanMonth, 2}:      22,
-		{PlanThreeMonth, 1}: 32,
-		{PlanThreeMonth, 2}: 60,
-	}
-	return table[key{subPlan, qty}]
-}
-
-// DeviceExpansion tracks an active device-limit expansion purchase.
-type DeviceExpansion struct {
-	ID           uuid.UUID `db:"id"            json:"id"`
-	UserID       uuid.UUID `db:"user_id"       json:"user_id"`
-	ExtraDevices int       `db:"extra_devices" json:"extra_devices"`
-	ExtendCount  int       `db:"extend_count"  json:"extend_count"`
-	ExpiresAt    time.Time `db:"expires_at"    json:"expires_at"`
-	CreatedAt    time.Time `db:"created_at"    json:"created_at"`
-}
 
 type Device struct {
 	ID         uuid.UUID `db:"id"          json:"id"`

@@ -199,8 +199,6 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle("/info", b.handleInfo)
 	b.bot.Handle("/resetpassword", b.handleResetPassword)
 	b.bot.Handle("/devices", b.handleDevices)
-	b.bot.Handle("/buydevice", b.handleBuyDevice)
-	b.bot.Handle("/extend", b.handleExtendDevices)
 	b.bot.Handle("/traffic", b.handleTraffic)
 	b.bot.Handle("/history", b.handleHistory)
 	b.bot.Handle("/payments", b.handlePayments)
@@ -463,7 +461,7 @@ func (b *Bot) handleBuyRubles(plan domain.SubscriptionPlan) tele.HandlerFunc {
 			return c.Send("Ошибка: " + err.Error())
 		}
 
-		redirect, payment, err := b.subSvc.InitiatePayment(ctx, user.ID, plan, 0, b.cfg.PaymentReturnURL)
+		redirect, payment, err := b.subSvc.InitiatePayment(ctx, user.ID, plan, b.cfg.PaymentReturnURL)
 		if err != nil {
 			return c.Send("Ошибка: " + err.Error())
 		}
@@ -816,8 +814,7 @@ func (b *Bot) handleDevices(c tele.Context) error {
 		return c.Send("Не удалось загрузить устройства — попробуйте позже.")
 	}
 
-	limit, _ := b.repo.GetEffectiveDeviceLimit(ctx, user.ID)
-	expansion, _ := b.repo.GetActiveDeviceExpansion(ctx, user.ID)
+	limit := domain.DeviceMaxPerUser
 
 	sort.Slice(devices, func(i, j int) bool {
 		return devices[i].CreatedAt.Before(devices[j].CreatedAt)
@@ -826,26 +823,12 @@ func (b *Bot) handleDevices(c tele.Context) error {
 	rm := &tele.ReplyMarkup{}
 
 	if len(devices) == 0 {
-		var rows []tele.Row
-		currentExtra := 0
-		if expansion != nil {
-			currentExtra = expansion.ExtraDevices
-		}
-		if currentExtra < domain.DeviceExpansionMaxExtra {
-			btnBuyDev := rm.Data("➕ Купить устройство", "menu_buydevice")
-			rows = append(rows, rm.Row(btnBuyDev))
-		}
-		rows = append(rows, rm.Row(backBtn(rm)))
-		rm.Inline(rows...)
-
-		msg := fmt.Sprintf(
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(fmt.Sprintf(
 			"📱 *Устройства*\n"+brandLine+"\n\n"+
 				"❌  Нет подключённых устройств.\n"+
-				"🔒  Лимит: *%d*", limit)
-		if expansion != nil {
-			msg += fmt.Sprintf(" (включая +%d)", expansion.ExtraDevices)
-		}
-		return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+				"🔒  Лимит: *%d*", limit),
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 	}
 
 	activeCount := 0
@@ -865,138 +848,15 @@ func (b *Bot) handleDevices(c tele.Context) error {
 		msg += fmt.Sprintf("  %s `%s`%s\n", status, d.DeviceName, suffix)
 	}
 	msg += fmt.Sprintf("\n📊  %d / %d активных", activeCount, limit)
-	if expansion != nil {
-		msg += fmt.Sprintf("\n+%d расширение · до `%s`",
-			expansion.ExtraDevices, expansion.ExpiresAt.Format("02.01.2006"))
-	}
 
-	hasBlocked := len(devices) > limit
 	var rows []tele.Row
-	if hasBlocked {
+	if len(devices) > limit {
 		btnDisconnect := rm.Data("✕ Отключить устройство", "menu_disconnect_list")
 		rows = append(rows, rm.Row(btnDisconnect))
 	}
-	currentExtra := 0
-	if expansion != nil {
-		currentExtra = expansion.ExtraDevices
-	}
-	if currentExtra < domain.DeviceExpansionMaxExtra {
-		btnBuyDev := rm.Data("➕ Купить устройство", "menu_buydevice")
-		rows = append(rows, rm.Row(btnBuyDev))
-	}
-
-	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
-	if expansion != nil && activeSub != nil && expansion.ExpiresAt.Before(activeSub.ExpiresAt) {
-		btnExtend := rm.Data("⏳ Продлить расширение", "menu_extend")
-		rows = append(rows, rm.Row(btnExtend))
-	}
-
 	rows = append(rows, rm.Row(backBtn(rm)))
 	rm.Inline(rows...)
 	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
-}
-
-// ─── /buydevice ───────────────────────────────────────────────────────────────
-
-func (b *Bot) handleBuyDevice(c tele.Context) error {
-	ctx := context.Background()
-	user, err := b.getUser(ctx, c)
-	if err != nil {
-		return c.Send("Ошибка: " + err.Error())
-	}
-
-	expansion, _ := b.repo.GetActiveDeviceExpansion(ctx, user.ID)
-	currentExtra := 0
-	if expansion != nil {
-		currentExtra = expansion.ExtraDevices
-	}
-	if currentExtra >= domain.DeviceExpansionMaxExtra {
-		rm := &tele.ReplyMarkup{}
-		rm.Inline(rm.Row(backBtn(rm)))
-		return c.Send(
-			fmt.Sprintf("Максимум дополнительных устройств уже куплен (+%d).", domain.DeviceExpansionMaxExtra),
-			rm,
-		)
-	}
-
-	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
-	if activeSub == nil || activeSub.ExpiresAt.Before(time.Now()) {
-		rm := &tele.ReplyMarkup{}
-		rm.Inline(rm.Row(backBtn(rm)))
-		return c.Send("Нет активной подписки.", rm)
-	}
-
-	qty := 1
-	priceKopecks := domain.DeviceExpansionKopecks(activeSub.Plan, qty)
-	priceYAD := domain.DeviceExpansionYAD(activeSub.Plan, qty)
-
-	rm := &tele.ReplyMarkup{}
-	btnYAD := rm.Data(fmt.Sprintf("💰 %d ЯД", priceYAD), "confirm_buydevice_yad")
-	btnMoney := rm.Data(fmt.Sprintf("💳 %d ₽", priceKopecks/100), "confirm_buydevice_money")
-	rm.Inline(rm.Row(btnYAD, btnMoney), rm.Row(backBtn(rm)))
-
-	newTotal := domain.DeviceMaxPerUser + currentExtra + qty
-	return c.Send(fmt.Sprintf(
-		"➕ *Купить устройство*\n"+brandLine+"\n\n"+
-			"📱  Расширение: *+%d / %d*\n"+
-			"📈  После покупки: до *%d* устройств\n"+
-			"⏳  Действует до конца подписки\n\n"+
-			brandLine+"\n"+
-			"💰  Цена: *%d ₽* или *%d ЯД*\n"+
-			"💎  Баланс: *%d ЯД*",
-		currentExtra, domain.DeviceExpansionMaxExtra,
-		newTotal,
-		priceKopecks/100, priceYAD,
-		user.YADBalance,
-	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
-}
-
-// ─── /extend ──────────────────────────────────────────────────────────────────
-// Device expansion no longer requires a separate "extend" purchase.
-// Expansions are auto-extended when the subscription is renewed via the worker.
-// This handler now just informs the user of that fact.
-
-func (b *Bot) handleExtendDevices(c tele.Context) error {
-	ctx := context.Background()
-	user, err := b.getUser(ctx, c)
-	if err != nil {
-		return c.Send("Ошибка: " + err.Error())
-	}
-
-	expansion, _ := b.repo.GetActiveDeviceExpansion(ctx, user.ID)
-	if expansion == nil {
-		rm := &tele.ReplyMarkup{}
-		rm.Inline(rm.Row(backBtn(rm)))
-		return c.Send("У вас нет активного расширения устройств.", rm)
-	}
-
-	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
-	if activeSub == nil || !expansion.ExpiresAt.Before(activeSub.ExpiresAt) {
-		rm := &tele.ReplyMarkup{}
-		rm.Inline(rm.Row(backBtn(rm)))
-		return c.Send("Расширение устройств уже действует до конца текущей подписки.", rm)
-	}
-
-	// Fixed price for the plan
-	price := domain.DeviceExpansionYAD(activeSub.Plan, expansion.ExtraDevices)
-
-	rm := &tele.ReplyMarkup{}
-	btnConfirm := rm.Data(fmt.Sprintf("✅ Продлить за %d ЯД", price), "confirm_extend")
-	rm.Inline(rm.Row(btnConfirm), rm.Row(backBtn(rm)))
-
-	return c.Send(fmt.Sprintf(
-		"⏳ *Продление расширения*\n"+brandLine+"\n\n"+
-			"📱  Устройства: +%d\n"+
-			"📅  Текущий срок: до `%s`\n"+
-			"📆  Новый срок: до `%s`\n\n"+
-			brandLine+"\n"+
-			"💎  Цена: *%d ЯД*\n"+
-			"💎  Баланс: *%d ЯД*",
-		expansion.ExtraDevices,
-		expansion.ExpiresAt.Format("02.01.2006"),
-		activeSub.ExpiresAt.Format("02.01.2006"),
-		price, user.YADBalance,
-	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
 // ─── /traffic ─────────────────────────────────────────────────────────────────
@@ -1466,9 +1326,7 @@ func planName(p domain.SubscriptionPlan) string {
 		return "1 месяц"
 	case domain.PlanThreeMonth:
 		return "3 месяца"
-	case domain.PlanDeviceExpansion:
-		return "+1 устройство"
-	default:
+default:
 		return string(p)
 	}
 }
@@ -1528,91 +1386,6 @@ func (b *Bot) RegisterBuyCallbacks() {
 	b.bot.Handle(&tele.Btn{Unique: "buyyad_1week"}, b.handleBuyYAD(domain.PlanWeek))
 	b.bot.Handle(&tele.Btn{Unique: "buyyad_1month"}, b.handleBuyYAD(domain.PlanMonth))
 	b.bot.Handle(&tele.Btn{Unique: "buyyad_3months"}, b.handleBuyYAD(domain.PlanThreeMonth))
-
-	// Device expansion purchase — YAD
-	b.bot.Handle(&tele.Btn{Unique: "confirm_buydevice_yad"}, func(c tele.Context) error {
-		_ = c.Respond()
-		ctx := context.Background()
-		user, err := b.getUser(ctx, c)
-		if err != nil {
-			return c.Send("Ошибка: " + err.Error())
-		}
-
-		expansion, err := b.ecoSvc.BuyDeviceExpansion(ctx, user.ID, 1)
-		if err != nil {
-			rm := &tele.ReplyMarkup{}
-			rm.Inline(rm.Row(backBtn(rm)))
-			return c.Send("Ошибка: "+err.Error(), rm)
-		}
-
-		rm := &tele.ReplyMarkup{}
-		rm.Inline(rm.Row(backBtn(rm)))
-		return c.Send(fmt.Sprintf(
-			"🎉 *Расширение активировано!*\n"+brandLine+"\n\n"+
-				"📱  Устройства: +%d (до %d)\n"+
-				"📅  Действует до: `%s`",
-			expansion.ExtraDevices,
-			domain.DeviceMaxPerUser+expansion.ExtraDevices,
-			expansion.ExpiresAt.Format("02.01.2006"),
-		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
-	})
-
-	// Device expansion purchase — rubles
-	b.bot.Handle(&tele.Btn{Unique: "confirm_buydevice_money"}, func(c tele.Context) error {
-		_ = c.Respond()
-		ctx := context.Background()
-		user, err := b.getUser(ctx, c)
-		if err != nil {
-			return c.Send("Ошибка: " + err.Error())
-		}
-
-		redirect, payment, err := b.subSvc.InitiateDeviceExpansionPayment(ctx, user.ID, 1, b.cfg.PaymentReturnURL)
-		if err != nil {
-			rm := &tele.ReplyMarkup{}
-			rm.Inline(rm.Row(backBtn(rm)))
-			return c.Send("Ошибка: "+err.Error(), rm)
-		}
-
-		rm := &tele.ReplyMarkup{}
-		btnPay := rm.URL("💳 Перейти к оплате", redirect)
-		rm.Inline(rm.Row(btnPay), rm.Row(backBtn(rm)))
-
-		return c.Send(fmt.Sprintf(
-			"💳 *Оплата расширения*\n"+brandLine+"\n\n"+
-				"💰  Сумма: *%.0f ₽*\n"+
-				"🔖  Платёж: `%s`\n\n"+
-				"_⏱ Ссылка действительна 15 минут._",
-			float64(payment.AmountKopecks)/100,
-			payment.ID.String(),
-		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
-	})
-
-	// Extend device expansion
-	b.bot.Handle(&tele.Btn{Unique: "confirm_extend"}, func(c tele.Context) error {
-		_ = c.Respond()
-		ctx := context.Background()
-		user, err := b.getUser(ctx, c)
-		if err != nil {
-			return c.Send("Ошибка: " + err.Error())
-		}
-
-		expansion, err := b.ecoSvc.ExtendDeviceExpansionYAD(ctx, user.ID)
-		if err != nil {
-			rm := &tele.ReplyMarkup{}
-			rm.Inline(rm.Row(backBtn(rm)))
-			return c.Send("Ошибка: "+err.Error(), rm)
-		}
-
-		rm := &tele.ReplyMarkup{}
-		rm.Inline(rm.Row(backBtn(rm)))
-		return c.Send(fmt.Sprintf(
-			"🎉 *Расширение продлено!*\n"+brandLine+"\n\n"+
-				"📱  Устройства: +%d\n"+
-				"📅  Действует до: `%s`",
-			expansion.ExtraDevices,
-			expansion.ExpiresAt.Format("02.01.2006"),
-		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
-	})
 
 	// Disconnect device list
 	b.bot.Handle(&tele.Btn{Unique: "menu_disconnect_list"}, func(c tele.Context) error {
@@ -1721,15 +1494,7 @@ func (b *Bot) RegisterBuyCallbacks() {
 		_ = c.Respond()
 		return b.handlePayments(c)
 	})
-	b.bot.Handle(&tele.Btn{Unique: "menu_buydevice"}, func(c tele.Context) error {
-		_ = c.Respond()
-		return b.handleBuyDevice(c)
-	})
-	b.bot.Handle(&tele.Btn{Unique: "menu_extend"}, func(c tele.Context) error {
-		_ = c.Respond()
-		return b.handleExtendDevices(c)
-	})
-	b.bot.Handle(&tele.Btn{Unique: "menu_yadshop"}, func(c tele.Context) error {
+b.bot.Handle(&tele.Btn{Unique: "menu_yadshop"}, func(c tele.Context) error {
 		_ = c.Respond()
 		ctx := context.Background()
 		user, err := b.getUser(ctx, c)
