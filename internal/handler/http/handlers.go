@@ -1388,6 +1388,112 @@ func (h *ShopHandler) BuySubscription(c *gin.Context) {
 	})
 }
 
+type buyDeviceExpansionRequest struct {
+	Qty int `json:"qty" binding:"required,min=1,max=2"`
+}
+
+// POST /api/shop/buy-device-expansion  (YAD payment)
+func (h *ShopHandler) BuyDeviceExpansion(c *gin.Context) {
+	var req buyDeviceExpansionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	expansion, err := h.eco.BuyDeviceExpansion(c.Request.Context(), userID, req.Qty)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "Расширение устройств активировано",
+		"extra_devices": expansion.ExtraDevices,
+		"expires_at":    expansion.ExpiresAt.Format(time.RFC3339),
+	})
+}
+
+type buyDeviceExpansionMoneyRequest struct {
+	Qty       int    `json:"qty" binding:"required,min=1,max=2"`
+	ReturnURL string `json:"return_url" binding:"required"`
+}
+
+// POST /api/shop/buy-device-expansion-money  (Platega payment)
+func (h *ShopHandler) BuyDeviceExpansionMoney(c *gin.Context) {
+	var req buyDeviceExpansionMoneyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	redirectURL, payment, err := h.subSvc.InitiateDeviceExpansionPayment(c.Request.Context(), userID, req.Qty, req.ReturnURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"payment_id":   payment.ID,
+		"redirect_url": redirectURL,
+	})
+}
+
+// GET /api/devices/expansion/quote
+func (h *ShopHandler) DeviceExpansionQuote(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	expansion, _ := h.repo.GetActiveDeviceExpansion(c.Request.Context(), userID)
+
+	type priceOption struct {
+		YAD    int64 `json:"yad"`
+		Rubles int64 `json:"rubles"`
+	}
+
+	// Prices for a full purchase (no upgrade)
+	qty1Full := priceOption{YAD: domain.DeviceExpansionYAD(1), Rubles: domain.DeviceExpansionKopecks(1) / 100}
+	qty2Full := priceOption{YAD: domain.DeviceExpansionYAD(2), Rubles: domain.DeviceExpansionKopecks(2) / 100}
+
+	// Adjust prices for upgrade if expansion already exists
+	qty1Price := qty1Full
+	qty2Price := qty2Full
+	if expansion != nil {
+		diff1YAD := domain.DeviceExpansionYAD(1) - domain.DeviceExpansionYAD(expansion.ExtraDevices)
+		if diff1YAD < 0 {
+			diff1YAD = 0
+		}
+		diff1Rub := (domain.DeviceExpansionKopecks(1) - domain.DeviceExpansionKopecks(expansion.ExtraDevices)) / 100
+		if diff1Rub < 0 {
+			diff1Rub = 0
+		}
+		qty1Price = priceOption{YAD: diff1YAD, Rubles: diff1Rub}
+
+		diff2YAD := domain.DeviceExpansionYAD(2) - domain.DeviceExpansionYAD(expansion.ExtraDevices)
+		if diff2YAD < 0 {
+			diff2YAD = 0
+		}
+		diff2Rub := (domain.DeviceExpansionKopecks(2) - domain.DeviceExpansionKopecks(expansion.ExtraDevices)) / 100
+		if diff2Rub < 0 {
+			diff2Rub = 0
+		}
+		qty2Price = priceOption{YAD: diff2YAD, Rubles: diff2Rub}
+	}
+
+	var expansionResp any
+	if expansion != nil {
+		expansionResp = gin.H{
+			"extra_devices": expansion.ExtraDevices,
+			"expires_at":    expansion.ExpiresAt.Format(time.RFC3339),
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"qty1":              qty1Price,
+		"qty2":              qty2Price,
+		"current_expansion": expansionResp,
+	})
+}
+
 // ─── Device Handler ───────────────────────────────────────────────────────────
 
 type DeviceHandler struct {
@@ -1409,7 +1515,12 @@ func (h *DeviceHandler) List(c *gin.Context) {
 		return
 	}
 
-	limit := domain.DeviceMaxPerUser
+	limit, err := h.repo.GetEffectiveDeviceLimit(c.Request.Context(), userID)
+	if err != nil {
+		limit = domain.DeviceMaxPerUser
+	}
+
+	expansion, _ := h.repo.GetActiveDeviceExpansion(c.Request.Context(), userID)
 
 	type deviceResponse struct {
 		ID             string `json:"id"`
@@ -1450,10 +1561,19 @@ func (h *DeviceHandler) List(c *gin.Context) {
 		}
 	}
 
+	var expansionResp any
+	if expansion != nil {
+		expansionResp = gin.H{
+			"extra_devices": expansion.ExtraDevices,
+			"expires_at":    expansion.ExpiresAt.Format(time.RFC3339),
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"devices": result,
-		"count":   activeCount,
-		"limit":   limit,
+		"devices":   result,
+		"count":     activeCount,
+		"limit":     limit,
+		"expansion": expansionResp,
 	})
 }
 

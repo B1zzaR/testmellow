@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { devicesApi } from '@/api/devices'
+import { shopApi } from '@/api/shop'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Alert } from '@/components/ui/Alert'
@@ -20,18 +21,31 @@ function timeUntilDeletion(canDeleteAfter: string): string | null {
   return `${hours} ч.`
 }
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
 interface DeviceListProps {
   data: DeviceListResponse
   isTrial?: boolean
 }
 
 export function DeviceList({ data }: DeviceListProps) {
-  const { devices, count, limit } = data
+  const { devices, count, limit, expansion } = data
   const queryClient = useQueryClient()
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [showInactive, setShowInactive] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [showExpansionPanel, setShowExpansionPanel] = useState(false)
+
+  const canExpand = !expansion || expansion.extra_devices < 2
+
+  const { data: quote } = useQuery({
+    queryKey: ['device-expansion-quote'],
+    queryFn: shopApi.getDeviceExpansionQuote,
+    enabled: showExpansionPanel,
+  })
 
   const disconnectMutation = useMutation({
     mutationFn: (id: string) => devicesApi.disconnect(id),
@@ -45,6 +59,33 @@ export function DeviceList({ data }: DeviceListProps) {
       setErrorMsg(e.message)
       setSuccessMsg('')
       setConfirmId(null)
+    },
+  })
+
+  const buyYADMutation = useMutation({
+    mutationFn: (qty: 1 | 2) => shopApi.buyDeviceExpansion(qty),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      queryClient.invalidateQueries({ queryKey: ['device-expansion-quote'] })
+      setSuccessMsg(`✅ +${res.extra_devices} устройств активировано до ${formatDate(res.expires_at)}`)
+      setErrorMsg('')
+      setShowExpansionPanel(false)
+    },
+    onError: (e: Error) => {
+      setErrorMsg(e.message)
+      setSuccessMsg('')
+    },
+  })
+
+  const buyMoneyMutation = useMutation({
+    mutationFn: (qty: 1 | 2) =>
+      shopApi.buyDeviceExpansionMoney(qty, window.location.href),
+    onSuccess: (res) => {
+      window.location.href = res.redirect_url
+    },
+    onError: (e: Error) => {
+      setErrorMsg(e.message)
+      setSuccessMsg('')
     },
   })
 
@@ -87,7 +128,24 @@ export function DeviceList({ data }: DeviceListProps) {
         </p>
       </Modal>
 
-      {atLimit && (
+      {/* Active expansion banner */}
+      {expansion && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-primary-500/30 bg-primary-500/5 px-4 py-3">
+          <Icon name="check-circle" size={16} className="shrink-0 text-primary-500" />
+          <p className="text-sm text-primary-600 dark:text-primary-400">
+            ✅ +{expansion.extra_devices} устройств расширено до {formatDate(expansion.expires_at)}
+          </p>
+        </div>
+      )}
+
+      {atLimit && !expansion && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
+          <Icon name="zap" size={16} className="shrink-0 text-yellow-500" />
+          <p className="text-sm text-yellow-500">Достигнут лимит устройств. Отключите неактивное устройство или расширьте лимит.</p>
+        </div>
+      )}
+
+      {atLimit && expansion && (
         <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
           <Icon name="zap" size={16} className="shrink-0 text-yellow-500" />
           <p className="text-sm text-yellow-500">Достигнут лимит устройств. Отключите неактивное устройство, чтобы добавить новое.</p>
@@ -159,7 +217,85 @@ export function DeviceList({ data }: DeviceListProps) {
           )}
         </div>
       )}
+
+      {/* Device expansion section */}
+      {canExpand && (
+        <div className="mt-5 border-t border-gray-100 dark:border-surface-700 pt-4">
+          {!showExpansionPanel ? (
+            <button
+              onClick={() => setShowExpansionPanel(true)}
+              className="flex items-center gap-2 text-sm text-primary-500 hover:text-primary-600 transition-colors"
+            >
+              <Icon name="plus-circle" size={16} />
+              {expansion ? 'Апгрейд до +2 устройств' : 'Расширить устройства'}
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-gray-700 dark:text-slate-300">🔓 Расширение устройств</p>
+              <p className="text-xs text-gray-500 dark:text-slate-500">
+                Расширение действует до конца текущей подписки.
+              </p>
+              <div className="space-y-2">
+                {(!expansion || expansion.extra_devices < 1) && (
+                  <ExpansionOption
+                    label="+1 устройство"
+                    yadPrice={quote?.qty1.yad ?? 50}
+                    rublesPrice={quote?.qty1.rubles ?? 150}
+                    onBuyYAD={() => buyYADMutation.mutate(1)}
+                    onBuyMoney={() => buyMoneyMutation.mutate(1)}
+                    loading={buyYADMutation.isPending || buyMoneyMutation.isPending}
+                  />
+                )}
+                {(!expansion || expansion.extra_devices < 2) && (
+                  <ExpansionOption
+                    label={expansion?.extra_devices === 1 ? 'Апгрейд до +2 устройств' : '+2 устройства'}
+                    yadPrice={quote?.qty2.yad ?? (expansion?.extra_devices === 1 ? 40 : 90)}
+                    rublesPrice={quote?.qty2.rubles ?? (expansion?.extra_devices === 1 ? 120 : 270)}
+                    onBuyYAD={() => buyYADMutation.mutate(2)}
+                    onBuyMoney={() => buyMoneyMutation.mutate(2)}
+                    loading={buyYADMutation.isPending || buyMoneyMutation.isPending}
+                  />
+                )}
+              </div>
+              <button
+                onClick={() => setShowExpansionPanel(false)}
+                className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-slate-400 transition-colors"
+              >
+                Скрыть
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </Card>
+  )
+}
+
+interface ExpansionOptionProps {
+  label: string
+  yadPrice: number
+  rublesPrice: number
+  onBuyYAD: () => void
+  onBuyMoney: () => void
+  loading: boolean
+}
+
+function ExpansionOption({ label, yadPrice, rublesPrice, onBuyYAD, onBuyMoney, loading }: ExpansionOptionProps) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-surface-700 px-4 py-3">
+      <div>
+        <p className="text-sm font-medium text-gray-800 dark:text-slate-200">{label}</p>
+        <p className="text-xs text-gray-400 dark:text-slate-500">{yadPrice} ЯД / {rublesPrice} ₽</p>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="secondary" size="sm" loading={loading} onClick={onBuyYAD}>
+          За ЯД
+        </Button>
+        <Button variant="primary" size="sm" loading={loading} onClick={onBuyMoney}>
+          За рубли
+        </Button>
+      </div>
+    </div>
   )
 }
 

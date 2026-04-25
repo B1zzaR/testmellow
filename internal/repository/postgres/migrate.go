@@ -506,6 +506,27 @@ ALTER TABLE payments ADD CONSTRAINT payments_plan_check
     CHECK (plan IN ('1week','1month','3months'));
 `,
 		},
+		{
+			version: "023_device_expansions",
+			sql: `
+CREATE TABLE IF NOT EXISTS device_expansions (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    extra_devices SMALLINT    NOT NULL CHECK (extra_devices BETWEEN 1 AND 2),
+    expires_at    TIMESTAMPTZ NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_device_expansions_user_id    ON device_expansions(user_id);
+CREATE INDEX IF NOT EXISTS idx_device_expansions_expires_at ON device_expansions(expires_at);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS device_expansion_count SMALLINT NOT NULL DEFAULT 0;
+
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS addon_qty SMALLINT NOT NULL DEFAULT 0 CHECK (addon_qty BETWEEN 0 AND 2);
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_plan_check;
+ALTER TABLE payments ADD CONSTRAINT payments_plan_check
+    CHECK (plan IN ('1week','1month','3months','device_expansion','device_expansion_2'));
+`,
+		},
 	}
 
 	for _, m := range migrations {
