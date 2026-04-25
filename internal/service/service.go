@@ -601,8 +601,8 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 		amountKopecks = domain.DeviceExpansionKopecks(qty) - domain.DeviceExpansionKopecks(existing.ExtraDevices)
 	}
 
-	// Rate limit.
-	rlKey := fmt.Sprintf("rl:initpay:%s", userID.String())
+	// Rate limit (separate key from subscription payments).
+	rlKey := fmt.Sprintf("rl:initpay:devexp:%s", userID.String())
 	cnt, _ := s.rdb.Incr(ctx, rlKey).Result()
 	if cnt == 1 {
 		s.rdb.Expire(ctx, rlKey, time.Hour)
@@ -624,12 +624,15 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 	desc := fmt.Sprintf("Расширение устройств +%d", qty)
 
 	platResp, err := s.platega.CreatePayment(ctx, platega.CreatePaymentRequest{
-		PaymentMethod:  platega.MethodSBPQR,
-		PaymentDetails: platega.PaymentDetails{Amount: amountRubles},
-		Description:    desc,
-		Return:         returnURL,
-		FailedURL:      returnURL,
-		Payload:        userID.String(),
+		PaymentMethod: platega.MethodSBPQR,
+		PaymentDetails: platega.PaymentDetails{
+			Amount:   amountRubles,
+			Currency: "RUB",
+		},
+		Description: desc,
+		Return:      returnURL,
+		FailedURL:   returnURL,
+		Payload:     userID.String(),
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("ошибка платёжного шлюза: %w", err)
