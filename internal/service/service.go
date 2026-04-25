@@ -978,15 +978,6 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 		}
 	}
 
-	// Sync device expansion expiry to match the new subscription end date.
-	if err := s.repo.SyncDeviceExpansionExpiry(ctx, userID, newExpiry); err != nil {
-		s.log.Warn("BuySubscriptionWithYAD: sync device expansion expiry",
-			zap.String("user_id", userID.String()),
-			zap.Error(err),
-		)
-		// Non-fatal: subscription is already activated.
-	}
-
 	s.log.Info("subscription purchased with ЯД",
 		zap.String("user_id", userID.String()),
 		zap.String("plan", string(plan)),

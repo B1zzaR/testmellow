@@ -473,17 +473,6 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 		zap.Time("expires_at", newExpiry),
 	)
 
-	// Sync device expansion expiry to match new subscription end date.
-	// If the user has an active expansion, extend its expires_at so it doesn't
-	// expire before the newly renewed subscription does.
-	if err := w.repo.SyncDeviceExpansionExpiry(ctx, userID, newExpiry); err != nil {
-		w.log.Warn("handleSubscriptionActivate: sync device expansion expiry",
-			zap.String("user_id", userID.String()),
-			zap.Error(err),
-		)
-		// Non-fatal: subscription is already activated, expansion sync is best-effort.
-	}
-
 	// Notify via Telegram
 	if user.TelegramID != nil {
 		planRu := map[domain.SubscriptionPlan]string{
