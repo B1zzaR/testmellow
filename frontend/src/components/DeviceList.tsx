@@ -64,10 +64,9 @@ export function DeviceList({ data }: DeviceListProps) {
 
   const buyYADMutation = useMutation({
     mutationFn: (qty: 1 | 2) => shopApi.buyDeviceExpansion(qty),
-    onSuccess: (res) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       queryClient.invalidateQueries({ queryKey: ['device-expansion-quote'] })
-      setSuccessMsg(`✅ +${res.extra_devices} устройств активировано до ${formatDate(res.expires_at)}`)
       setErrorMsg('')
       setShowExpansionPanel(false)
     },
