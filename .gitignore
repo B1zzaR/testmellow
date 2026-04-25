@@ -24,6 +24,9 @@ frontend/.env.local
 pgdata/
 redisdata/
 
+# ── Claude Code ────────────────────────────────────────────────────────────────
+.claude/
+
 # ── Editor / OS noise ──────────────────────────────────────────────────────────
 .idea/
 .vscode/
