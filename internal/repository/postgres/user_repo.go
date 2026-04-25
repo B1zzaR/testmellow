@@ -1030,6 +1030,16 @@ func (r *UserRepo) DeleteExpiredDeviceExpansions(ctx context.Context) ([]uuid.UU
 	return userIDs, rows.Err()
 }
 
+// SyncDeviceExpansionExpiry updates the expires_at of any active device expansion
+// to match the new subscription expiry (called after subscription renewal).
+func (r *UserRepo) SyncDeviceExpansionExpiry(ctx context.Context, userID uuid.UUID, newExpiry time.Time) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE device_expansions SET expires_at = $1
+		 WHERE user_id = $2 AND expires_at > NOW()`,
+		newExpiry, userID)
+	return err
+}
+
 // IncrementDeviceExpansionCount bumps the device_expansion_count counter for a user.
 func (r *UserRepo) IncrementDeviceExpansionCount(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
 	_, err := tx.Exec(ctx,
