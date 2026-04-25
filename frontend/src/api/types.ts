@@ -135,10 +135,22 @@ export interface Device {
   is_blocked: boolean
 }
 
+export interface DeviceExpansion {
+  extra_devices: number
+  expires_at: string
+}
+
+export interface DeviceExpansionQuote {
+  qty1: { yad: number; rubles: number }
+  qty2: { yad: number; rubles: number }
+  current_expansion: DeviceExpansion | null
+}
+
 export interface DeviceListResponse {
   devices: Device[]
   count: number
   limit: number
+  expansion: DeviceExpansion | null
 }
 
 export interface AccountActivity {

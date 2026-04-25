@@ -199,6 +199,7 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle("/info", b.handleInfo)
 	b.bot.Handle("/resetpassword", b.handleResetPassword)
 	b.bot.Handle("/devices", b.handleDevices)
+	b.bot.Handle("/buydevice", b.handleBuyDevice)
 	b.bot.Handle("/traffic", b.handleTraffic)
 	b.bot.Handle("/history", b.handleHistory)
 	b.bot.Handle("/payments", b.handlePayments)
@@ -866,7 +867,11 @@ func (b *Bot) handleDevices(c tele.Context) error {
 		return c.Send("Не удалось загрузить устройства — попробуйте позже.")
 	}
 
-	limit := domain.DeviceMaxPerUser
+	limit, err := b.repo.GetEffectiveDeviceLimit(ctx, user.ID)
+	if err != nil {
+		limit = domain.DeviceMaxPerUser
+	}
+	expansion, _ := b.repo.GetActiveDeviceExpansion(ctx, user.ID)
 
 	sort.Slice(devices, func(i, j int) bool {
 		return devices[i].CreatedAt.Before(devices[j].CreatedAt)
@@ -875,7 +880,13 @@ func (b *Bot) handleDevices(c tele.Context) error {
 	rm := &tele.ReplyMarkup{}
 
 	if len(devices) == 0 {
-		rm.Inline(rm.Row(backBtn(rm)))
+		var rows []tele.Row
+		if expansion == nil {
+			btnExpand := rm.Data("🔓 Расширить устройства", "menu_buydevice")
+			rows = append(rows, rm.Row(btnExpand))
+		}
+		rows = append(rows, rm.Row(backBtn(rm)))
+		rm.Inline(rows...)
 		return c.Send(fmt.Sprintf(
 			"📱 *Устройства*\n"+brandLine+"\n\n"+
 				"❌  Нет подключённых устройств.\n"+
@@ -901,13 +912,62 @@ func (b *Bot) handleDevices(c tele.Context) error {
 	}
 	msg += fmt.Sprintf("\n📊  %d / %d активных", activeCount, limit)
 
+	if expansion != nil {
+		msg += fmt.Sprintf("\n✅  +%d устройств (до %s)", expansion.ExtraDevices, expansion.ExpiresAt.Format("02.01.2006"))
+	}
+
 	var rows []tele.Row
-	if len(devices) > limit {
+	if len(devices) >= limit {
 		btnDisconnect := rm.Data("✕ Отключить устройство", "menu_disconnect_list")
 		rows = append(rows, rm.Row(btnDisconnect))
 	}
+	if expansion == nil || expansion.ExtraDevices < domain.DeviceExpansionMaxExtra {
+		btnExpand := rm.Data("🔓 Расширить устройства", "menu_buydevice")
+		rows = append(rows, rm.Row(btnExpand))
+	}
 	rows = append(rows, rm.Row(backBtn(rm)))
 	rm.Inline(rows...)
+	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /buydevice ───────────────────────────────────────────────────────────────
+
+func (b *Bot) handleBuyDevice(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	expansion, _ := b.repo.GetActiveDeviceExpansion(ctx, user.ID)
+
+	msg := "🔓 *Расширение устройств*\n" + brandLine + "\n\n"
+	if expansion != nil {
+		msg += fmt.Sprintf("✅ Активно: +%d устройств (до %s)\n\n", expansion.ExtraDevices, expansion.ExpiresAt.Format("02.01.2006"))
+	}
+	msg += "+1 устройство:  *50 ЯД*  |  *150 ₽*\n"
+	msg += "+2 устройства:  *90 ЯД*  |  *270 ₽*\n\n"
+	if expansion != nil && expansion.ExtraDevices == 1 {
+		msg += "_Апгрейд +1→+2: 40 ЯД / 120 ₽_\n\n"
+	}
+	msg += "_Расширение действует до конца текущей подписки._"
+
+	rm := &tele.ReplyMarkup{}
+	var rows []tele.Row
+
+	if expansion == nil || expansion.ExtraDevices < 1 {
+		btn1YAD := rm.Data("+1 за ЯД (50)", "buydev_yad_1")
+		btn1Money := rm.Data("+1 за рубли (150₽)", "buydev_money_1")
+		rows = append(rows, rm.Row(btn1YAD, btn1Money))
+	}
+	if expansion == nil || expansion.ExtraDevices < 2 {
+		btn2YAD := rm.Data("+2 за ЯД (90)", "buydev_yad_2")
+		btn2Money := rm.Data("+2 за рубли (270₽)", "buydev_money_2")
+		rows = append(rows, rm.Row(btn2YAD, btn2Money))
+	}
+	rows = append(rows, rm.Row(backBtn(rm)))
+	rm.Inline(rows...)
+
 	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
@@ -1490,6 +1550,26 @@ func (b *Bot) RegisterBuyCallbacks() {
 		_ = c.Respond()
 		return b.handleDevices(c)
 	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_buydevice"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleBuyDevice(c)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "buydev_yad_1"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleBuyDeviceYAD(c, 1)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "buydev_yad_2"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleBuyDeviceYAD(c, 2)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "buydev_money_1"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleBuyDeviceMoney(c, 1)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "buydev_money_2"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleBuyDeviceMoney(c, 2)
+	})
 	b.bot.Handle(&tele.Btn{Unique: "menu_traffic"}, func(c tele.Context) error {
 		_ = c.Respond()
 		return b.handleTraffic(c)
@@ -1735,6 +1815,58 @@ func (b *Bot) handleDisconnectCallback(c tele.Context, hwidID string) error {
 	btnDevices := rm.Data("📱 Устройства", "menu_devices")
 	rm.Inline(rm.Row(btnDevices), rm.Row(backBtn(rm)))
 	return c.Send("✅ *Устройство отключено*", &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+func (b *Bot) handleBuyDeviceYAD(c tele.Context, qty int) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	expansion, err := b.ecoSvc.BuyDeviceExpansion(ctx, user.ID, qty)
+	if err != nil {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send("❌ "+err.Error(), rm)
+	}
+
+	rm := &tele.ReplyMarkup{}
+	btnDevices := rm.Data("📱 Устройства", "menu_devices")
+	rm.Inline(rm.Row(btnDevices), rm.Row(backBtn(rm)))
+
+	return c.Send(fmt.Sprintf(
+		"✅ *Расширение активировано*\n"+brandLine+"\n\n"+
+			"+%d устройств до *%s*",
+		expansion.ExtraDevices, expansion.ExpiresAt.Format("02.01.2006")),
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+func (b *Bot) handleBuyDeviceMoney(c tele.Context, qty int) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	redirectURL, _, err := b.subSvc.InitiateDeviceExpansionPayment(ctx, user.ID, qty, b.cfg.PaymentReturnURL)
+	if err != nil {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send("❌ "+err.Error(), rm)
+	}
+
+	rm := &tele.ReplyMarkup{}
+	btnPay := rm.URL("💳 Оплатить", redirectURL)
+	rm.Inline(rm.Row(btnPay), rm.Row(backBtn(rm)))
+
+	return c.Send(fmt.Sprintf(
+		"💳 *Оплата расширения устройств*\n"+brandLine+"\n\n"+
+			"➕ %d устройств\n"+
+			"💰 %d ₽\n\n"+
+			"_Нажмите кнопку для оплаты._",
+		qty, domain.DeviceExpansionKopecks(qty)/100),
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
 // Unused import avoidance

@@ -205,6 +205,7 @@ type Payment struct {
 	PaymentMethod     int              `db:"payment_method" json:"payment_method"`
 	PlategaPayload    string           `db:"platega_payload" json:"-"`
 	RedirectURL       string           `db:"redirect_url" json:"redirect_url"`
+	AddonQty          int              `db:"addon_qty" json:"addon_qty,omitempty"`
 	ExpiresAt         *time.Time       `db:"expires_at" json:"expires_at"`
 	WebhookReceivedAt *time.Time       `db:"webhook_received_at" json:"-"`
 	Idempotency       string           `db:"idempotency" json:"-"`
@@ -339,6 +340,53 @@ type AdminAuditLog struct {
 
 const DeviceMaxPerUser = 4
 const DeviceInactiveDays = 3
+
+// ─── Device Expansion ─────────────────────────────────────────────────────────
+
+const DeviceExpansionMaxExtra = 2
+const DeviceMaxWithExpansion = DeviceMaxPerUser + DeviceExpansionMaxExtra // 6
+
+const (
+	PlanDeviceExpansion  SubscriptionPlan = "device_expansion"   // +1 device
+	PlanDeviceExpansion2 SubscriptionPlan = "device_expansion_2" // +2 devices
+)
+
+// IsDeviceExpansionPlan reports whether p is a device expansion plan.
+func IsDeviceExpansionPlan(p SubscriptionPlan) bool {
+	return p == PlanDeviceExpansion || p == PlanDeviceExpansion2
+}
+
+// DeviceExpansionQuantity returns the number of extra device slots for a plan.
+func DeviceExpansionQuantity(p SubscriptionPlan) int {
+	if p == PlanDeviceExpansion2 {
+		return 2
+	}
+	return 1
+}
+
+// DeviceExpansionKopecks returns the price in kopecks: 15000 for +1, 27000 for +2.
+func DeviceExpansionKopecks(qty int) int64 {
+	if qty == 2 {
+		return 27000
+	}
+	return 15000
+}
+
+// DeviceExpansionYAD returns the YAD price: 50 for +1, 90 for +2.
+func DeviceExpansionYAD(qty int) int64 {
+	if qty == 2 {
+		return 90
+	}
+	return 50
+}
+
+type DeviceExpansion struct {
+	ID           uuid.UUID `db:"id"`
+	UserID       uuid.UUID `db:"user_id"`
+	ExtraDevices int       `db:"extra_devices"`
+	ExpiresAt    time.Time `db:"expires_at"`
+	CreatedAt    time.Time `db:"created_at"`
+}
 
 type Device struct {
 	ID         uuid.UUID `db:"id"          json:"id"`

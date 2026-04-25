@@ -202,6 +202,16 @@ export function SubscriptionsPage() {
                 <p className="mt-1 text-sm font-semibold text-gray-900 dark:text-slate-100">{value}</p>
               </div>
             ))}
+            {devicesData && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-600">Устройства</p>
+                <p className="mt-1 text-sm font-semibold text-gray-900 dark:text-slate-100">
+                  {devicesData.count}
+                  {devicesData.expansion ? ` +${devicesData.expansion.extra_devices} расш.` : ''}
+                  {' '}/ {devicesData.limit}
+                </p>
+              </div>
+            )}
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-600">Статус</p>
               <div className="mt-1">{subscriptionStatusBadge(activeSub.status)}</div>
