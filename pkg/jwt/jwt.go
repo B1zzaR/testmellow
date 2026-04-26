@@ -8,6 +8,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// Issuer / audience are baked into every token and validated on parse so
+// that, even if JWT_SECRET is ever shared with another internal service in
+// the future, tokens issued by that service can't be replayed against ours.
+const (
+	jwtIssuer        = "vpnplatform"
+	audienceAccess   = "vpnplatform.access"
+	audienceRefresh  = "vpnplatform.refresh"
+	subjectRefresh   = "refresh"
+)
+
 type Claims struct {
 	UserID  uuid.UUID `json:"uid"`
 	IsAdmin bool      `json:"adm"`
@@ -33,6 +43,8 @@ func (m *Manager) Generate(userID uuid.UUID, isAdmin bool) (string, error) {
 		UserID:  userID,
 		IsAdmin: isAdmin,
 		RegisteredClaims: gojwt.RegisteredClaims{
+			Issuer:    jwtIssuer,
+			Audience:  gojwt.ClaimStrings{audienceAccess},
 			ExpiresAt: gojwt.NewNumericDate(time.Now().Add(m.accessTTL)),
 			IssuedAt:  gojwt.NewNumericDate(time.Now()),
 			ID:        uuid.New().String(),
@@ -51,10 +63,12 @@ func (m *Manager) GenerateRefresh(userID uuid.UUID, isAdmin bool) (tokenStr, jti
 		UserID:  userID,
 		IsAdmin: isAdmin,
 		RegisteredClaims: gojwt.RegisteredClaims{
+			Issuer:    jwtIssuer,
+			Audience:  gojwt.ClaimStrings{audienceRefresh},
 			ExpiresAt: gojwt.NewNumericDate(time.Now().Add(m.refreshTTL)),
 			IssuedAt:  gojwt.NewNumericDate(time.Now()),
 			ID:        jti,
-			Subject:   "refresh",
+			Subject:   subjectRefresh,
 		},
 	}
 	token := gojwt.NewWithClaims(gojwt.SigningMethodHS256, claims)
@@ -72,13 +86,17 @@ func (m *Manager) AccessTTL() time.Duration {
 	return m.accessTTL
 }
 
-func (m *Manager) Parse(tokenStr string) (*Claims, error) {
-	token, err := gojwt.ParseWithClaims(tokenStr, &Claims{}, func(t *gojwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*gojwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return m.secret, nil
-	})
+func (m *Manager) parseWithAudience(tokenStr, expectedAud string) (*Claims, error) {
+	token, err := gojwt.ParseWithClaims(tokenStr, &Claims{},
+		func(t *gojwt.Token) (interface{}, error) {
+			if _, ok := t.Method.(*gojwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("unexpected signing method")
+			}
+			return m.secret, nil
+		},
+		gojwt.WithIssuer(jwtIssuer),
+		gojwt.WithAudience(expectedAud),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -89,13 +107,19 @@ func (m *Manager) Parse(tokenStr string) (*Claims, error) {
 	return claims, nil
 }
 
+// Parse validates an access token. Tokens minted as refresh (different
+// audience) will be rejected here so they can't sneak past the API gate.
+func (m *Manager) Parse(tokenStr string) (*Claims, error) {
+	return m.parseWithAudience(tokenStr, audienceAccess)
+}
+
 // ParseRefresh validates a refresh token and returns its claims.
 func (m *Manager) ParseRefresh(tokenStr string) (*Claims, error) {
-	claims, err := m.Parse(tokenStr)
+	claims, err := m.parseWithAudience(tokenStr, audienceRefresh)
 	if err != nil {
 		return nil, err
 	}
-	if claims.Subject != "refresh" {
+	if claims.Subject != subjectRefresh {
 		return nil, errors.New("not a refresh token")
 	}
 	return claims, nil

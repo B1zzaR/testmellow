@@ -165,30 +165,79 @@ func AddDailyYADCredit(ctx context.Context, rdb *redis.Client, userID string, am
 
 // ─── Refresh token allowlist (H-8) ───────────────────────────────────────────
 
-// RegisterRefreshToken stores a refresh token JTI in the allowlist.
-// Must be called when issuing a new refresh token.
+// RegisterRefreshToken stores a refresh token JTI in the allowlist and adds
+// it to the per-user refresh-family set. Must be called when issuing a new
+// refresh token.
+//
+// Two keys are written:
+//   - rt:<jti>          → userID, TTL = refresh lifetime
+//   - rt:user:<userID>  → SET of jti, TTL = refresh lifetime + slack
+//
+// The set lets us blow the entire family on password change or on a
+// reuse-detected event without scanning all rt:* keys.
 func RegisterRefreshToken(ctx context.Context, rdb *redis.Client, jti, userID string, ttl time.Duration) error {
-	return rdb.Set(ctx, fmt.Sprintf("rt:%s", jti), userID, ttl).Err()
+	pipe := rdb.Pipeline()
+	pipe.Set(ctx, fmt.Sprintf("rt:%s", jti), userID, ttl)
+	pipe.SAdd(ctx, fmt.Sprintf("rt:user:%s", userID), jti)
+	// Bump the set TTL to the longest remaining child TTL + slack.
+	pipe.Expire(ctx, fmt.Sprintf("rt:user:%s", userID), ttl+time.Hour)
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
-// ValidateAndRevokeRefreshToken checks the token JTI exists, deletes it (one-use),
-// and returns the stored userID. Returns error if not found (expired or already used).
+// ValidateAndRevokeRefreshToken atomically validates and consumes a refresh
+// JTI. Returns:
+//   - (userID, nil)              — token valid; consumed; caller may issue new tokens
+//   - ("", ErrRefreshNotFound)   — token absent; either expired naturally OR replayed
+//
+// On replay, the caller should treat it as a possible theft event and revoke
+// the entire refresh-family for that user; this repo exposes the userID via
+// the JWT claims, not via the rt: key (it's already gone), so the caller
+// must do the parse + RevokeAllRefreshTokens step.
 func ValidateAndRevokeRefreshToken(ctx context.Context, rdb *redis.Client, jti string) (string, error) {
 	key := fmt.Sprintf("rt:%s", jti)
-	// Atomic GET+DEL: get the value and delete in one operation
 	val, err := rdb.GetDel(ctx, key).Result()
 	if err == redis.Nil {
-		return "", errors.New("refresh token revoked or expired")
+		return "", ErrRefreshNotFound
 	}
 	if err != nil {
 		return "", err
 	}
+	// Best-effort: drop the JTI from the user's set so SCARD stays accurate.
+	if val != "" {
+		_ = rdb.SRem(ctx, fmt.Sprintf("rt:user:%s", val), jti).Err()
+	}
 	return val, nil
 }
+
+// ErrRefreshNotFound is returned when a refresh JTI isn't in the allowlist —
+// either because it expired, was already used (rotation), or because someone
+// replayed an already-rotated token (compromise indicator).
+var ErrRefreshNotFound = errors.New("refresh token revoked or expired")
 
 // RevokeRefreshToken deletes a refresh token from the allowlist (for logout / ban).
 func RevokeRefreshToken(ctx context.Context, rdb *redis.Client, jti string) error {
 	return rdb.Del(ctx, fmt.Sprintf("rt:%s", jti)).Err()
+}
+
+// RevokeAllUserRefreshTokens drops every refresh JTI in the user's family
+// set, plus the set itself. Called on:
+//   - password change (security: stolen refresh stops working)
+//   - refresh-token reuse detection (theft response)
+//   - explicit "log out everywhere" UI action
+func RevokeAllUserRefreshTokens(ctx context.Context, rdb *redis.Client, userID string) error {
+	setKey := fmt.Sprintf("rt:user:%s", userID)
+	jtis, err := rdb.SMembers(ctx, setKey).Result()
+	if err != nil && err != redis.Nil {
+		return err
+	}
+	pipe := rdb.Pipeline()
+	for _, jti := range jtis {
+		pipe.Del(ctx, fmt.Sprintf("rt:%s", jti))
+	}
+	pipe.Del(ctx, setKey)
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // ─── Payment dedup ────────────────────────────────────────────────────────────
@@ -254,17 +303,26 @@ func Get2FAChallenge(ctx context.Context, rdb *redis.Client, challengeID string)
 	return parts[0], parts[1], nil
 }
 
-// Resolve2FAChallenge updates the status to approved/denied.
+// resolveTFAScript atomically reads the current value, preserves the userID,
+// and writes the new status — closes the GET/SET race that two near-simultaneous
+// /approve and /deny callbacks could otherwise produce.
+var resolveTFAScript = redis.NewScript(`
+local v = redis.call('GET', KEYS[1])
+if not v then return 0 end
+local sep = string.find(v, ':[^:]*$')
+if not sep then return 0 end
+local uid = string.sub(v, 1, sep-1)
+redis.call('SET', KEYS[1], uid .. ':' .. ARGV[1], 'EX', tonumber(ARGV[2]))
+return 1`)
+
+// Resolve2FAChallenge atomically updates the status to approved/denied.
 func Resolve2FAChallenge(ctx context.Context, rdb *redis.Client, challengeID, status string) error {
 	key := fmt.Sprintf("tfa:%s", challengeID)
-	// Get current value to extract userID
-	val, err := rdb.Get(ctx, key).Result()
-	if err != nil {
+	_, err := resolveTFAScript.Run(ctx, rdb, []string{key}, status, int((2 * time.Minute).Seconds())).Result()
+	if err != nil && err != redis.Nil {
 		return err
 	}
-	parts := splitTFAValue(val)
-	// Overwrite with new status, keep short TTL for the polling client to pick up
-	return rdb.Set(ctx, key, parts[0]+":"+status, 2*time.Minute).Err()
+	return nil
 }
 
 func splitTFAValue(val string) [2]string {

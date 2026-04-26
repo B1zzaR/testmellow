@@ -72,7 +72,7 @@ func main() {
 	deviceRepo := dbpkg.NewDeviceRepo(db)
 	antiEngine := anticheat.NewEngine(rdb, log)
 
-	authSvc := service.NewAuthService(userRepo, antiEngine, rdb, log, cfg.App.AdminLogin)
+	authSvc := service.NewAuthService(userRepo, antiEngine, rdb, log, cfg.App.AdminBootstrapToken)
 	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log,
 		cfg.App.AllowedReturnHosts, cfg.Telegram.WebAppURL)
 	ecoSvc := service.NewEconomyService(userRepo, remnaClient, antiEngine, log)

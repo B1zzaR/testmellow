@@ -530,6 +530,16 @@ func (r *UserRepo) IsAdmin(ctx context.Context, userID uuid.UUID) (bool, error) 
 	return isAdmin, nil
 }
 
+// CountAdmins returns the total number of users with is_admin=TRUE.
+// Used by the bootstrap-admin path to ensure ADMIN_BOOTSTRAP_TOKEN can only
+// promote the very first administrator — once any admin exists, the
+// mechanism becomes a no-op.
+func (r *UserRepo) CountAdmins(ctx context.Context) (int64, error) {
+	var n int64
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE is_admin = TRUE`).Scan(&n)
+	return n, err
+}
+
 // SetTelegramID sets or clears the Telegram ID for a user.
 // Pass nil to unlink.
 func (r *UserRepo) SetTelegramID(ctx context.Context, userID uuid.UUID, tgID *int64) error {
