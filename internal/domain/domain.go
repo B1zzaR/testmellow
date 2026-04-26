@@ -37,16 +37,20 @@ const (
 	SubStatusExpired  SubscriptionStatus = "expired"
 	SubStatusTrial    SubscriptionStatus = "trial"
 	SubStatusCanceled SubscriptionStatus = "canceled"
+	// SubStatusReverted marks a subscription whose underlying payment was
+	// charged back / cancelled by the gateway after activation.
+	SubStatusReverted SubscriptionStatus = "reverted"
 )
 
 type YADTxType string
 
 const (
-	YADTxReferralReward YADTxType = "referral_reward"
-	YADTxBonus          YADTxType = "bonus"
-	YADTxSpent          YADTxType = "spent"
-	YADTxPromo          YADTxType = "promo"
-	YADTxTrial          YADTxType = "trial"
+	YADTxReferralReward     YADTxType = "referral_reward"
+	YADTxBonus              YADTxType = "bonus"
+	YADTxSpent              YADTxType = "spent"
+	YADTxPromo              YADTxType = "promo"
+	YADTxTrial              YADTxType = "trial"
+	YADTxChargebackClawback YADTxType = "chargeback_clawback"
 )
 
 type TicketStatus string
@@ -65,6 +69,9 @@ const (
 	SplitDeferred  RewardSplitStatus = "deferred"
 	SplitPaid      RewardSplitStatus = "paid"
 	SplitBlocked   RewardSplitStatus = "blocked"
+	// SplitReverted is set when a referral reward is clawed back after a
+	// chargeback on the originating payment.
+	SplitReverted RewardSplitStatus = "reverted"
 )
 
 // ─── User ─────────────────────────────────────────────────────────────────────

@@ -171,10 +171,23 @@ func (c *Client) GetPaymentStatus(ctx context.Context, transactionID string) (*C
 
 // VerifyWebhookHeaders validates the webhook came from Platega using
 // constant-time comparison to prevent timing-based credential guessing (H-3).
+//
+// Both PLATEGA_SECRET (current) and PLATEGA_SECRET_PREV (previous) are
+// accepted, so an operator can rotate the secret in the Platega dashboard
+// without losing in-flight callbacks. After 24–48 h PLATEGA_SECRET_PREV
+// must be cleared so a leaked old secret stops working.
 func (c *Client) VerifyWebhookHeaders(merchantID, secret string) bool {
-	okM := subtle.ConstantTimeCompare([]byte(merchantID), []byte(c.cfg.MerchantID)) == 1
-	okS := subtle.ConstantTimeCompare([]byte(secret), []byte(c.cfg.Secret)) == 1
-	return okM && okS
+	if subtle.ConstantTimeCompare([]byte(merchantID), []byte(c.cfg.MerchantID)) != 1 {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(secret), []byte(c.cfg.Secret)) == 1 {
+		return true
+	}
+	if c.cfg.SecretPrev != "" &&
+		subtle.ConstantTimeCompare([]byte(secret), []byte(c.cfg.SecretPrev)) == 1 {
+		return true
+	}
+	return false
 }
 
 func (c *Client) setHeaders(req *http.Request) {

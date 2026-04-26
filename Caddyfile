@@ -60,6 +60,21 @@
 
     # Payment webhooks come from Platega — route them directly to the backend.
     # PLATEGA_CALLBACK_URL must be https://DOMAIN/webhooks/platega (no /api/).
+    #
+    # Defence-in-depth against a leaked X-Secret: restrict /webhooks/platega
+    # to Platega's outbound IP ranges. Get the current ranges from Platega
+    # support and uncomment this block. While disabled, only the constant-time
+    # secret check + replay protection guard the endpoint.
+    #
+    # @platega_ip {
+    #     path /webhooks/platega
+    #     remote_ip 1.2.3.0/24 5.6.7.0/24
+    # }
+    # @not_platega_ip {
+    #     path /webhooks/platega
+    #     not remote_ip 1.2.3.0/24 5.6.7.0/24
+    # }
+    # respond @not_platega_ip 403
     reverse_proxy /webhooks/* backend:8080 {
         header_up X-Forwarded-Proto {scheme}
         header_up X-Real-IP        {remote_host}

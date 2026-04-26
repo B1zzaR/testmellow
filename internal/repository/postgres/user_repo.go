@@ -170,6 +170,45 @@ func (r *UserRepo) AdjustYADBalance(ctx context.Context, tx pgx.Tx, userID uuid.
 	return err
 }
 
+// ClawbackYAD deducts up to `amount` YAD without ever pushing the balance
+// below zero (i.e. clamps the deduction at the current balance). Used by the
+// chargeback handler to revert a referral reward even if the referrer has
+// already partially spent it. The actually deducted amount is returned and
+// recorded in the ledger for forensic traceability.
+func (r *UserRepo) ClawbackYAD(ctx context.Context, tx pgx.Tx, userID uuid.UUID,
+	amount int64, refID *uuid.UUID, note string) (int64, error) {
+	if amount <= 0 {
+		return 0, nil
+	}
+	var clawed, newBalance int64
+	err := tx.QueryRow(ctx, `
+		WITH clamped AS (
+		    SELECT LEAST(yad_balance, $1::bigint) AS take
+		    FROM users WHERE id = $2
+		)
+		UPDATE users
+		   SET yad_balance = yad_balance - (SELECT take FROM clamped),
+		       updated_at  = NOW()
+		 WHERE id = $2
+		RETURNING (SELECT take FROM clamped), yad_balance`,
+		amount, userID).Scan(&clawed, &newBalance)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("user %s not found", userID)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if clawed == 0 {
+		return 0, nil
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO yad_transactions (id, user_id, delta, balance, tx_type, ref_id, note, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
+		uuid.New(), userID, -clawed, newBalance, domain.YADTxChargebackClawback, refID, note,
+	)
+	return clawed, err
+}
+
 func (r *UserRepo) UpdateRiskScore(ctx context.Context, userID uuid.UUID, score int) error {
 	_, err := r.db.Exec(ctx, `UPDATE users SET risk_score = $1, updated_at = NOW() WHERE id = $2`, score, userID)
 	return err
@@ -331,6 +370,28 @@ func (r *UserRepo) Search(ctx context.Context, q string, limit, offset int) ([]*
 
 func (r *UserRepo) BeginTx(ctx context.Context) (pgx.Tx, error) {
 	return r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+}
+
+// BeginSerializableTx opens a SERIALIZABLE transaction. All money-moving paths
+// (subscription activation/extension, YAD debit/credit, device-expansion
+// purchase, chargeback reversion) MUST use this isolation level so concurrent
+// updates can never produce a lost-update on the user balance or subscription
+// expiry. Callers should be ready to retry on `40001 serialization_failure`.
+func (r *UserRepo) BeginSerializableTx(ctx context.Context) (pgx.Tx, error) {
+	return r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+}
+
+// LockUserForUpdate takes a row-level lock on the user record so subsequent
+// reads in the same transaction see the latest state and concurrent writers
+// queue behind us. Use this at the start of any money-moving block to
+// serialise per-user writes.
+func (r *UserRepo) LockUserForUpdate(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	var dummy uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&dummy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("user %s not found", userID)
+	}
+	return err
 }
 
 // UpdateFingerprint stores the latest device fingerprint and IP
@@ -652,6 +713,43 @@ func (r *UserRepo) UpdateRewardStatus(ctx context.Context, tx pgx.Tx, id uuid.UU
 	return err
 }
 
+// GetRewardByPaymentID returns the (single) referral reward attached to a
+// given payment, or nil when none exists. Used by the chargeback path to
+// locate the reward that needs to be reverted.
+func (r *UserRepo) GetRewardByPaymentID(ctx context.Context, paymentID uuid.UUID) (*domain.ReferralReward, error) {
+	rr := &domain.ReferralReward{}
+	err := r.db.QueryRow(ctx, `
+		SELECT id, referral_id, payment_id, referrer_id,
+		       amount_yad, immediate_yad, deferred_yad,
+		       status, risk_score, scheduled_at, deferred_at, paid_at, created_at
+		FROM referral_rewards WHERE payment_id=$1`, paymentID).Scan(
+		&rr.ID, &rr.ReferralID, &rr.PaymentID, &rr.ReferrerID,
+		&rr.AmountYAD, &rr.ImmediateYAD, &rr.DeferredYAD,
+		&rr.Status, &rr.RiskScore, &rr.ScheduledAt, &rr.DeferredAt, &rr.PaidAt, &rr.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return rr, err
+}
+
+// RevertReferralReward atomically transitions the reward to status='reverted'
+// only if it is currently in a state where a clawback is meaningful
+// (immediate / paid). Pending/blocked/already-reverted rewards return false
+// (no error) so the caller can skip the YAD clawback. RowsAffected==0 means
+// "nothing to do here".
+func (r *UserRepo) RevertReferralReward(ctx context.Context, tx pgx.Tx, rewardID uuid.UUID) (bool, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE referral_rewards
+		   SET status = 'reverted'
+		 WHERE id = $1 AND status IN ('immediate','paid','pending')`,
+		rewardID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // GetRewardByID fetches a single referral reward by its ID.
 func (r *UserRepo) GetRewardByID(ctx context.Context, id uuid.UUID) (*domain.ReferralReward, error) {
 	rr := &domain.ReferralReward{}
@@ -819,6 +917,92 @@ func (r *UserRepo) ExtendSubscription(ctx context.Context, tx pgx.Tx, subID uuid
 	return err
 }
 
+// ExtendSubscriptionByDuration atomically advances expires_at relative to its
+// current value within the transaction, eliminating the
+// read-then-write-with-stale-value lost-update race that occurs when two
+// concurrent confirmations both compute newExpiry from the same prefetched
+// expires_at. It returns the post-update expires_at.
+//
+// MUST be called inside a serializable transaction with the subscription row
+// locked (see LockSubscriptionForUpdate).
+func (r *UserRepo) ExtendSubscriptionByDuration(ctx context.Context, tx pgx.Tx,
+	subID uuid.UUID, addDays int, plan domain.SubscriptionPlan) (time.Time, error) {
+	var newExpiry time.Time
+	err := tx.QueryRow(ctx, `
+		UPDATE subscriptions
+		   SET expires_at = GREATEST(expires_at, NOW()) + ($1::int * INTERVAL '1 day'),
+		       plan       = $2,
+		       status     = 'active',
+		       updated_at = NOW()
+		 WHERE id = $3
+		RETURNING expires_at`,
+		addDays, string(plan), subID).Scan(&newExpiry)
+	return newExpiry, err
+}
+
+// ContractSubscriptionByDuration is the inverse of ExtendSubscriptionByDuration
+// used by the chargeback handler. expires_at is rolled back by addDays days.
+// If the resulting expiry is in the past, the subscription is marked
+// `reverted` so the periodic sweep disables Remnawave access on the next pass.
+// Returns the post-update expiry and whether the sub is now in the past.
+func (r *UserRepo) ContractSubscriptionByDuration(ctx context.Context, tx pgx.Tx,
+	subID uuid.UUID, addDays int) (time.Time, bool, error) {
+	var newExpiry time.Time
+	err := tx.QueryRow(ctx, `
+		UPDATE subscriptions
+		   SET expires_at = expires_at - ($1::int * INTERVAL '1 day'),
+		       status     = CASE
+		                      WHEN expires_at - ($1::int * INTERVAL '1 day') <= NOW()
+		                        THEN 'reverted'
+		                      ELSE status
+		                    END,
+		       updated_at = NOW()
+		 WHERE id = $2
+		RETURNING expires_at`,
+		addDays, subID).Scan(&newExpiry)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return newExpiry, !newExpiry.After(time.Now()), nil
+}
+
+// LockSubscriptionForUpdate takes a row lock on the subscription row so
+// concurrent extenders/contractors serialise. Returns the locked row.
+func (r *UserRepo) LockSubscriptionForUpdate(ctx context.Context, tx pgx.Tx,
+	subID uuid.UUID) (*domain.Subscription, error) {
+	s := &domain.Subscription{}
+	err := tx.QueryRow(ctx, `
+		SELECT id, user_id, plan, status, starts_at, expires_at, remna_sub_uuid, paid_kopecks, payment_id, created_at, updated_at
+		FROM subscriptions WHERE id=$1 FOR UPDATE`, subID).Scan(
+		&s.ID, &s.UserID, &s.Plan, &s.Status, &s.StartsAt, &s.ExpiresAt,
+		&s.RemnaSubUUID, &s.PaidKopecks, &s.PaymentID, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return s, err
+}
+
+// LockLatestSubscriptionForUpdate locks the user's most recent subscription
+// row (regardless of status) inside a transaction so concurrent activators
+// see consistent state. Returns nil if the user has no subscription.
+func (r *UserRepo) LockLatestSubscriptionForUpdate(ctx context.Context, tx pgx.Tx,
+	userID uuid.UUID) (*domain.Subscription, error) {
+	s := &domain.Subscription{}
+	err := tx.QueryRow(ctx, `
+		SELECT id, user_id, plan, status, starts_at, expires_at, remna_sub_uuid, paid_kopecks, payment_id, created_at, updated_at
+		FROM subscriptions WHERE user_id=$1
+		ORDER BY expires_at DESC LIMIT 1
+		FOR UPDATE`, userID).Scan(
+		&s.ID, &s.UserID, &s.Plan, &s.Status, &s.StartsAt, &s.ExpiresAt,
+		&s.RemnaSubUUID, &s.PaidKopecks, &s.PaymentID, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return s, err
+}
+
 func (r *UserRepo) UpdateSubscriptionRemna(ctx context.Context, subID uuid.UUID, remnaUUID string) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE subscriptions SET remna_sub_uuid=$1, updated_at=NOW() WHERE id=$2`,
@@ -984,18 +1168,38 @@ func scanPayments(rows interface {
 
 // ─── Device Expansion ─────────────────────────────────────────────────────────
 
-// CreateDeviceExpansion inserts a new device expansion record within a transaction.
-// If an existing active expansion exists for the user, it is replaced.
+// CreateDeviceExpansion upserts the user's expansion row atomically using the
+// (user_id) UNIQUE constraint added in migration 024. The DELETE-then-INSERT
+// pattern previously used here had a race: two concurrent BuyDeviceExpansion
+// callers could both DELETE then both INSERT, but only one row would survive
+// while both YAD balances were debited. ON CONFLICT DO UPDATE makes the write
+// atomic and also keeps the higher of the two extra_devices counts and the
+// later expires_at, so an upgrade and a parallel duplicate purchase merge
+// safely instead of overwriting each other.
+//
+// MUST be called inside a serializable transaction with the user row locked
+// (see LockUserForUpdate) so the YAD debit and the expansion upsert form a
+// single atomic step.
 func (r *UserRepo) CreateDeviceExpansion(ctx context.Context, tx pgx.Tx, e *domain.DeviceExpansion) error {
-	// Remove any existing expansion for this user first (upgrade path).
-	if _, err := tx.Exec(ctx, `DELETE FROM device_expansions WHERE user_id=$1`, e.UserID); err != nil {
-		return err
-	}
 	_, err := tx.Exec(ctx, `
 		INSERT INTO device_expansions (id, user_id, extra_devices, expires_at, created_at)
-		VALUES ($1,$2,$3,$4,$5)`,
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (user_id) DO UPDATE
+		   SET extra_devices = GREATEST(device_expansions.extra_devices, EXCLUDED.extra_devices),
+		       expires_at    = GREATEST(device_expansions.expires_at,    EXCLUDED.expires_at)`,
 		e.ID, e.UserID, e.ExtraDevices, e.ExpiresAt, e.CreatedAt,
 	)
+	return err
+}
+
+// DeleteDeviceExpansionForUser removes the active expansion row for a user.
+// Used by the chargeback path to revert a paid-with-money expansion.
+func (r *UserRepo) DeleteDeviceExpansionForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	if tx != nil {
+		_, err := tx.Exec(ctx, `DELETE FROM device_expansions WHERE user_id=$1`, userID)
+		return err
+	}
+	_, err := r.db.Exec(ctx, `DELETE FROM device_expansions WHERE user_id=$1`, userID)
 	return err
 }
 

@@ -17,10 +17,12 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
@@ -31,6 +33,17 @@ import (
 	"github.com/vpnplatform/internal/repository/postgres"
 	redisrepo "github.com/vpnplatform/internal/repository/redis"
 )
+
+// isSerializationFailure reports whether err is PostgreSQL's
+// serialization_failure (40001), raised when a Serializable transaction
+// detects a write skew. Money-moving transactions retry on this error.
+func isSerializationFailure(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "40001"
+	}
+	return false
+}
 
 // ─── Queue name constants ───────────────────────────────────────────────────
 
@@ -230,6 +243,19 @@ func (w *Worker) requeueOrDead(ctx context.Context, queue, payload string) {
 
 // ─── Payment Processing (continued) ──────────────────────────────────────────
 
+// allowedPaidPlans is the closed set of plans that may legitimately reach the
+// worker for a paid (CONFIRMED) flow. 99years and any future free plan must
+// never be activated through a Platega payment, so we reject them up front
+// instead of letting handleSubscriptionActivate silently grant 99 years of
+// VPN if a malformed payment row sneaks in.
+var allowedPaidPlans = map[domain.SubscriptionPlan]bool{
+	domain.PlanWeek:              true,
+	domain.PlanMonth:             true,
+	domain.PlanThreeMonth:        true,
+	domain.PlanDeviceExpansion:   true,
+	domain.PlanDeviceExpansion2:  true,
+}
+
 func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error {
 	var job PaymentProcessJob
 	if err := json.Unmarshal([]byte(payload), &job); err != nil {
@@ -245,7 +271,7 @@ func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error
 		return fmt.Errorf("invalid user id: %w", err)
 	}
 
-	// Idempotency check
+	// Idempotency check (per status — CONFIRMED and CHARGEBACKED have separate keys).
 	idempKey := fmt.Sprintf("pay:processed:%s:%s", job.TransactionID, job.Status)
 	isNew, err := w.anti.EnsureOnce(ctx, idempKey, 48*time.Hour)
 	if err != nil {
@@ -259,7 +285,7 @@ func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error
 		return nil
 	}
 
-	// Load payment
+	// Load payment — never trust the job amount, always read it from DB.
 	payment, err := w.repo.GetPaymentByID(ctx, txID)
 	if err != nil {
 		return err
@@ -268,74 +294,228 @@ func (w *Worker) handlePaymentProcess(ctx context.Context, payload string) error
 		return fmt.Errorf("payment %s not found", txID)
 	}
 
-	// Begin serializable transaction
-	tx, err := w.repo.BeginTx(ctx)
+	plan := domain.SubscriptionPlan(payment.Plan)
+	status := domain.PaymentStatus(job.Status)
+
+	switch status {
+	case domain.PaymentStatusConfirmed:
+		if !allowedPaidPlans[plan] {
+			w.log.Error("payment confirmed for non-paid plan — refusing to activate",
+				zap.String("tx_id", txID.String()),
+				zap.String("plan", string(plan)))
+			// Mark the row CONFIRMED so the user sees their money landed but
+			// abort activation. Operator will reconcile manually.
+			tx, _ := w.repo.BeginSerializableTx(ctx)
+			if tx != nil {
+				_ = w.repo.UpdatePaymentStatus(ctx, tx, txID, status)
+				_ = tx.Commit(ctx)
+			}
+			return nil
+		}
+		return w.processConfirmedPayment(ctx, txID, userID, payment)
+	case domain.PaymentStatusCanceled, domain.PaymentStatusChargebacked:
+		return w.processRevertedPayment(ctx, txID, userID, payment, status)
+	default:
+		// Unknown status — just persist it and stop.
+		tx, err := w.repo.BeginSerializableTx(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		if err := w.repo.UpdatePaymentStatus(ctx, tx, txID, status); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+}
+
+// processConfirmedPayment is the hot path: payment status -> CONFIRMED,
+// LTV += amount, then enqueue activation + referral reward.
+func (w *Worker) processConfirmedPayment(ctx context.Context, txID, userID uuid.UUID,
+	payment *domain.Payment,
+) error {
+	tx, err := w.repo.BeginSerializableTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	// Update payment status
-	if err := w.repo.UpdatePaymentStatus(ctx, tx, txID, domain.PaymentStatus(job.Status)); err != nil {
+	if err := w.repo.LockUserForUpdate(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := w.repo.UpdatePaymentStatus(ctx, tx, txID, domain.PaymentStatusConfirmed); err != nil {
+		return err
+	}
+	// LTV uses the canonical DB amount, NOT a value from the webhook payload.
+	if err := w.repo.UpdateLTV(ctx, tx, userID, payment.AmountKopecks); err != nil {
+		return fmt.Errorf("update ltv: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 
-	if domain.PaymentStatus(job.Status) == domain.PaymentStatusConfirmed {
-		// Update user LTV
-		if err := w.repo.UpdateLTV(ctx, tx, userID, job.AmountKopecks); err != nil {
-			return fmt.Errorf("update ltv: %w", err)
+	plan := domain.SubscriptionPlan(payment.Plan)
+	if domain.IsDeviceExpansionPlan(plan) {
+		qty := 1
+		if payment.AddonQty > 0 {
+			qty = payment.AddonQty
 		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return err
+		expansionJob := DeviceExpansionActivateJob{
+			UserID:        userID.String(),
+			PaymentID:     txID.String(),
+			Qty:           qty,
+			AmountKopecks: payment.AmountKopecks,
 		}
-
-		if domain.IsDeviceExpansionPlan(domain.SubscriptionPlan(job.Plan)) {
-			// Fetch the payment to get addon_qty.
-			payment, _ := w.repo.GetPaymentByID(ctx, txID)
-			qty := 1
-			if payment != nil && payment.AddonQty > 0 {
-				qty = payment.AddonQty
-			}
-			expansionJob := DeviceExpansionActivateJob{
-				UserID:        userID.String(),
-				PaymentID:     txID.String(),
-				Qty:           qty,
-				AmountKopecks: job.AmountKopecks,
-			}
-			if err := Enqueue(ctx, w.rdb, QueueDeviceExpansionActivate, expansionJob); err != nil {
-				w.log.Error("failed to enqueue device expansion activation", zap.Error(err))
-			}
-		} else {
-			activateJob := SubscriptionActivateJob{
-				UserID:        userID.String(),
-				PaymentID:     txID.String(),
-				Plan:          job.Plan,
-				AmountKopecks: job.AmountKopecks,
-			}
-			if err := Enqueue(ctx, w.rdb, QueueSubscriptionActivate, activateJob); err != nil {
-				w.log.Error("failed to enqueue subscription activation", zap.Error(err))
-			}
+		if err := Enqueue(ctx, w.rdb, QueueDeviceExpansionActivate, expansionJob); err != nil {
+			w.log.Error("failed to enqueue device expansion activation", zap.Error(err))
 		}
+	} else {
+		activateJob := SubscriptionActivateJob{
+			UserID:        userID.String(),
+			PaymentID:     txID.String(),
+			Plan:          string(plan),
+			AmountKopecks: payment.AmountKopecks,
+		}
+		if err := Enqueue(ctx, w.rdb, QueueSubscriptionActivate, activateJob); err != nil {
+			w.log.Error("failed to enqueue subscription activation", zap.Error(err))
+		}
+	}
 
-		// Enqueue referral reward
+	// Referral reward only for non-zero paid plans. A free activation (100%
+	// promo) used to mint 1 YAD here through the totalYAD-floor — that's a
+	// vector for sign-up farming. Skip it cleanly.
+	if payment.AmountKopecks > 0 {
 		rewardJob := ReferralRewardJob{
 			PaymentID:   txID.String(),
 			RefereeID:   userID.String(),
-			PaidKopecks: job.AmountKopecks,
+			PaidKopecks: payment.AmountKopecks,
 		}
 		if err := Enqueue(ctx, w.rdb, QueueReferralReward, rewardJob); err != nil {
 			w.log.Error("failed to enqueue referral reward", zap.Error(err))
 		}
-	} else {
-		if err := tx.Commit(ctx); err != nil {
-			return err
+	}
+
+	w.log.Info("payment confirmed",
+		zap.String("tx_id", txID.String()),
+		zap.Int64("kopecks", payment.AmountKopecks),
+	)
+	return nil
+}
+
+// processRevertedPayment is the chargeback / cancel compensation path. It
+// is best-effort but transactional: every reversal step is idempotent and
+// the function never claims success for a partially reverted payment.
+//
+// Compensations performed:
+//   1. Payment row -> CANCELED / CHARGEBACKED.
+//   2. LTV  -> -amount_kopecks (the additive UpdateLTV accepts negatives).
+//   3. Subscription rolled back by PlanDurationDays(plan) days; if the new
+//      expires_at is in the past, status flips to 'reverted' (a periodic
+//      sweep then disables Remnawave). Expansion plans drop the row outright
+//      and reset Remnawave's HwidDeviceLimit to the base.
+//   4. Referral reward (if any) status -> 'reverted', YAD clawed back from
+//      the referrer up to the available balance.
+//
+// Reverting a payment that was never CONFIRMED is a no-op for the LTV and
+// subscription paths because `payment.WebhookReceivedAt` is nil and the
+// DB-level state is already PENDING/EXPIRED.
+func (w *Worker) processRevertedPayment(ctx context.Context, txID, userID uuid.UUID,
+	payment *domain.Payment, newStatus domain.PaymentStatus,
+) error {
+	wasConfirmed := payment.Status == domain.PaymentStatusConfirmed
+	plan := domain.SubscriptionPlan(payment.Plan)
+
+	tx, err := w.repo.BeginSerializableTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := w.repo.LockUserForUpdate(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := w.repo.UpdatePaymentStatus(ctx, tx, txID, newStatus); err != nil {
+		return err
+	}
+
+	// Only reverse accounting for payments that had been previously confirmed.
+	// PENDING -> CHARGEBACKED has nothing to undo.
+	revertedExpiry := time.Time{}
+	subNowExpired := false
+	if wasConfirmed {
+		// LTV: subtract the same amount we previously added.
+		if err := w.repo.UpdateLTV(ctx, tx, userID, -payment.AmountKopecks); err != nil {
+			return fmt.Errorf("revert ltv: %w", err)
+		}
+
+		// Subscription / expansion reversal.
+		if domain.IsDeviceExpansionPlan(plan) {
+			if err := w.repo.DeleteDeviceExpansionForUser(ctx, tx, userID); err != nil {
+				return fmt.Errorf("revert device expansion: %w", err)
+			}
+		} else {
+			sub, err := w.repo.LockLatestSubscriptionForUpdate(ctx, tx, userID)
+			if err != nil {
+				return fmt.Errorf("lock sub for revert: %w", err)
+			}
+			if sub != nil {
+				days := domain.PlanDurationDays(plan)
+				if days > 0 {
+					exp, expired, err := w.repo.ContractSubscriptionByDuration(ctx, tx, sub.ID, days)
+					if err != nil {
+						return fmt.Errorf("contract sub: %w", err)
+					}
+					revertedExpiry = exp
+					subNowExpired = expired
+				}
+			}
+		}
+
+		// Referral reward clawback (best-effort, clamped at zero balance).
+		if reward, err := w.repo.GetRewardByPaymentID(ctx, txID); err == nil && reward != nil {
+			reverted, err := w.repo.RevertReferralReward(ctx, tx, reward.ID)
+			if err != nil {
+				return fmt.Errorf("revert reward: %w", err)
+			}
+			if reverted && reward.ImmediateYAD > 0 {
+				refID := reward.ID
+				clawed, err := w.repo.ClawbackYAD(ctx, tx, reward.ReferrerID,
+					reward.ImmediateYAD, &refID,
+					fmt.Sprintf("Chargeback clawback for payment %s", txID))
+				if err != nil {
+					return fmt.Errorf("clawback yad: %w", err)
+				}
+				w.log.Info("referral reward clawed back",
+					zap.String("referrer_id", reward.ReferrerID.String()),
+					zap.Int64("requested", reward.ImmediateYAD),
+					zap.Int64("clawed", clawed))
+			}
 		}
 	}
 
-	w.log.Info("payment processed",
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	// Post-commit: turn off VPN access if the chargeback retired the sub.
+	user, _ := w.repo.GetByID(ctx, userID)
+	if subNowExpired && user != nil && user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
+		if err := w.remna.DisableUser(ctx, *user.RemnaUserUUID); err != nil {
+			w.log.Error("disable remnawave user after chargeback",
+				zap.String("user_id", userID.String()), zap.Error(err))
+		}
+		_ = w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, domain.DeviceMaxPerUser)
+	}
+	if wasConfirmed && domain.IsDeviceExpansionPlan(plan) && user != nil &&
+		user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
+		_ = w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, domain.DeviceMaxPerUser)
+	}
+
+	w.log.Info("payment reverted",
 		zap.String("tx_id", txID.String()),
-		zap.String("status", job.Status),
+		zap.String("status", string(newStatus)),
+		zap.Bool("was_confirmed", wasConfirmed),
+		zap.Time("new_expiry", revertedExpiry),
 	)
 	return nil
 }
@@ -368,35 +548,39 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 	if durationDays == 0 {
 		return fmt.Errorf("unknown plan: %s", plan)
 	}
+	if !allowedPaidPlans[plan] {
+		return fmt.Errorf("plan %q is not allowed in paid activation flow", plan)
+	}
 
-	// 1-user-1-sub model: find the latest subscription regardless of status.
-	// This ensures renewal after expiry extends the existing row instead of
-	// creating a duplicate, which would leave orphaned records.
-	existingSub, err := w.repo.GetLatestSubscription(ctx, userID)
-	if err != nil {
+	// Compute the post-update expiry inside a Serializable transaction with
+	// the user row + latest sub row locked. The relative-update SQL prevents
+	// two concurrent CONFIRMED webhooks from both reading the same
+	// expires_at and both writing the same target — that race used to
+	// silently lose one extension.
+	var newExpiry time.Time
+	for attempt := 0; attempt < 3; attempt++ {
+		var err error
+		newExpiry, err = w.extendOrCreateSub(ctx, userID, paymentID, plan, durationDays, job.AmountKopecks, now)
+		if err == nil {
+			break
+		}
+		if isSerializationFailure(err) && attempt < 2 {
+			w.log.Info("subscription activate serialisation retry",
+				zap.String("user_id", userID.String()), zap.Int("attempt", attempt))
+			continue
+		}
 		return err
 	}
 
-	var newExpiry time.Time
-	if existingSub != nil && existingSub.ExpiresAt.After(now) {
-		// Active sub: extend from current expiry
-		newExpiry = existingSub.ExpiresAt.Add(time.Duration(durationDays) * 24 * time.Hour)
-	} else {
-		// No sub or expired: start from now
-		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
-	}
-
-	// Create or update Remnawave user
+	// Post-commit Remnawave sync. Failure here is recoverable manually; the
+	// DB record already exists so the user keeps their paid time.
 	var remnaUUID string
 	if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
 		remnaName := user.RemnaUsername()
 		remnaUser, err := w.remna.CreateUser(ctx, remnaName, newExpiry)
 		if err != nil {
-			// Fallback: if the user already exists in Remnawave (e.g. remna_user_uuid
-			// was lost from DB), look them up by username and recover.
 			existing, lookupErr := w.remna.GetUserByUsername(ctx, remnaName)
 			if lookupErr != nil || existing == nil {
-				// Legacy fallback: try UUID-based username from older registrations.
 				existing, lookupErr = w.remna.GetUserByUsername(ctx, userID.String())
 			}
 			if lookupErr != nil || existing == nil {
@@ -411,7 +595,6 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 		if err := w.repo.UpdateRemnaUUID(ctx, userID, remnaUUID); err != nil {
 			w.log.Error("update remna uuid", zap.Error(err))
 		}
-		// Ensure the user is enabled and expiry is correct.
 		_ = w.remna.UpdateExpiry(ctx, remnaUUID, newExpiry)
 		_ = w.remna.EnableUser(ctx, remnaUUID)
 	} else {
@@ -419,51 +602,8 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 		if err := w.remna.UpdateExpiry(ctx, remnaUUID, newExpiry); err != nil {
 			return fmt.Errorf("update remna expiry: %w", err)
 		}
-		// Re-enable user in case they were disabled
 		if err := w.remna.EnableUser(ctx, remnaUUID); err != nil {
 			w.log.Warn("enable remna user failed", zap.Error(err))
-		}
-	}
-
-	pid := paymentID
-	if existingSub != nil {
-		// Extend in place (active or expired) — 1-user-1-sub model.
-		tx, err := w.repo.BeginTx(ctx)
-		if err != nil {
-			return fmt.Errorf("begin extend tx: %w", err)
-		}
-		defer tx.Rollback(ctx)
-		if err := w.repo.ExtendSubscription(ctx, tx, existingSub.ID, newExpiry, plan); err != nil {
-			return err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit extend tx: %w", err)
-		}
-	} else {
-		// First-ever subscription for this user.
-		sub := &domain.Subscription{
-			ID:           uuid.New(),
-			UserID:       userID,
-			Plan:         plan,
-			Status:       domain.SubStatusActive,
-			StartsAt:     now,
-			ExpiresAt:    newExpiry,
-			RemnaSubUUID: &remnaUUID,
-			PaidKopecks:  job.AmountKopecks,
-			PaymentID:    &pid,
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		}
-		tx, err := w.repo.BeginTx(ctx)
-		if err != nil {
-			return fmt.Errorf("begin create tx: %w", err)
-		}
-		defer tx.Rollback(ctx)
-		if err := w.repo.CreateSubscription(ctx, tx, sub); err != nil {
-			return err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit create tx: %w", err)
 		}
 	}
 
@@ -509,6 +649,58 @@ func (w *Worker) handleSubscriptionActivate(ctx context.Context, payload string)
 	return nil
 }
 
+// extendOrCreateSub is the per-attempt body of handleSubscriptionActivate.
+// Inside a Serializable transaction it locks the user row, then either
+// extends the latest subscription with relative SQL or creates a new one.
+// Returns the post-update expires_at.
+func (w *Worker) extendOrCreateSub(ctx context.Context, userID, paymentID uuid.UUID,
+	plan domain.SubscriptionPlan, durationDays int, paidKopecks int64, now time.Time,
+) (time.Time, error) {
+	tx, err := w.repo.BeginSerializableTx(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := w.repo.LockUserForUpdate(ctx, tx, userID); err != nil {
+		return time.Time{}, err
+	}
+	existingSub, err := w.repo.LockLatestSubscriptionForUpdate(ctx, tx, userID)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	var newExpiry time.Time
+	if existingSub != nil {
+		newExpiry, err = w.repo.ExtendSubscriptionByDuration(ctx, tx, existingSub.ID, durationDays, plan)
+		if err != nil {
+			return time.Time{}, err
+		}
+	} else {
+		pid := paymentID
+		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
+		sub := &domain.Subscription{
+			ID:          uuid.New(),
+			UserID:      userID,
+			Plan:        plan,
+			Status:      domain.SubStatusActive,
+			StartsAt:    now,
+			ExpiresAt:   newExpiry,
+			PaidKopecks: paidKopecks,
+			PaymentID:   &pid,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if err := w.repo.CreateSubscription(ctx, tx, sub); err != nil {
+			return time.Time{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return time.Time{}, err
+	}
+	return newExpiry, nil
+}
+
 // ─── Referral Reward ──────────────────────────────────────────────────────────
 // LTV = total kopecks paid by the referee
 // Reward = 15% of payment amount in YAD  (1 YAD = 2.5 ₽)
@@ -552,14 +744,23 @@ func (w *Worker) handleReferralReward(ctx context.Context, payload string) error
 		return nil
 	}
 
-	// Calculate reward: 15% of payment in rubles → convert to YAD
-	// 1 YAD = 2.5 ₽ = 250 kopecks
-	const yadPerKopeck = 1.0 / 250.0
-	const referralPct = 0.15
-	rewardKopecks := int64(float64(job.PaidKopecks) * referralPct)
-	totalYAD := int64(float64(rewardKopecks) * yadPerKopeck)
-	if totalYAD == 0 {
-		totalYAD = 1 // minimum 1 YAD
+	// Free activations (100% promo) have no money behind them — never mint
+	// a referral reward in that case. The previous "min 1 YAD" floor was a
+	// sign-up farming vector when combined with multi-account abuse.
+	if job.PaidKopecks <= 0 {
+		return nil
+	}
+
+	// Calculate reward in pure integer arithmetic: 15% of payment in kopecks,
+	// then 1 YAD per 250 kopecks. Floats here are unjustified and accumulate
+	// rounding error; the integer form is exact and reproducible across
+	// platforms.
+	rewardKopecks := job.PaidKopecks * 15 / 100
+	totalYAD := rewardKopecks / 250
+	if totalYAD <= 0 {
+		// Payment was real but smaller than 1 YAD's worth (≤ 1666 kopecks).
+		// Round up to 1 YAD so micro-payments still produce a token reward.
+		totalYAD = 1
 	}
 
 	// Apply risk-based adjustment
@@ -825,20 +1026,35 @@ func (w *Worker) handleDeviceExpansionActivate(ctx context.Context, payload stri
 		CreatedAt:    time.Now(),
 	}
 
-	tx, err := w.repo.BeginTx(ctx)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+	// Serializable + user lock: even though the SETNX idempotency key above
+	// dedupes a single payment, two distinct paid expansions for the same
+	// user must serialise on the user lock so the underlying UPSERT into
+	// device_expansions(user_id) keeps both writes coherent.
+	commit := func() error {
+		tx, err := w.repo.BeginSerializableTx(ctx)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback(ctx)
+		if err := w.repo.LockUserForUpdate(ctx, tx, userID); err != nil {
+			return err
+		}
+		if err := w.repo.CreateDeviceExpansion(ctx, tx, expansion); err != nil {
+			return fmt.Errorf("create device expansion: %w", err)
+		}
+		if err := w.repo.IncrementDeviceExpansionCount(ctx, tx, userID); err != nil {
+			return fmt.Errorf("increment expansion count: %w", err)
+		}
+		return tx.Commit(ctx)
 	}
-	defer tx.Rollback(ctx)
-
-	if err := w.repo.CreateDeviceExpansion(ctx, tx, expansion); err != nil {
-		return fmt.Errorf("create device expansion: %w", err)
-	}
-	if err := w.repo.IncrementDeviceExpansionCount(ctx, tx, userID); err != nil {
-		return fmt.Errorf("increment expansion count: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := commit(); err != nil {
+			if isSerializationFailure(err) && attempt < 2 {
+				continue
+			}
+			return err
+		}
+		break
 	}
 
 	// Post-commit: update Remnawave device limit.
