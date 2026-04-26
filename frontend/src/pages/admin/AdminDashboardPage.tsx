@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { NotificationAlert } from '@/components/NotificationAlert'
-import { formatRubles, formatYAD } from '@/utils/formatters'
+import { formatRubles } from '@/utils/formatters'
 
 const PLAN_OPTIONS = [
   { value: '1week',   label: '1 неделя'  },
@@ -109,12 +109,6 @@ export function AdminDashboardPage() {
           label="Общая выручка"
           value={formatRubles(data?.total_revenue_kopecks ?? 0)}
           icon={<Icon name="coins" size={28} />}
-        />
-        <StatCard
-          label="Ожидающие начисления"
-          value={formatYAD(data?.pending_rewards ?? 0)}
-          sub="Отложенные реферальные начисления"
-          icon={<Icon name="tag" size={28} />}
         />
         <StatCard
           label="Открытые тикеты"

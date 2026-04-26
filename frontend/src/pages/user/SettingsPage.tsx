@@ -88,6 +88,15 @@ function TelegramSection() {
           </p>
           {showUnlinkForm ? (
             <div className="space-y-3">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-700/40 dark:bg-amber-500/10">
+                <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                  ⚠️ Что произойдёт после отвязки
+                </p>
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+                  Ваш баланс ЯД, подписки, устройства и история останутся на этом аккаунте.
+                  Telegram-аккаунт в боте будет сброшен — при следующем <code className="font-mono">/start</code> вы получите чистый аккаунт без подписок и баланса.
+                </p>
+              </div>
               <Button
                 variant="secondary"
                 onClick={() => { setFlash(null); requestUnlinkCodeMutation.mutate() }}
