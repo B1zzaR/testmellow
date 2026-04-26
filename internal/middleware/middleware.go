@@ -115,10 +115,22 @@ func AdminDBCheck(isAdminFn func(ctx context.Context, id uuid.UUID) (bool, error
 	}
 }
 
-// CurrentUserID extracts the user ID from context (panics if Auth middleware not used)
+// CurrentUserID extracts the user ID from context. It is only safe to call
+// from a handler that runs after Auth middleware. If Auth is missing (route
+// misconfig), this returns the nil UUID and aborts the request with 401 to
+// prevent the handler from silently querying user_id = '0000…' and leaking
+// data when filters happen to match an absent user.
 func CurrentUserID(c *gin.Context) uuid.UUID {
-	val, _ := c.Get(ContextUserID)
-	id, _ := val.(uuid.UUID)
+	val, ok := c.Get(ContextUserID)
+	if !ok {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "необходима авторизация"})
+		return uuid.UUID{}
+	}
+	id, ok := val.(uuid.UUID)
+	if !ok || id == (uuid.UUID{}) {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "необходима авторизация"})
+		return uuid.UUID{}
+	}
 	return id
 }
 
@@ -164,7 +176,9 @@ func SecurityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
-		c.Header("X-XSS-Protection", "1; mode=block")
+		// X-XSS-Protection removed: deprecated header that browsers either
+		// ignore (Firefox, Safari, modern Chrome) or implemented with their
+		// own bugs. CSP supersedes it.
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Content-Security-Policy", "default-src 'self'")
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()")
@@ -191,15 +205,24 @@ func Recovery(log *zap.Logger) gin.HandlerFunc {
 
 // ─── CORS Middleware ──────────────────────────────────────────────────────────
 
-// CORS allows requests from the configured allowed origins.
-// In production pass the exact frontend origin (e.g. "https://yourdomain.com").
-// Pass "*" only for local development.
+// CORS allows requests from the configured allow-list of origins. Wildcard
+// '*' is special: it is permitted only in dev (where the entire origin set
+// is literally ["*"]) and in that mode credentials are NOT sent — that's the
+// only configuration the spec accepts.
+//
+// In production, the previous "echo any Origin and set Allow-Credentials:
+// true" path was effectively wildcard-with-credentials and was a textbook
+// cross-origin data exfiltration vector. config.Load() now rejects '*' in
+// production, so reaching this branch with credentials means dev only.
 func CORS(allowedOrigins []string) gin.HandlerFunc {
 	originSet := make(map[string]struct{}, len(allowedOrigins))
 	for _, o := range allowedOrigins {
-		originSet[o] = struct{}{}
+		o = strings.TrimSpace(o)
+		if o != "" && o != "*" {
+			originSet[o] = struct{}{}
+		}
 	}
-	wildcardAll := len(allowedOrigins) == 1 && allowedOrigins[0] == "*"
+	devWildcard := len(allowedOrigins) == 1 && strings.TrimSpace(allowedOrigins[0]) == "*"
 
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
@@ -208,22 +231,27 @@ func CORS(allowedOrigins []string) gin.HandlerFunc {
 			return
 		}
 
-		allowed := wildcardAll
-		if !allowed {
-			_, allowed = originSet[origin]
-		}
+		_, allowed := originSet[origin]
 
-		if allowed {
+		switch {
+		case allowed:
+			// Whitelisted: echo back the (validated) origin and allow credentials.
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Request-Id")
 			c.Header("Access-Control-Max-Age", "86400")
+		case devWildcard:
+			// Dev-only: send the literal '*' WITHOUT credentials (spec-compliant).
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Request-Id")
+			c.Header("Access-Control-Max-Age", "86400")
 		}
 
 		if c.Request.Method == http.MethodOptions {
-			if allowed {
+			if allowed || devWildcard {
 				c.AbortWithStatus(http.StatusNoContent)
 			} else {
 				c.AbortWithStatus(http.StatusForbidden)

@@ -73,8 +73,11 @@ openssl rand -hex 64
 | `TELEGRAM_ADMIN_ID` | Ваш числовой Telegram user ID (используйте [@userinfobot](https://t.me/userinfobot)) |
 | `TELEGRAM_BOT_USERNAME` | Имя вашего бота без `@` |
 | `WEBAPP_URL` | `https://yourdomain.com` |
-| `ADMIN_LOGIN` | Имя пользователя, которое получает права администратора при первом входе |
-| `ALLOWED_ORIGINS` | `https://yourdomain.com` — никогда не используйте `*` в продакшене |
+| `ADMIN_BOOTSTRAP_TOKEN` | Одноразовый токен (≥24 символа, `openssl rand -hex 32`). Первый зарегистрированный пользователь, передавший этот токен в поле `bootstrap_token`, становится админом. После создания первого админа очистите переменную; следующие админы — через `UPDATE users SET is_admin=TRUE WHERE username='foo'`. Заменяет старый небезопасный `ADMIN_LOGIN`. |
+| `JWT_ACCESS_TTL_HOURS` | Срок жизни access-токена в часах. Допустимый диапазон 1..24, по умолчанию 1. |
+| `ALLOWED_ORIGINS` | `https://yourdomain.com` — сервер откажется стартовать с `*` в продакшене (CORS-уязвимость). |
+| `ALLOWED_RETURN_HOSTS` | Хосты (через запятую), допустимые в `return_url` платежей. Пустое значение = `{DOMAIN, www.DOMAIN}`. Закрывает open-redirect через ссылку Platega. |
+| `PLATEGA_SECRET_PREV` | Предыдущий секрет Platega на время ротации (24–48 ч). Очистите после миграции. |
 
 > **Предупреждение о PLATEGA_CALLBACK_URL:** Путь должен быть `/webhooks/platega` (не `/api/webhooks/platega`). Caddy направляет `/webhooks/*` напрямую к Go-бэкенду, который регистрирует хэндлер именно по пути `/webhooks/platega`. Добавление префикса `/api/` приведёт к 404 на каждый входящий платёж и все подписки зависнут в ожидании.
 

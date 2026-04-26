@@ -3,6 +3,7 @@ package httphandler
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -67,6 +68,11 @@ type registerRequest struct {
 	Password          string `json:"password" binding:"required,min=8"`
 	ReferralCode      string `json:"referral_code"`
 	DeviceFingerprint string `json:"device_fingerprint"`
+	// BootstrapToken is the one-shot mechanism for creating the first admin.
+	// If it matches ADMIN_BOOTSTRAP_TOKEN AND no admin exists yet, the new
+	// user gets is_admin = true. After the first admin is created, this is
+	// a no-op; the env value should then be cleared.
+	BootstrapToken string `json:"bootstrap_token"`
 }
 
 // POST /api/auth/register
@@ -87,6 +93,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		ReferralCode:      req.ReferralCode,
 		DeviceFingerprint: req.DeviceFingerprint,
 		IP:                c.ClientIP(),
+		BootstrapToken:    req.BootstrapToken,
 	})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -206,34 +213,63 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 // POST /api/auth/refresh
-// Reads the refresh token from the HttpOnly cookie (H-7) or JSON body (backward compat).
-// Validates the JTI against the revocation allowlist (H-8) and rotates both tokens.
+// Reads the refresh token from the HttpOnly cookie ONLY — body fallback was
+// removed (defence in depth: keeps the secret out of access-log surfaces).
+// Validates the JTI against the revocation allowlist (H-8), checks the
+// password-version stamp (so a refresh token issued before a password
+// change cannot be used), and rotates both tokens. On replay (JTI valid by
+// signature but already consumed) the entire refresh-family is revoked —
+// the canonical "stolen-token detected" response.
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	// Accept token from cookie first, then fall back to JSON body.
-	var refreshTokenStr string
-	if cookie, err := c.Cookie("refresh_token"); err == nil && cookie != "" {
-		refreshTokenStr = cookie
-	} else {
-		var req struct {
-			RefreshToken string `json:"refresh_token"`
-		}
-		_ = c.ShouldBindJSON(&req)
-		refreshTokenStr = req.RefreshToken
-	}
-	if refreshTokenStr == "" {
+	cookie, err := c.Cookie("refresh_token")
+	if err != nil || cookie == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
 		return
 	}
 
-	claims, err := h.jwtMgr.ParseRefresh(refreshTokenStr)
+	claims, err := h.jwtMgr.ParseRefresh(cookie)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
 		return
 	}
 
-	// H-8: validate JTI against the allowlist and delete it atomically (one-use).
+	// Token issued before the user's last password change is invalid even if
+	// its JTI was somehow still in Redis (e.g. password change failed to
+	// finish the cleanup). The Auth middleware does the same check for
+	// access tokens; refresh now mirrors it.
+	if claims.IssuedAt != nil {
+		if err := redisrepo.CheckPasswordVersion(c.Request.Context(), h.rdb,
+			claims.UserID.String(), claims.IssuedAt.Time); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
+			return
+		}
+	}
+
+	// Atomic single-use: GET+DEL the JTI from the allowlist.
 	jti := claims.ID
-	if _, err := redisrepo.ValidateAndRevokeRefreshToken(c.Request.Context(), h.rdb, jti); err != nil {
+	storedUID, err := redisrepo.ValidateAndRevokeRefreshToken(c.Request.Context(), h.rdb, jti)
+	if errors.Is(err, redisrepo.ErrRefreshNotFound) {
+		// Signature-valid but JTI absent → either expired naturally or
+		// REPLAY of an already-rotated token. Conservatively assume theft:
+		// nuke the entire refresh family + bump password version so any
+		// access tokens already in the wild stop working too.
+		_ = redisrepo.RevokeAllUserRefreshTokens(c.Request.Context(), h.rdb, claims.UserID.String())
+		_ = redisrepo.SetPasswordVersion(c.Request.Context(), h.rdb, claims.UserID.String(), time.Now())
+		h.log.Warn("refresh token replay detected — revoking all sessions",
+			zap.String("user_id", claims.UserID.String()),
+			zap.String("ip", c.ClientIP()))
+		clearAuthCookies(c)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия скомпрометирована, войдите снова"})
+		return
+	}
+	if err != nil {
+		h.log.Warn("refresh token validation error", zap.Error(err))
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
+		return
+	}
+	// Defense-in-depth: ensure the JTI's stored userID matches the JWT claim.
+	if storedUID != "" && storedUID != claims.UserID.String() {
+		_ = redisrepo.RevokeAllUserRefreshTokens(c.Request.Context(), h.rdb, claims.UserID.String())
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "сессия устарела, войдите снова"})
 		return
 	}
@@ -244,25 +280,28 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	token, err := h.jwtMgr.Generate(claims.UserID, claims.IsAdmin)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
-		return
-	}
-	newRefresh, newJTI, err := h.jwtMgr.GenerateRefresh(claims.UserID, claims.IsAdmin)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
-		return
+	// Re-load is_admin from DB so a demoted admin can't ride a refresh
+	// token's stale `adm` claim back to admin privileges.
+	isAdmin := claims.IsAdmin
+	if u, uErr := h.repo.GetByID(c.Request.Context(), claims.UserID); uErr == nil && u != nil {
+		isAdmin = u.IsAdmin
 	}
 
-	// Register the new JTI in the allowlist.
+	token, err := h.jwtMgr.Generate(claims.UserID, isAdmin)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
+	newRefresh, newJTI, err := h.jwtMgr.GenerateRefresh(claims.UserID, isAdmin)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка сервера, попробуйте позже"})
+		return
+	}
 	if err := redisrepo.RegisterRefreshToken(c.Request.Context(), h.rdb, newJTI, claims.UserID.String(), h.jwtMgr.RefreshTTL()); err != nil {
 		h.log.Warn("register new refresh token failed", zap.Error(err))
 	}
 
-	// H-7: deliver new tokens via HttpOnly cookies.
 	setAuthCookies(c, token, newRefresh, h.jwtMgr.AccessTTL(), h.jwtMgr.RefreshTTL())
-
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
@@ -488,10 +527,17 @@ func (h *ProfileHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Invalidate all tokens issued before this moment so an attacker who obtained
-	// the old password (or a leaked token) cannot continue using the session.
+	// Invalidate all tokens issued before this moment so an attacker who
+	// obtained the old password (or a leaked token) cannot continue using
+	// the session. SetPasswordVersion handles access tokens via the
+	// IssuedAt comparison; RevokeAllUserRefreshTokens nukes refresh JTIs in
+	// Redis so /api/auth/refresh can't be used to mint fresh access tokens
+	// from a stolen refresh cookie.
 	if vErr := redisrepo.SetPasswordVersion(c.Request.Context(), h.rdb, userID.String(), time.Now()); vErr != nil {
 		h.log.Warn("set password version failed", zap.Error(vErr))
+	}
+	if rErr := redisrepo.RevokeAllUserRefreshTokens(c.Request.Context(), h.rdb, userID.String()); rErr != nil {
+		h.log.Warn("revoke all refresh tokens failed", zap.Error(rErr))
 	}
 
 	// Activity log (best-effort)
@@ -650,7 +696,15 @@ func (h *ProfileHandler) GenerateUnlinkCode(c *gin.Context) {
 // GET /api/profile/activity?limit=50
 func (h *ProfileHandler) Activity(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
+	// Clamp limit to a sane window so a tiny number of clients can't load
+	// the entire activity table into memory + over the wire.
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	if limit < 1 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
 	items, err := h.repo.ListAccountActivity(c.Request.Context(), userID, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "не удалось загрузить активность"})

@@ -4,6 +4,7 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -51,6 +52,13 @@ func isSerializationFailure(err error) bool {
 	return false
 }
 
+// subtleConstantEq is a constant-time string comparator used for
+// authenticating tokens (admin bootstrap token, etc.) where a normal `==`
+// would leak the matching prefix length to a timing attacker.
+func subtleConstantEq(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 // sanitizeReturnURL filters the user-supplied `return_url` against the
 // configured allow-list of hosts before forwarding it to Platega. Without
 // this an attacker could initiate a real payment with `return_url=evil.com`,
@@ -78,16 +86,18 @@ func sanitizeReturnURL(raw string, allowedHosts []string, fallback string) strin
 // ─── Auth Service ─────────────────────────────────────────────────────────────
 
 type AuthService struct {
-	repo       *postgres.UserRepo
-	anti       *anticheat.Engine
-	rdb        *redis.Client
-	log        *zap.Logger
-	adminLogin string // login that is auto-granted is_admin
+	repo                *postgres.UserRepo
+	anti                *anticheat.Engine
+	rdb                 *redis.Client
+	log                 *zap.Logger
+	adminBootstrapToken string // env-only; promotes first registrant to admin if no admin exists
 }
 
-func NewAuthService(repo *postgres.UserRepo, anti *anticheat.Engine, rdb *redis.Client, log *zap.Logger, adminLogin string) *AuthService {
-	// Normalise once at construction so comparisons are always exact (C-5).
-	return &AuthService{repo: repo, anti: anti, rdb: rdb, log: log, adminLogin: strings.ToLower(strings.TrimSpace(adminLogin))}
+func NewAuthService(repo *postgres.UserRepo, anti *anticheat.Engine, rdb *redis.Client, log *zap.Logger, adminBootstrapToken string) *AuthService {
+	return &AuthService{
+		repo: repo, anti: anti, rdb: rdb, log: log,
+		adminBootstrapToken: strings.TrimSpace(adminBootstrapToken),
+	}
 }
 
 type RegisterInput struct {
@@ -96,6 +106,11 @@ type RegisterInput struct {
 	ReferralCode      string // optional
 	DeviceFingerprint string
 	IP                string
+	// BootstrapToken: when non-empty AND it matches the env-configured
+	// ADMIN_BOOTSTRAP_TOKEN AND no admin yet exists, the new user is
+	// promoted to is_admin=true. After the first admin is created the
+	// token has no effect; it MUST be cleared from the env afterwards.
+	BootstrapToken string
 }
 
 func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domain.User, error) {
@@ -156,6 +171,19 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 		return nil, err
 	}
 
+	// Bootstrap-admin: only promotes when (a) the request supplied the
+	// expected token, (b) the env-side token is configured, (c) no admin
+	// exists yet. Constant-time string compare so the token can't be
+	// guessed by timing the response.
+	isFirstAdmin := false
+	if s.adminBootstrapToken != "" && input.BootstrapToken != "" &&
+		subtleConstantEq(input.BootstrapToken, s.adminBootstrapToken) {
+		count, _ := s.repo.CountAdmins(ctx)
+		if count == 0 {
+			isFirstAdmin = true
+		}
+	}
+
 	user := &domain.User{
 		ID:                newUserID,
 		Username:          &username,
@@ -163,7 +191,7 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*domai
 		YADBalance:        0,
 		ReferralCode:      refCode,
 		RiskScore:         riskDelta,
-		IsAdmin:           s.adminLogin != "" && strings.ToLower(username) == s.adminLogin,
+		IsAdmin:           isFirstAdmin,
 		DeviceFingerprint: &input.DeviceFingerprint,
 		LastKnownIP: func() *string {
 			if ipOK && input.IP != "" {
@@ -238,11 +266,15 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User
 	if err != nil {
 		return nil, err
 	}
-	if user == nil || user.PasswordHash == nil {
-		s.anti.RecordFailedLogin(ctx, input.IP+":"+username)
-		return nil, errors.New("неверный логин или пароль")
+	// Constant-time path: always run bcrypt, even on user-not-found, so the
+	// response time can't be used to enumerate valid usernames. The dummy
+	// hash inside VerifyConstantTime burns the same CPU as a real verify.
+	hash := ""
+	if user != nil && user.PasswordHash != nil {
+		hash = *user.PasswordHash
 	}
-	if !password.Verify(*user.PasswordHash, input.Password) {
+	ok := password.VerifyConstantTime(hash, input.Password)
+	if user == nil || !ok {
 		s.anti.RecordFailedLogin(ctx, input.IP+":"+username)
 		return nil, errors.New("неверный логин или пароль")
 	}
@@ -251,15 +283,6 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User
 	}
 
 	s.anti.ResetLoginAttempts(ctx, input.IP+":"+username)
-
-	// Auto-promote to admin if this login is configured as admin and isn't yet (C-5).
-	if s.adminLogin != "" && strings.ToLower(username) == s.adminLogin && !user.IsAdmin {
-		if err := s.repo.SetAdmin(ctx, user.ID, true); err != nil {
-			s.log.Warn("failed to auto-promote admin", zap.Error(err))
-		} else {
-			user.IsAdmin = true
-		}
-	}
 
 	// Detect new IP before we overwrite last_known_ip.
 	prevIP := ""
@@ -1449,12 +1472,40 @@ func (s *DeviceService) ListDevices(ctx context.Context, userID uuid.UUID) ([]*d
 }
 
 // DisconnectDevice removes a device via the Remnawave HWID API.
+//
+// IDOR defence: we don't trust Remnawave to enforce that `hwidID` belongs
+// to `remnaUUID` — that's their concern, not ours. Locally we list the
+// user's HWID-tracked devices and verify membership before forwarding the
+// delete. Without this, anyone who learned an arbitrary hwid (logs, leaked
+// support session, etc.) could disconnect another user's device.
 func (s *DeviceService) DisconnectDevice(ctx context.Context, userID uuid.UUID, hwidID string) error {
+	if hwidID == "" {
+		return errors.New("устройство не найдено")
+	}
 	user, err := s.users.GetByID(ctx, userID)
 	if err != nil {
 		return err
 	}
 	if user == nil || user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
+		return errors.New("устройство не найдено")
+	}
+
+	devs, err := s.remna.GetUserHwidDevices(ctx, *user.RemnaUserUUID)
+	if err != nil {
+		return fmt.Errorf("не удалось загрузить список устройств: %w", err)
+	}
+	owns := false
+	for _, d := range devs.Devices {
+		if d.Hwid == hwidID {
+			owns = true
+			break
+		}
+	}
+	if !owns {
+		s.log.Warn("device disconnect attempt for non-owned hwid",
+			zap.String("user_id", userID.String()),
+			zap.String("hwid", hwidID))
+		// Same opaque error as 'not found' so we don't leak existence of foreign hwids.
 		return errors.New("устройство не найдено")
 	}
 

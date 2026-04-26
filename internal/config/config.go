@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -16,11 +17,20 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Port           string
-	Env            string
-	WebhookPath    string // e.g. /webhooks/platega
-	AdminLogin     string // login (username) that is auto-granted admin on register/login
-	AllowedOrigins string // comma-separated allowed CORS origins
+	Port        string
+	Env         string
+	WebhookPath string // e.g. /webhooks/platega
+	// AdminBootstrapToken: when a user registers and supplies a `bootstrap_token`
+	// that matches this value AND no admin currently exists in the database,
+	// the new user is granted is_admin = true. Set during initial deploy and
+	// rotated/cleared after the first admin is created. Empty disables the
+	// mechanism entirely (use SQL to promote subsequent admins).
+	//
+	// This replaces the prior ADMIN_LOGIN auto-promote, which was a bootstrap
+	// race vector (any first registration of a publicly-known username became
+	// admin).
+	AdminBootstrapToken string
+	AllowedOrigins      string // comma-separated allowed CORS origins
 	// AllowedReturnHosts limits which Host values are accepted from the client
 	// in `return_url` / `failed_url` fields when initiating Platega payments.
 	// Comma-separated, no scheme. Empty falls back to {DOMAIN, www.DOMAIN}.
@@ -80,14 +90,43 @@ func Load() *Config {
 		panic("JWT_SECRET env var must be set to a strong random secret (minimum 32 characters)")
 	}
 
+	appEnv := env("APP_ENV", "production")
+	allowedOrigins := env("ALLOWED_ORIGINS", "*")
+
+	// Refuse to start a production server with permissive CORS. Echoing the
+	// request Origin and setting Access-Control-Allow-Credentials = true is
+	// effectively wildcard-with-credentials, a textbook cross-origin data
+	// exfiltration setup. In dev, '*' is fine.
+	if appEnv == "production" {
+		if strings.TrimSpace(allowedOrigins) == "" || strings.Contains(allowedOrigins, "*") {
+			panic("ALLOWED_ORIGINS must list explicit origins in production (no '*')")
+		}
+	}
+
+	// Clamp access-token TTL to a sane range. The previous default of 24 h
+	// kept a stolen access token alive for an entire day; with refresh
+	// rotation, 1 h is plenty.
+	accessTTLHours := envInt("JWT_ACCESS_TTL_HOURS", 1)
+	if accessTTLHours < 1 {
+		accessTTLHours = 1
+	}
+	if accessTTLHours > 24 {
+		accessTTLHours = 24
+	}
+
+	bootstrapToken := env("ADMIN_BOOTSTRAP_TOKEN", "")
+	if bootstrapToken != "" && len(bootstrapToken) < 24 {
+		panic("ADMIN_BOOTSTRAP_TOKEN must be at least 24 characters when set")
+	}
+
 	return &Config{
 		App: AppConfig{
-			Port:               env("APP_PORT", "8080"),
-			Env:                env("APP_ENV", "production"),
-			WebhookPath:        env("PLATEGA_WEBHOOK_PATH", "/webhooks/platega"),
-			AdminLogin:         env("ADMIN_LOGIN", ""),
-			AllowedOrigins:     env("ALLOWED_ORIGINS", "*"),
-			AllowedReturnHosts: env("ALLOWED_RETURN_HOSTS", ""),
+			Port:                env("APP_PORT", "8080"),
+			Env:                 appEnv,
+			WebhookPath:         env("PLATEGA_WEBHOOK_PATH", "/webhooks/platega"),
+			AdminBootstrapToken: bootstrapToken,
+			AllowedOrigins:      allowedOrigins,
+			AllowedReturnHosts:  env("ALLOWED_RETURN_HOSTS", ""),
 		},
 		DB: DBConfig{
 			DSN:          env("DATABASE_DSN", "postgres://vpn:vpn@postgres:5432/vpnplatform?sslmode=prefer"),
@@ -101,7 +140,7 @@ func Load() *Config {
 		},
 		JWT: JWTConfig{
 			Secret:         jwtSecret,
-			AccessTTLHours: envInt("JWT_ACCESS_TTL_HOURS", 24),
+			AccessTTLHours: accessTTLHours,
 			RefreshTTLDays: envInt("JWT_REFRESH_TTL_DAYS", 30),
 		},
 		Platega: PlategalConfig{
