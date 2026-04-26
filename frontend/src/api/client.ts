@@ -1,5 +1,6 @@
 import axios, { AxiosError, type AxiosRequestConfig, type AxiosResponse } from 'axios'
 import type { ApiError } from './types'
+import { useAuthStore } from '@/store/authStore'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
@@ -53,17 +54,21 @@ apiClient.interceptors.response.use(
         // New cookies are set by the server — just retry the original request.
         return apiClient(config)
       } catch {
-        // Refresh failed — redirect to login (page reload clears all JS state).
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login'
-        }
+        // Refresh failed — drop the in-memory auth state. The route guards
+        // will re-render protected pages as 404 (PrivateRoute / AdminRoute).
+        //
+        // We deliberately do NOT do `window.location.href = '/login'` here.
+        // That hard reload was the cause of an infinite-reload loop on
+        // mobile: localStorage still held a "logged-in" user → after reload
+        // PublicRoute redirected /login → /dashboard → fetch 401 → refresh
+        // fail → reload → loop, with no way to break out.
+        // Clearing the store wipes the persisted user too, so subsequent
+        // route renders behave as "logged out" cleanly.
+        useAuthStore.getState().clearAuth()
       }
-    }
-
-    if (error.response?.status === 401) {
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
-      }
+    } else if (error.response?.status === 401) {
+      // Already attempted refresh (or no config to retry on) — same cleanup.
+      useAuthStore.getState().clearAuth()
     }
 
     const raw =
