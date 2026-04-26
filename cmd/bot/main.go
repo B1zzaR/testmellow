@@ -58,7 +58,6 @@ func main() {
 
 	botCfg := bot.BotConfig{
 		Token:            cfg.Telegram.Token,
-		AdminID:          cfg.Telegram.AdminID,
 		WebAppURL:        cfg.Telegram.WebAppURL,
 		PaymentReturnURL: cfg.Telegram.WebAppURL,
 	}

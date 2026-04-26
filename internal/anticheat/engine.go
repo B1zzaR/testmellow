@@ -19,20 +19,24 @@ import (
 
 // Configurable limits
 const (
-	MaxDailyYADCredit    = 5000 // max YAD a user can receive per day
-	MaxDailyReferrals    = 10   // max new referrals per referrer per day
-	MaxLoginAttempts     = 10   // brute-force threshold (15 min window)
-	MaxPayoutsPerDay     = 20   // max reward payouts per user per day
-	RiskScoreBlock       = 80   // block rewards above this score
-	RiskScoreWarn        = 50   // reduce bonuses above this score
-	BonusReductionFactor = 0.5  // multiply bonus by this if risk ≥ warn
+	MaxDailyYADCredit = 5000 // max YAD a user can receive per day
+	MaxDailyReferrals = 10   // max new referrals per referrer per day
+	MaxLoginAttempts  = 10   // brute-force threshold (15 min window)
+	MaxPayoutsPerDay  = 20   // max reward payouts per user per day
+	RiskScoreBlock    = 80   // block rewards above this score
+	RiskScoreWarn     = 50   // reduce bonuses above this score
+
+	// Bonus is multiplied by Numerator/Denominator when risk ≥ warn.
+	// Integer fraction instead of a float multiplier so the reduction is
+	// exact and reproducible across platforms.
+	BonusReductionNumerator   = 1
+	BonusReductionDenominator = 2
 
 	// Scoring increments
-	DeltaSelfReferral    = 50
-	DeltaSameIPReg       = 20
-	DeltaSameFPReg       = 25
-	DeltaRapidReferral   = 15
-	DeltaSuspiciousPromo = 10
+	DeltaSelfReferral  = 50
+	DeltaSameIPReg     = 20
+	DeltaSameFPReg     = 25
+	DeltaRapidReferral = 15
 )
 
 type Engine struct {
@@ -138,13 +142,14 @@ func (e *Engine) CheckAndAddDailyYADCredit(ctx context.Context, userID uuid.UUID
 }
 
 // AdjustRewardForRisk reduces the reward amount based on risk score.
-// Returns the adjusted amount.
+// Returns the adjusted amount. Pure integer arithmetic — no floats, no
+// platform-dependent rounding.
 func (e *Engine) AdjustRewardForRisk(originalYAD int64, riskScore int) int64 {
 	if riskScore >= RiskScoreBlock {
 		return 0
 	}
 	if riskScore >= RiskScoreWarn {
-		return int64(float64(originalYAD) * BonusReductionFactor)
+		return originalYAD * BonusReductionNumerator / BonusReductionDenominator
 	}
 	return originalYAD
 }
@@ -189,11 +194,6 @@ func (e *Engine) ScopeRegistrationRisk(ctx context.Context, ip, fingerprint stri
 		delta += DeltaSameFPReg * min(sameFPCount, 3)
 	}
 	return ClampRiskScore(delta)
-}
-
-// RecordSuspiciousPromoUse adds risk for bulk promo code abuse
-func (e *Engine) RecordSuspiciousPromoUse(ctx context.Context, userID uuid.UUID) int {
-	return DeltaSuspiciousPromo
 }
 
 func min(a, b int) int {

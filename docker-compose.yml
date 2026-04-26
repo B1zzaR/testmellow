@@ -111,13 +111,19 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_TTL_HOURS: ${JWT_ACCESS_TTL_HOURS:-1}
       PLATEGA_MERCHANT_ID: ${PLATEGA_MERCHANT_ID}
       PLATEGA_SECRET: ${PLATEGA_SECRET}
+      PLATEGA_SECRET_PREV: ${PLATEGA_SECRET_PREV:-}
       PLATEGA_BASE_URL: https://app.platega.io
       REMNA_BASE_URL: ${REMNA_BASE_URL}
       REMNA_API_KEY: ${REMNA_API_KEY}
       REMNA_SQUAD_UUID: ${REMNA_SQUAD_UUID:-}
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
+      # Worker has no HTTP server but config.Load() is shared and panics in
+      # production when ALLOWED_ORIGINS is '*' or unset. Pass the API value through.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS is required}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
     networks:
       - internal
     logging:
@@ -143,18 +149,28 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?required}
-      TELEGRAM_ADMIN_ID: ${TELEGRAM_ADMIN_ID}
       # WEBAPP_URL must be set explicitly — defaulting to a hardcoded domain
       # would silently break every other deployment.
       WEBAPP_URL: ${WEBAPP_URL:?WEBAPP_URL is required}
       PLATEGA_MERCHANT_ID: ${PLATEGA_MERCHANT_ID}
       PLATEGA_SECRET: ${PLATEGA_SECRET}
+      PLATEGA_SECRET_PREV: ${PLATEGA_SECRET_PREV:-}
       PLATEGA_BASE_URL: https://app.platega.io
       PLATEGA_CALLBACK_URL: ${PLATEGA_CALLBACK_URL}
       REMNA_BASE_URL: ${REMNA_BASE_URL}
       REMNA_API_KEY: ${REMNA_API_KEY}
       REMNA_SQUAD_UUID: ${REMNA_SQUAD_UUID:-}
       JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_TTL_HOURS: ${JWT_ACCESS_TTL_HOURS:-1}
+      # ALLOWED_ORIGINS is unused by the bot (no HTTP server) but config.Load()
+      # is shared with the API and panics in production when this is '*' or
+      # unset. Pass the same value as the API so the bot starts cleanly.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS is required}
+      # Used by the bot when initiating Platega payments via SubscriptionService.
+      ALLOWED_RETURN_HOSTS: ${ALLOWED_RETURN_HOSTS:-}
+      # Bot doesn't issue admin promotions, but config.Load validates length
+      # if non-empty, so pass it through for env consistency.
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
     networks:
       - internal
     logging:

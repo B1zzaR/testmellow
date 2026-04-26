@@ -45,7 +45,6 @@ type Bot struct {
 
 type BotConfig struct {
 	Token            string
-	AdminID          int64
 	WebAppURL        string
 	PaymentReturnURL string
 }
@@ -174,10 +173,19 @@ func (b *Bot) registerHandlers() {
 			if c.Sender() == nil {
 				return next(c)
 			}
+			ctx := context.Background()
 			key := fmt.Sprintf("rl:bot:%d", c.Sender().ID)
-			count, err := redisrepo.Increment(context.Background(), b.rdb, key, time.Minute)
+			count, err := redisrepo.Increment(ctx, b.rdb, key, time.Minute)
 			if err == nil && count > 20 {
-				return c.Send("⏳ Слишком много запросов — подождите минуту.")
+				// Reply only on the first overage in the window. Without
+				// this a sustained flood becomes an amplifier: every inbound
+				// message triggers an outbound reply, burning Telegram API
+				// quota and risking a flood-ban on the bot itself.
+				noticeKey := fmt.Sprintf("rl:bot:noticed:%d", c.Sender().ID)
+				if firstHit, _ := redisrepo.SetNX(ctx, b.rdb, noticeKey, time.Minute); firstHit {
+					return c.Send("⏳ Слишком много запросов — подождите минуту.")
+				}
+				return nil
 			}
 			return next(c)
 		}
@@ -313,6 +321,22 @@ func (b *Bot) handleStart(c tele.Context) error {
 		referralCode = parts[1]
 	}
 
+	// Cap inbound referral code length to avoid passing arbitrarily-large
+	// strings deeper into the service layer.
+	if len(referralCode) > 32 {
+		referralCode = ""
+	}
+
+	// Global rate-limit on /start-driven registrations. Each TG user already
+	// has the per-user cap from the bot middleware (20/min), but a botnet of
+	// many TG accounts could still mass-create users. Hard-cap the bot path
+	// at 100/hour across all senders.
+	if gCount, _ := redisrepo.Increment(ctx, b.rdb, "rl:bot:reg:global", time.Hour); gCount > 100 {
+		b.log.Warn("bot registration global rate-limit hit",
+			zap.Int64("tg_id", tgID), zap.Int64("count", gCount))
+		return c.Send("Регистрация временно недоступна — попробуйте через час.")
+	}
+
 	login := fmt.Sprintf("tg%d", tgID)
 	randPass, err := botRandPassword()
 	if err != nil {
@@ -327,17 +351,32 @@ func (b *Bot) handleStart(c tele.Context) error {
 		IP:           "",
 	})
 	if err != nil {
-		if existing, lookupErr := b.repo.GetByUsername(ctx, login); lookupErr == nil && existing != nil && existing.TelegramID == nil {
-			tgIDVal := tgID
-			_ = b.repo.SetTelegramID(ctx, existing.ID, &tgIDVal)
-			return c.Send(
-				mainMenuText(existing, tgID, username),
-				&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-				b.mainMenuMarkup(existing),
-			)
+		// Username collision is NOT a recovery path: the previous code
+		// silently linked the new Telegram to any existing account that
+		// happened to occupy `tg<TGID>` AND had no telegram_id, which let
+		// anyone hijack a victim's web-only account by registering the
+		// matching username before the victim ever opened the bot.
+		// Instead, retry with a random 4-char suffix so the bot account is
+		// always brand-new and isolated. Linking to an existing web account
+		// happens only through the explicit /link CODE flow.
+		suffix, sErr := botRandSuffix(4)
+		if sErr != nil {
+			b.log.Error("bot: generate suffix failed", zap.Error(sErr))
+			return c.Send("Не удалось создать аккаунт — попробуйте позже.")
 		}
-		b.log.Warn("bot registration failed", zap.Error(err), zap.Int64("tg_id", tgID))
-		return c.Send("Не удалось создать аккаунт — попробуйте позже.")
+		altLogin := fmt.Sprintf("tg%d_%s", tgID, suffix)
+		newUser, err = b.auth.Register(ctx, service.RegisterInput{
+			Username:     altLogin,
+			Password:     randPass,
+			ReferralCode: referralCode,
+			IP:           "",
+		})
+		if err != nil {
+			b.log.Warn("bot registration retry failed", zap.Error(err),
+				zap.Int64("tg_id", tgID), zap.String("login", altLogin))
+			return c.Send("Не удалось создать аккаунт — попробуйте позже.")
+		}
+		login = altLogin
 	}
 
 	tgIDVal := tgID
@@ -1365,6 +1404,25 @@ func (b *Bot) handleResetPassword(c tele.Context) error {
 		return c.Send("Аккаунт заблокирован.")
 	}
 
+	// 2FA bypass guard: if the user enabled 2FA via Telegram, allowing a
+	// password reset through the same Telegram channel collapses the entire
+	// security model — anyone who can talk to this bot becomes them. Refuse
+	// and route them to support instead. (Once we have an email recovery
+	// channel this branch can be relaxed for that path.)
+	if user.TFAEnabled {
+		return c.Send(
+			"🔐 *Сброс через бот заблокирован*\n"+brandLine+"\n\n"+
+				"У вас включена двухфакторная аутентификация.\n"+
+				"Сброс пароля через тот же канал, что и 2FA, — это обход защиты.\n\n"+
+				"_Если вы потеряли пароль:_\n"+
+				"  1. Войдите на сайте с известным паролем\n"+
+				"  2. Отключите 2FA в настройках\n"+
+				"  3. Затем сбросьте пароль через /resetpassword\n\n"+
+				"_Или обратитесь в поддержку:_ /newticket",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown},
+		)
+	}
+
 	newPw, err := botRandPassword()
 	if err != nil {
 		b.log.Error("handleResetPassword: generate password", zap.Error(err))
@@ -1382,8 +1440,15 @@ func (b *Bot) handleResetPassword(c tele.Context) error {
 		return c.Send("Не удалось сбросить пароль — попробуйте позже.")
 	}
 
+	// Invalidate every existing session for this user. SetPasswordVersion
+	// kills access tokens via the IssuedAt comparison; RevokeAllUserRefreshTokens
+	// drops the refresh-family in Redis so a stolen refresh cookie can't be
+	// used to mint fresh access tokens after the reset.
 	if vErr := redisrepo.SetPasswordVersion(ctx, b.rdb, user.ID.String(), time.Now()); vErr != nil {
 		b.log.Warn("handleResetPassword: set password version", zap.Error(vErr))
+	}
+	if rErr := redisrepo.RevokeAllUserRefreshTokens(ctx, b.rdb, user.ID.String()); rErr != nil {
+		b.log.Warn("handleResetPassword: revoke refresh family", zap.Error(rErr))
 	}
 
 	_ = b.repo.CreateAccountActivity(ctx, &domain.AccountActivity{
@@ -1398,14 +1463,40 @@ func (b *Bot) handleResetPassword(c tele.Context) error {
 		loginName = *user.Username
 	}
 
-	return c.Send(
-		"🔑 *Пароль сброшен!*\n"+brandLine+"\n\n"+
-			"👤  Логин: `"+loginName+"`\n"+
-			"🔒  Новый пароль: `"+newPw+"`\n\n"+
-			"_Рекомендуем сменить пароль в настройках._\n"+
-			"_Все активные сессии завершены._",
-		&tele.SendOptions{ParseMode: tele.ModeMarkdown},
-	)
+	// Send via Bot.Send (returns the message handle), then schedule deletion
+	// after 10 minutes. This caps how long the plaintext password is visible
+	// in the Telegram cloud — not a complete fix (a screenshot or a TG
+	// account compromise within the window still leaks it), but it bounds
+	// the long-tail exposure that the previous "lives in TG forever"
+	// behaviour created.
+	msgText := "🔑 *Пароль сброшен!*\n" + brandLine + "\n\n" +
+		"👤  Логин: `" + loginName + "`\n" +
+		"🔒  Новый пароль: `" + newPw + "`\n\n" +
+		"⚠️  _Это сообщение удалится автоматически через 10 минут._\n" +
+		"_Войдите на сайт и смените пароль в настройках._\n" +
+		"_Все активные сессии завершены._"
+	sent, sendErr := b.bot.Send(c.Sender(), msgText, &tele.SendOptions{ParseMode: tele.ModeMarkdown})
+	if sendErr != nil {
+		b.log.Error("handleResetPassword: send message", zap.Error(sendErr))
+		return sendErr
+	}
+	go b.scheduleMessageDelete(sent, 10*time.Minute)
+	return nil
+}
+
+// scheduleMessageDelete asks Telegram to remove the given bot message after
+// `after`. Used to time-bound the visibility of a one-shot secret (reset
+// password) in the chat. Best-effort: a bot restart cancels pending deletes.
+func (b *Bot) scheduleMessageDelete(msg *tele.Message, after time.Duration) {
+	if msg == nil {
+		return
+	}
+	time.Sleep(after)
+	if err := b.bot.Delete(msg); err != nil {
+		// Already deleted by user or expired — nothing to do.
+		b.log.Debug("scheduled bot message delete failed (likely already gone)",
+			zap.Error(err))
+	}
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1429,6 +1520,22 @@ func botRandCode() (string, error) {
 		code[i] = chars[int(b[0])%len(chars)]
 	}
 	return string(code), nil
+}
+
+// botRandSuffix returns a random lowercase alphanumeric suffix, used to make
+// the auto-generated bot username unique on collision (closes the
+// `tg<TGID>` username-squatting account-takeover vector).
+func botRandSuffix(n int) (string, error) {
+	const chars = "abcdefghijkmnpqrstuvwxyz23456789"
+	out := make([]byte, n)
+	for i := range out {
+		b := make([]byte, 1)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		out[i] = chars[int(b[0])%len(chars)]
+	}
+	return string(out), nil
 }
 
 func (b *Bot) getUser(ctx context.Context, c tele.Context) (*domain.User, error) {

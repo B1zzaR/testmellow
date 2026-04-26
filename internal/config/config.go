@@ -75,7 +75,6 @@ type RemnaConfig struct {
 
 type TelegramConfig struct {
 	Token       string
-	AdminID     int64
 	BotUsername string // e.g. "mellowpn_bot" (without @)
 	WebAppURL   string // e.g. "https://mellowpn.space"
 }
@@ -157,7 +156,6 @@ func Load() *Config {
 		},
 		Telegram: TelegramConfig{
 			Token:       env("TELEGRAM_TOKEN", ""),
-			AdminID:     int64(envInt("TELEGRAM_ADMIN_ID", 0)),
 			BotUsername: env("TELEGRAM_BOT_USERNAME", ""),
 			WebAppURL:   env("WEBAPP_URL", "https://mellowpn.space"),
 		},

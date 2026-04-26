@@ -70,7 +70,6 @@ openssl rand -hex 64
 | `REMNA_BASE_URL` | URL вашей панели администратора Remnawave |
 | `REMNA_API_KEY` | Настройки API Remnawave |
 | `TELEGRAM_TOKEN` | [@BotFather](https://t.me/BotFather) → /newbot |
-| `TELEGRAM_ADMIN_ID` | Ваш числовой Telegram user ID (используйте [@userinfobot](https://t.me/userinfobot)) |
 | `TELEGRAM_BOT_USERNAME` | Имя вашего бота без `@` |
 | `WEBAPP_URL` | `https://yourdomain.com` |
 | `ADMIN_BOOTSTRAP_TOKEN` | Одноразовый токен (≥24 символа, `openssl rand -hex 32`). Первый зарегистрированный пользователь, передавший этот токен в поле `bootstrap_token`, становится админом. После создания первого админа очистите переменную; следующие админы — через `UPDATE users SET is_admin=TRUE WHERE username='foo'`. Заменяет старый небезопасный `ADMIN_LOGIN`. |
