@@ -21,6 +21,11 @@ type AppConfig struct {
 	WebhookPath    string // e.g. /webhooks/platega
 	AdminLogin     string // login (username) that is auto-granted admin on register/login
 	AllowedOrigins string // comma-separated allowed CORS origins
+	// AllowedReturnHosts limits which Host values are accepted from the client
+	// in `return_url` / `failed_url` fields when initiating Platega payments.
+	// Comma-separated, no scheme. Empty falls back to {DOMAIN, www.DOMAIN}.
+	// Prevents an open-redirect / phishing vector via the payment redirect.
+	AllowedReturnHosts string
 }
 
 type DBConfig struct {
@@ -44,6 +49,10 @@ type JWTConfig struct {
 type PlategalConfig struct {
 	MerchantID  string
 	Secret      string
+	// SecretPrev is the previous Platega secret kept valid during a rotation
+	// window (24–48 h). Empty disables fallback verification. This makes
+	// emergency secret rotation possible without losing in-flight webhooks.
+	SecretPrev  string
 	BaseURL     string
 	CallbackURL string // our public HTTPS webhook
 }
@@ -73,11 +82,12 @@ func Load() *Config {
 
 	return &Config{
 		App: AppConfig{
-			Port:           env("APP_PORT", "8080"),
-			Env:            env("APP_ENV", "production"),
-			WebhookPath:    env("PLATEGA_WEBHOOK_PATH", "/webhooks/platega"),
-			AdminLogin:     env("ADMIN_LOGIN", ""),
-			AllowedOrigins: env("ALLOWED_ORIGINS", "*"),
+			Port:               env("APP_PORT", "8080"),
+			Env:                env("APP_ENV", "production"),
+			WebhookPath:        env("PLATEGA_WEBHOOK_PATH", "/webhooks/platega"),
+			AdminLogin:         env("ADMIN_LOGIN", ""),
+			AllowedOrigins:     env("ALLOWED_ORIGINS", "*"),
+			AllowedReturnHosts: env("ALLOWED_RETURN_HOSTS", ""),
 		},
 		DB: DBConfig{
 			DSN:          env("DATABASE_DSN", "postgres://vpn:vpn@postgres:5432/vpnplatform?sslmode=prefer"),
@@ -97,6 +107,7 @@ func Load() *Config {
 		Platega: PlategalConfig{
 			MerchantID:  env("PLATEGA_MERCHANT_ID", ""),
 			Secret:      env("PLATEGA_SECRET", ""),
+			SecretPrev:  env("PLATEGA_SECRET_PREV", ""),
 			BaseURL:     env("PLATEGA_BASE_URL", "https://app.platega.io"),
 			CallbackURL: env("PLATEGA_CALLBACK_URL", ""),
 		},

@@ -48,7 +48,8 @@ func main() {
 	antiEngine := anticheat.NewEngine(rdb, log)
 
 	authSvc := service.NewAuthService(userRepo, antiEngine, rdb, log, cfg.App.AdminLogin)
-	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log)
+	subSvc := service.NewSubscriptionService(userRepo, platClient, remnaClient, antiEngine, rdb, log,
+		cfg.App.AllowedReturnHosts, cfg.Telegram.WebAppURL)
 	ecoSvc := service.NewEconomyService(userRepo, remnaClient, antiEngine, log)
 	trialSvc := service.NewTrialService(userRepo, remnaClient, log)
 	devSvc := service.NewDeviceService(deviceRepo, userRepo, remnaClient, log)

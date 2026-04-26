@@ -128,14 +128,30 @@ func (h *PlategalHandler) Handle(c *gin.Context) {
 		return
 	}
 
-	// ── Step 5: Enqueue payment processing to worker ──────────────────────
-	// Amount from Platega is in rubles; convert to kopecks for internal use.
-	amountKopecks := int64(math.Round(cb.Amount * 100))
+	// ── Step 5: Validate amount against the canonical payment record ──────
+	// Trusting the webhook amount lets a leaked X-Secret inflate LTV / referral
+	// rewards. Compare against what we actually charged; tolerate 1-kopeck
+	// rounding noise from Platega's float-based payload.
+	cbKopecks := int64(math.Round(cb.Amount * 100))
+	if absDelta(cbKopecks, payment.AmountKopecks) > 1 {
+		h.log.Error("platega webhook amount mismatch — rejecting",
+			zap.String("transaction_id", cb.ID),
+			zap.Int64("db_kopecks", payment.AmountKopecks),
+			zap.Int64("webhook_kopecks", cbKopecks),
+		)
+		_ = h.repo.MarkWebhookProcessed(c.Request.Context(), "platega", cb.ID, string(cb.Status), "amount mismatch")
+		c.Status(http.StatusOK)
+		return
+	}
 
+	// ── Step 6: Enqueue payment processing to worker ──────────────────────
+	// IMPORTANT: use the DB amount (the price we actually charged), NOT the
+	// webhook amount, even after the equality check above — defence in depth
+	// against any future divergence in float rounding.
 	job := worker.PaymentProcessJob{
 		TransactionID: cb.ID,
 		UserID:        payment.UserID.String(),
-		AmountKopecks: amountKopecks,
+		AmountKopecks: payment.AmountKopecks,
 		Plan:          string(payment.Plan),
 		Status:        string(cb.Status),
 	}
@@ -149,7 +165,7 @@ func (h *PlategalHandler) Handle(c *gin.Context) {
 		return
 	}
 
-	// ── Step 6: Mark webhook as processed ────────────────────────────────
+	// ── Step 7: Mark webhook as processed ────────────────────────────────
 	_ = h.repo.MarkWebhookProcessed(c.Request.Context(), "platega", cb.ID, string(cb.Status), "")
 
 	// Rate-limit protection: record the queue addition in Redis so we
@@ -164,4 +180,14 @@ func (h *PlategalHandler) Handle(c *gin.Context) {
 
 	// Must return 200 OK to acknowledge receipt — Platega stops retrying on 200.
 	c.Status(http.StatusOK)
+}
+
+// absDelta returns |a-b| for int64 values without overflowing on extreme
+// inputs. amounts here are bounded by Platega's plan ceiling so the simple
+// branchless form is safe and clearer than the math.Abs(float64(...)) detour.
+func absDelta(a, b int64) int64 {
+	if a >= b {
+		return a - b
+	}
+	return b - a
 }

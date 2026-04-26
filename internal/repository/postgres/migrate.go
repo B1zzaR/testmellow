@@ -527,6 +527,66 @@ ALTER TABLE payments ADD CONSTRAINT payments_plan_check
     CHECK (plan IN ('1week','1month','3months','device_expansion','device_expansion_2'));
 `,
 		},
+		{
+			// 024 — Payment-flow hardening:
+			//   • Block negative / >100 % discounts at the column level (defence in depth
+			//     against bugs in admin tools or direct DB writes).
+			//   • Prevent two parallel /buy requests from creating two PENDING rows
+			//     for the same (user, plan) — closes a race in InitiatePayment.
+			//   • Prevent two concurrent BuyDeviceExpansion calls from each
+			//     INSERTing a row after both DELETEd the previous one — closes the
+			//     "paid twice, got one slot" race.
+			//   • Add 'reverted' status to subscriptions and referral_rewards so the
+			//     chargeback handler can mark compensating actions without violating
+			//     existing CHECK constraints.
+			//   • Add 'chargeback_clawback' tx_type so YAD claw-back transactions
+			//     pass the existing CHECK on yad_transactions.tx_type.
+			version: "024_payment_hardening",
+			sql: `
+ALTER TABLE users
+    DROP CONSTRAINT IF EXISTS users_active_discount_percent_chk;
+ALTER TABLE users
+    ADD CONSTRAINT users_active_discount_percent_chk
+    CHECK (active_discount_percent BETWEEN 0 AND 100);
+
+ALTER TABLE promocodes
+    DROP CONSTRAINT IF EXISTS promocodes_discount_percent_chk;
+ALTER TABLE promocodes
+    ADD CONSTRAINT promocodes_discount_percent_chk
+    CHECK (discount_percent BETWEEN 0 AND 100);
+
+CREATE UNIQUE INDEX IF NOT EXISTS payments_pending_user_plan_uq
+    ON payments(user_id, plan)
+    WHERE status = 'PENDING';
+
+-- One expansion row per user. Re-purchase upserts (extra_devices, expires_at).
+-- NOW() can't appear in a partial-index predicate (volatility rules), so we keep
+-- a single row per user and rely on the expiry sweep to delete stale rows.
+-- Drop any exact duplicates that may exist before adding the unique index;
+-- keep the row with the latest expires_at as the active one.
+DELETE FROM device_expansions de
+USING device_expansions dup
+WHERE de.user_id = dup.user_id
+  AND de.id <> dup.id
+  AND (de.expires_at, de.created_at) < (dup.expires_at, dup.created_at);
+
+DROP INDEX IF EXISTS idx_device_expansions_user_id;
+CREATE UNIQUE INDEX IF NOT EXISTS device_expansions_user_uq
+    ON device_expansions(user_id);
+
+ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_status_check;
+ALTER TABLE subscriptions ADD CONSTRAINT subscriptions_status_check
+    CHECK (status IN ('active','expired','trial','canceled','reverted'));
+
+ALTER TABLE referral_rewards DROP CONSTRAINT IF EXISTS referral_rewards_status_check;
+ALTER TABLE referral_rewards ADD CONSTRAINT referral_rewards_status_check
+    CHECK (status IN ('pending','immediate','deferred','paid','blocked','reverted'));
+
+ALTER TABLE yad_transactions DROP CONSTRAINT IF EXISTS yad_transactions_tx_type_check;
+ALTER TABLE yad_transactions ADD CONSTRAINT yad_transactions_tx_type_check
+    CHECK (tx_type IN ('referral_reward','bonus','spent','promo','trial','chargeback_clawback'));
+`,
+		},
 	}
 
 	for _, m := range migrations {

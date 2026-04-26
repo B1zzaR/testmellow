@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
@@ -23,6 +25,55 @@ import (
 	"github.com/vpnplatform/internal/worker"
 	"github.com/vpnplatform/pkg/password"
 )
+
+// clampDiscountPercent normalises a discount value into [0, 100] so a buggy
+// admin tool, an unvalidated DB write, or an out-of-range promo can never
+// drive priceKopecks negative or inflate it. Defence in depth — the column
+// CHECK in migration 024 enforces the same bound at the storage layer.
+func clampDiscountPercent(p int) int {
+	if p < 0 {
+		return 0
+	}
+	if p > 100 {
+		return 100
+	}
+	return p
+}
+
+// isSerializationFailure reports whether err is a PostgreSQL 40001 error,
+// which Serializable transactions raise when a write-skew is detected.
+// Callers retry the whole transaction on this error.
+func isSerializationFailure(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "40001"
+	}
+	return false
+}
+
+// sanitizeReturnURL filters the user-supplied `return_url` against the
+// configured allow-list of hosts before forwarding it to Platega. Without
+// this an attacker could initiate a real payment with `return_url=evil.com`,
+// pass the legitimate Platega checkout link to a victim, and redirect the
+// victim to a phishing page after a successful payment to our merchant
+// account. Returns the sanitized URL or fallback.
+func sanitizeReturnURL(raw string, allowedHosts []string, fallback string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fallback
+	}
+	host := strings.ToLower(u.Host)
+	for _, h := range allowedHosts {
+		if strings.EqualFold(strings.TrimSpace(h), host) {
+			return u.String()
+		}
+	}
+	return fallback
+}
 
 // ─── Auth Service ─────────────────────────────────────────────────────────────
 
@@ -275,12 +326,14 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*domain.User
 // ─── Subscription Service ─────────────────────────────────────────────────────
 
 type SubscriptionService struct {
-	repo    *postgres.UserRepo
-	platega *platega.Client
-	remna   *remnawave.Client
-	anti    *anticheat.Engine
-	rdb     *redis.Client
-	log     *zap.Logger
+	repo               *postgres.UserRepo
+	platega            *platega.Client
+	remna              *remnawave.Client
+	anti               *anticheat.Engine
+	rdb                *redis.Client
+	log                *zap.Logger
+	allowedReturnHosts []string // lowercased, trimmed
+	defaultReturnURL   string   // used when client value is missing/invalid
 }
 
 func NewSubscriptionService(
@@ -290,17 +343,39 @@ func NewSubscriptionService(
 	anti *anticheat.Engine,
 	rdb *redis.Client,
 	log *zap.Logger,
+	allowedReturnHostsCSV string,
+	defaultReturnURL string,
 ) *SubscriptionService {
-	return &SubscriptionService{repo: repo, platega: platega, remna: remna, anti: anti, rdb: rdb, log: log}
+	hosts := []string{}
+	for _, h := range strings.Split(allowedReturnHostsCSV, ",") {
+		h = strings.TrimSpace(strings.ToLower(h))
+		if h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	if defaultReturnURL == "" {
+		defaultReturnURL = "/"
+	}
+	return &SubscriptionService{
+		repo: repo, platega: platega, remna: remna, anti: anti, rdb: rdb, log: log,
+		allowedReturnHosts: hosts,
+		defaultReturnURL:   defaultReturnURL,
+	}
 }
 
 // InitiatePayment creates a Platega payment session and a pending Payment record.
 // Returns the Platega redirect URL.
 func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.UUID, plan domain.SubscriptionPlan, returnURL string) (string, *domain.Payment, error) {
-	priceKopecks := domain.PlanPriceKopecks(plan)
-	if priceKopecks == 0 {
+	basePrice := domain.PlanPriceKopecks(plan)
+	if basePrice == 0 {
 		return "", nil, errors.New("неверный тариф подписки")
 	}
+
+	// Sanitize the user-supplied redirect target against an allow-list.
+	// Without this, an attacker can craft a Platega checkout that, after a
+	// successful payment to our merchant, redirects the victim to a phishing
+	// page styled like our site.
+	returnURL = sanitizeReturnURL(returnURL, s.allowedReturnHosts, s.defaultReturnURL)
 
 	// If the user already has a non-expired PENDING payment for this plan,
 	// return it directly — no new charge, no rate-limit consumption.
@@ -319,11 +394,13 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 		return "", nil, errors.New("пользователь не найден")
 	}
 
-	// Apply active discount promo if present
-	subPrice := domain.PlanPriceKopecks(plan)
+	// Apply active discount promo if present, clamping to a sane range so
+	// stray DB writes can never make priceKopecks negative or inflated.
+	priceKopecks := basePrice
 	discountCode, discountPercent, _ := s.repo.GetActiveDiscount(ctx, userID)
+	discountPercent = clampDiscountPercent(discountPercent)
 	if discountPercent > 0 {
-		reduction := subPrice * int64(discountPercent) / 100
+		reduction := basePrice * int64(discountPercent) / 100
 		priceKopecks -= reduction
 	}
 
@@ -408,6 +485,20 @@ func (s *SubscriptionService) InitiatePayment(ctx context.Context, userID uuid.U
 	}
 
 	if err := s.repo.CreatePayment(ctx, payment); err != nil {
+		// Concurrent /buy for the same (user, plan) lost the race against the
+		// partial-unique index payments_pending_user_plan_uq added in
+		// migration 024. Fetch the winning row and return that — the user
+		// sees a single PENDING checkout instead of two orphan transactions.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			if winner, lookupErr := s.repo.GetPendingPaymentByPlan(ctx, userID, plan); lookupErr == nil && winner != nil {
+				s.log.Info("payment-init race deduplicated",
+					zap.String("user_id", userID.String()),
+					zap.String("plan", string(plan)),
+					zap.String("winner_tx", winner.ID.String()))
+				return winner.RedirectURL, winner, nil
+			}
+		}
 		return "", nil, fmt.Errorf("store payment: %w", err)
 	}
 
@@ -555,12 +646,12 @@ func (s *SubscriptionService) CheckPaymentStatus(ctx context.Context, userID, pa
 	payment.Status = newStatus
 
 	// If confirmed, enqueue the same processing job the webhook would have sent.
+	// Always use the canonical DB amount — never an externally derived value.
 	if newStatus == domain.PaymentStatusConfirmed {
-		amountKopecks := int64(float64(payment.AmountKopecks)) // already in kopecks
 		job := worker.PaymentProcessJob{
 			TransactionID: paymentID.String(),
 			UserID:        userID.String(),
-			AmountKopecks: amountKopecks,
+			AmountKopecks: payment.AmountKopecks,
 			Plan:          string(payment.Plan),
 			Status:        string(newStatus),
 		}
@@ -578,6 +669,8 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 	if qty < 1 || qty > domain.DeviceExpansionMaxExtra {
 		return "", nil, fmt.Errorf("количество устройств должно быть 1 или 2")
 	}
+
+	returnURL = sanitizeReturnURL(returnURL, s.allowedReturnHosts, s.defaultReturnURL)
 
 	activeSub, err := s.repo.GetActiveSubscription(ctx, userID)
 	if err != nil {
@@ -666,6 +759,13 @@ func (s *SubscriptionService) InitiateDeviceExpansionPayment(ctx context.Context
 	}
 
 	if err := s.repo.CreatePayment(ctx, payment); err != nil {
+		// Same partial-unique race as InitiatePayment.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			if winner, lookupErr := s.repo.GetPendingPaymentByPlan(ctx, userID, plan); lookupErr == nil && winner != nil {
+				return winner.RedirectURL, winner, nil
+			}
+		}
 		return "", nil, fmt.Errorf("сохранение платежа: %w", err)
 	}
 
@@ -888,66 +988,31 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 
 	now := time.Now()
 
-	// 1-user-1-sub model: find the latest subscription regardless of status.
-	existingSub, err := s.repo.GetLatestSubscription(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	var newExpiry time.Time
-	if existingSub != nil && existingSub.ExpiresAt.After(now) {
-		newExpiry = existingSub.ExpiresAt.Add(time.Duration(durationDays) * 24 * time.Hour)
-	} else {
-		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
-	}
-
-	// ── C-4 fix: deduct YAD and record subscription in DB FIRST, then activate
-	// Remnawave. If Remnawave fails after commit, the worker can retry activation;
-	// if the TX fails, Remnawave is never touched so the user keeps their balance.
-
 	subID := uuid.New()
 	remnaUUID := ""
 	if user.RemnaUserUUID != nil {
 		remnaUUID = *user.RemnaUserUUID
 	}
 
-	tx, err := s.repo.BeginTx(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	// Deduct ЯД inside the transaction.
-	ref := subID
-	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref, "Подписка за ЯД: "+string(plan)); err != nil {
-		return nil, err
-	}
-
+	// All money movement happens in one Serializable transaction with the
+	// user row locked FOR UPDATE so two concurrent BuySubscriptionWithYAD
+	// calls cannot both read existingSub.ExpiresAt = T and both write
+	// expires_at = T + 30d. Retry on 40001 (write-skew detected by Postgres)
+	// up to 3 times — that's enough to absorb realistic contention without
+	// looping forever on a real bug.
 	var sub *domain.Subscription
-	if existingSub != nil {
-		if err := s.repo.ExtendSubscription(ctx, tx, existingSub.ID, newExpiry, plan); err != nil {
-			return nil, err
+	var newExpiry time.Time
+	for attempt := 0; attempt < 3; attempt++ {
+		var err error
+		sub, newExpiry, err = s.tryBuyWithYAD(ctx, userID, plan, durationDays, subID, remnaUUID, yadPrice, now)
+		if err == nil {
+			break
 		}
-		existingSub.ExpiresAt = newExpiry
-		existingSub.Plan = plan
-		sub = existingSub
-	} else {
-		sub = &domain.Subscription{
-			ID:           subID,
-			UserID:       userID,
-			Plan:         plan,
-			Status:       domain.SubStatusActive,
-			StartsAt:     now,
-			ExpiresAt:    newExpiry,
-			RemnaSubUUID: &remnaUUID,
-			CreatedAt:    now,
-			UpdatedAt:    now,
+		if isSerializationFailure(err) && attempt < 2 {
+			s.log.Info("BuySubscriptionWithYAD serialisation retry",
+				zap.String("user_id", userID.String()), zap.Int("attempt", attempt))
+			continue
 		}
-		if err := s.repo.CreateSubscription(ctx, tx, sub); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -993,6 +1058,77 @@ func (s *EconomyService) BuySubscriptionWithYAD(ctx context.Context, userID uuid
 	return sub, nil
 }
 
+// tryBuyWithYAD is the per-attempt body of BuySubscriptionWithYAD. It runs
+// inside a fresh Serializable transaction so the caller can simply retry on
+// 40001. No Remnawave I/O — that's done after commit.
+func (s *EconomyService) tryBuyWithYAD(ctx context.Context, userID uuid.UUID,
+	plan domain.SubscriptionPlan, durationDays int, subID uuid.UUID,
+	remnaUUID string, yadPrice int64, now time.Time,
+) (*domain.Subscription, time.Time, error) {
+	tx, err := s.repo.BeginSerializableTx(ctx)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Lock the user row so the YAD debit and the subscription extension
+	// share a single serial point with any concurrent purchase.
+	if err := s.repo.LockUserForUpdate(ctx, tx, userID); err != nil {
+		return nil, time.Time{}, err
+	}
+
+	// Lock the latest subscription row (if any) so the relative SQL extend
+	// reads & writes the same expires_at.
+	existingSub, err := s.repo.LockLatestSubscriptionForUpdate(ctx, tx, userID)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+
+	// Deduct YAD atomically (UPDATE … WHERE balance + delta >= 0).
+	ref := subID
+	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -yadPrice, domain.YADTxSpent, &ref,
+		"Подписка за ЯД: "+string(plan)); err != nil {
+		return nil, time.Time{}, err
+	}
+
+	var sub *domain.Subscription
+	var newExpiry time.Time
+	if existingSub != nil {
+		// Relative extend: GREATEST(expires_at, NOW()) + N days. Atomic on
+		// the row, so two concurrent extenders cannot both compute the same
+		// target from the same prefetched value.
+		newExpiry, err = s.repo.ExtendSubscriptionByDuration(ctx, tx, existingSub.ID, durationDays, plan)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		existingSub.ExpiresAt = newExpiry
+		existingSub.Plan = plan
+		existingSub.Status = domain.SubStatusActive
+		sub = existingSub
+	} else {
+		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
+		sub = &domain.Subscription{
+			ID:           subID,
+			UserID:       userID,
+			Plan:         plan,
+			Status:       domain.SubStatusActive,
+			StartsAt:     now,
+			ExpiresAt:    newExpiry,
+			RemnaSubUUID: &remnaUUID,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if err := s.repo.CreateSubscription(ctx, tx, sub); err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, time.Time{}, err
+	}
+	return sub, newExpiry, nil
+}
+
 // BuyDeviceExpansion purchases extra device slots using YAD balance (C-4 pattern).
 // qty must be 1 or 2. Upgrade from +1 → +2 is allowed; user pays only the difference.
 func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUID, qty int) (*domain.DeviceExpansion, error) {
@@ -1009,64 +1145,42 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 		return nil, errors.New("нет активной подписки — сначала купите подписку")
 	}
 
-	// Check existing expansion.
-	existing, err := s.repo.GetActiveDeviceExpansion(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("не удалось проверить расширение: %w", err)
-	}
-	if existing != nil && existing.ExtraDevices >= qty {
-		return nil, errors.New("расширение устройств уже активно")
-	}
-
-	// Tiered cost based on days remaining in the active subscription.
-	daysRemaining := int(time.Until(activeSub.ExpiresAt).Hours() / 24)
-	if daysRemaining < 0 {
-		daysRemaining = 0
-	}
-	cost := domain.DeviceExpansionYAD(qty, daysRemaining)
-	if existing != nil {
-		cost = domain.DeviceExpansionYAD(qty, daysRemaining) - domain.DeviceExpansionYAD(existing.ExtraDevices, daysRemaining)
-	}
-
 	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil || user == nil {
 		return nil, errors.New("пользователь не найден")
 	}
-	if user.YADBalance < cost {
-		return nil, fmt.Errorf("недостаточно ЯД: нужно %d, есть %d", cost, user.YADBalance)
+
+	// Tiered cost based on days remaining in the active subscription. The
+	// final balance check + debit happens inside the locked Serializable
+	// transaction below so a parallel purchase cannot push us into overdraft.
+	daysRemaining := int(time.Until(activeSub.ExpiresAt).Hours() / 24)
+	if daysRemaining < 0 {
+		daysRemaining = 0
 	}
 
-	// C-4: deduct YAD and create expansion in one transaction, Remnawave update after commit.
-	expansion := &domain.DeviceExpansion{
-		ID:           uuid.New(),
-		UserID:       userID,
-		ExtraDevices: qty,
-		ExpiresAt:    activeSub.ExpiresAt,
-		CreatedAt:    time.Now(),
+	var expansion *domain.DeviceExpansion
+	for attempt := 0; attempt < 3; attempt++ {
+		exp, err := s.tryBuyDeviceExpansion(ctx, userID, qty, daysRemaining, activeSub.ExpiresAt)
+		if err == nil {
+			expansion = exp
+			break
+		}
+		if isSerializationFailure(err) && attempt < 2 {
+			s.log.Info("BuyDeviceExpansion serialisation retry",
+				zap.String("user_id", userID.String()), zap.Int("attempt", attempt))
+			continue
+		}
+		return nil, err
+	}
+	if expansion == nil {
+		return nil, errors.New("не удалось завершить покупку — попробуйте ещё раз")
 	}
 
-	tx, err := s.repo.BeginTx(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	if err := s.repo.AdjustYADBalance(ctx, tx, userID, -cost, domain.YADTxSpent, nil, fmt.Sprintf("расширение устройств +%d", qty)); err != nil {
-		return nil, fmt.Errorf("списание ЯД: %w", err)
-	}
-	if err := s.repo.CreateDeviceExpansion(ctx, tx, expansion); err != nil {
-		return nil, fmt.Errorf("создание расширения: %w", err)
-	}
-	if err := s.repo.IncrementDeviceExpansionCount(ctx, tx, userID); err != nil {
-		return nil, fmt.Errorf("обновление счётчика: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit: %w", err)
-	}
-
-	// Post-commit: update Remnawave device limit.
+	// Post-commit: update Remnawave device limit. Use the higher of the
+	// requested qty and any pre-existing extra_devices so a concurrent winner
+	// of the upsert isn't accidentally downgraded.
 	if user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
-		newLimit := domain.DeviceMaxPerUser + qty
+		newLimit := domain.DeviceMaxPerUser + expansion.ExtraDevices
 		if err := s.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, newLimit); err != nil {
 			s.log.Error("BuyDeviceExpansion: update remnawave device limit",
 				zap.String("user_id", userID.String()),
@@ -1078,7 +1192,73 @@ func (s *EconomyService) BuyDeviceExpansion(ctx context.Context, userID uuid.UUI
 	s.log.Info("device expansion purchased via YAD",
 		zap.String("user_id", userID.String()),
 		zap.Int("qty", qty),
-		zap.Int64("yad_spent", cost))
+		zap.Int("extra_devices", expansion.ExtraDevices))
+	return expansion, nil
+}
+
+// tryBuyDeviceExpansion is the per-attempt body of BuyDeviceExpansion. Runs
+// inside a fresh Serializable transaction with the user row locked so two
+// concurrent purchases serialise on the user, the YAD debit, and the
+// device_expansions UPSERT.
+func (s *EconomyService) tryBuyDeviceExpansion(ctx context.Context, userID uuid.UUID,
+	qty, daysRemaining int, expiresAt time.Time,
+) (*domain.DeviceExpansion, error) {
+	tx, err := s.repo.BeginSerializableTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := s.repo.LockUserForUpdate(ctx, tx, userID); err != nil {
+		return nil, err
+	}
+
+	// Re-read existing expansion under the lock so we charge the right delta
+	// even if a parallel writer just upgraded the row.
+	existing, err := s.repo.GetActiveDeviceExpansion(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось проверить расширение: %w", err)
+	}
+	if existing != nil && existing.ExtraDevices >= qty {
+		return nil, errors.New("расширение устройств уже активно")
+	}
+
+	cost := domain.DeviceExpansionYAD(qty, daysRemaining)
+	if existing != nil {
+		cost -= domain.DeviceExpansionYAD(existing.ExtraDevices, daysRemaining)
+	}
+	if cost < 0 {
+		cost = 0
+	}
+
+	expansion := &domain.DeviceExpansion{
+		ID:           uuid.New(),
+		UserID:       userID,
+		ExtraDevices: qty,
+		ExpiresAt:    expiresAt,
+		CreatedAt:    time.Now(),
+	}
+
+	// AdjustYADBalance refuses to drive the balance below zero atomically,
+	// so this serves as the authoritative balance check too. Use the
+	// expansion ID as ref_id so the YAD ledger row links back to a concrete
+	// expansion record (was previously nil — no audit trail).
+	ref := expansion.ID
+	if cost > 0 {
+		if err := s.repo.AdjustYADBalance(ctx, tx, userID, -cost, domain.YADTxSpent, &ref,
+			fmt.Sprintf("расширение устройств +%d", qty)); err != nil {
+			return nil, fmt.Errorf("списание ЯД: %w", err)
+		}
+	}
+	if err := s.repo.CreateDeviceExpansion(ctx, tx, expansion); err != nil {
+		return nil, fmt.Errorf("создание расширения: %w", err)
+	}
+	if err := s.repo.IncrementDeviceExpansionCount(ctx, tx, userID); err != nil {
+		return nil, fmt.Errorf("обновление счётчика: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
 	return expansion, nil
 }
 
