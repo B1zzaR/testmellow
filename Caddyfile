@@ -56,6 +56,9 @@
         header_up X-Forwarded-For  {remote_host}
         # Remove any upstream-injected hop headers.
         header_up -X-Powered-By
+        # Strip identity-revealing response headers if backend ever sets them.
+        header_down -Server
+        header_down -X-Powered-By
     }
 
     # Payment webhooks come from Platega — route them directly to the backend.
@@ -80,6 +83,8 @@
         header_up X-Real-IP        {remote_host}
         header_up X-Forwarded-For  {remote_host}
         header_up -X-Powered-By
+        header_down -Server
+        header_down -X-Powered-By
     }
 
     # ── Routing: everything else → nginx (SPA) ────────────────────────────
@@ -87,6 +92,8 @@
         header_up X-Forwarded-Proto {scheme}
         # Preserve the Host header so nginx can log the correct vhost.
         header_up Host {host}
+        header_down -Server
+        header_down -X-Powered-By
     }
 }
 
