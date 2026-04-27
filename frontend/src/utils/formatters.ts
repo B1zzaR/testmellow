@@ -2,7 +2,8 @@
  * Format kopecks (1/100 ruble) to ruble string.
  * 1000 kopecks → "10,00 ₽"
  */
-export function formatRubles(kopecks: number): string {
+export function formatRubles(kopecks: number | null | undefined): string {
+  if (kopecks == null || !isFinite(kopecks)) return '—'
   return (kopecks / 100).toLocaleString('ru-RU', {
     style: 'currency',
     currency: 'RUB',

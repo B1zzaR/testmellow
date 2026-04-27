@@ -123,7 +123,6 @@ export function ReferralsPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold text-primary-500">+{formatYAD(ref.total_reward)}</p>
-                  <p className="mt-0.5 text-xs text-gray-400 dark:text-slate-600">LTV: {formatRubles(ref.total_paid_ltv)}</p>
                 </div>
               </div>
             ))}
