@@ -238,10 +238,6 @@ export function DeviceList({ data }: DeviceListProps) {
                     Действует до конца текущей подписки
                   </p>
                 </div>
-                {/* Tier badge */}
-                {quote && quote.tier_label && (
-                  <TierBadge label={quote.tier_label} daysRemaining={quote.days_remaining} />
-                )}
               </div>
 
               {/* Days remaining hint */}
@@ -262,7 +258,6 @@ export function DeviceList({ data }: DeviceListProps) {
                     label="+1 устройство"
                     yadPrice={quote.qty1.yad}
                     rublesPrice={quote.qty1.rubles}
-                    unitRubles={quote.unit_rubles}
                     showDiscount2={false}
                     onBuyYAD={() => buyYADMutation.mutate(1)}
                     onBuyMoney={() => buyMoneyMutation.mutate(1)}
@@ -274,7 +269,6 @@ export function DeviceList({ data }: DeviceListProps) {
                     label={expansion?.extra_devices === 1 ? 'Апгрейд до +2 устройств' : '+2 устройства'}
                     yadPrice={quote.qty2.yad}
                     rublesPrice={quote.qty2.rubles}
-                    unitRubles={quote.unit_rubles}
                     showDiscount2
                     onBuyYAD={() => buyYADMutation.mutate(2)}
                     onBuyMoney={() => buyMoneyMutation.mutate(2)}
@@ -328,7 +322,6 @@ interface ExpansionOptionProps {
   label: string
   yadPrice: number
   rublesPrice: number
-  unitRubles: number
   showDiscount2: boolean
   onBuyYAD: () => void
   onBuyMoney: () => void
@@ -339,15 +332,11 @@ function ExpansionOption({
   label,
   yadPrice,
   rublesPrice,
-  unitRubles,
   showDiscount2,
   onBuyYAD,
   onBuyMoney,
   loading,
 }: ExpansionOptionProps) {
-  // Savings from the 10% second-slot discount
-  const savedRubles = showDiscount2 ? Math.round(unitRubles * 0.1) : 0
-
   return (
     <div className="rounded-xl border border-gray-100 dark:border-surface-700 px-4 py-3 space-y-2">
       {/* Top row: label + discount badge */}
@@ -368,11 +357,6 @@ function ExpansionOption({
             <span className="mx-1.5 text-gray-300 dark:text-slate-600 font-normal">/</span>
             {rublesPrice} ₽
           </p>
-          {showDiscount2 && savedRubles > 0 && (
-            <p className="text-[11px] text-emerald-500 dark:text-emerald-400 mt-0.5">
-              Экономия {savedRubles} ₽ против двух отдельных
-            </p>
-          )}
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" loading={loading} onClick={onBuyYAD}>
