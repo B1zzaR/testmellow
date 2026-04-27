@@ -6,6 +6,18 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { formatRubles, planLabel } from '@/utils/formatters'
 
+// isHttpsURL guards href bindings that come from server-supplied URLs
+// (currently Platega's redirect URL). Without it, an upstream API change
+// or a malformed response could put `javascript:…` into a clickable link.
+function isHttpsURL(value: string | null | undefined): value is string {
+  if (!value) return false
+  try {
+    return new URL(value).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 // ─── Countdown timer hook ────────────────────────────────────────────────────
 
 function useCountdown(expiresAt: string | null): string {
@@ -153,7 +165,7 @@ function PaymentRow({ payment, onChecked, onRemove }: PaymentRowProps) {
 
       {/* Right: actions */}
       <div className="flex shrink-0 items-center gap-2">
-        {payment.status === 'PENDING' && payment.redirect_url && !isExpiredLocally && (
+        {payment.status === 'PENDING' && isHttpsURL(payment.redirect_url) && !isExpiredLocally && (
           <a
             href={payment.redirect_url}
             target="_blank"

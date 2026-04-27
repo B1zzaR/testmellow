@@ -3,12 +3,16 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"html"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
@@ -20,6 +24,16 @@ import (
 	"github.com/vpnplatform/internal/repository/postgres"
 	"github.com/vpnplatform/internal/worker"
 )
+
+// isSerializationFailure reports whether err is a PostgreSQL 40001 error.
+// Money-moving admin paths retry on this.
+func isSerializationFailure(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "40001"
+	}
+	return false
+}
 
 type Handler struct {
 	repo    *postgres.UserRepo
@@ -217,9 +231,12 @@ func (h *Handler) CreatePromoCode(c *gin.Context) {
 		return
 	}
 
+	// Normalise to uppercase so case-insensitive redemption (which both web
+	// and bot perform via strings.ToUpper) finds the row. Without this, a
+	// promo created as `summer2024` could never be redeemed.
 	promo := &domain.PromoCode{
 		ID:              uuid.New(),
-		Code:            req.Code,
+		Code:            strings.ToUpper(strings.TrimSpace(req.Code)),
 		PromoType:       promoType,
 		YADAmount:       req.YADAmount,
 		DiscountPercent: req.DiscountPercent,
@@ -242,6 +259,9 @@ func (h *Handler) CreatePromoCode(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create promo code"})
 		return
 	}
+	h.audit(c, "promo.create", strPtr("promo"), uidPtr(promo.ID),
+		strPtr(fmt.Sprintf("code=%s type=%s yad=%d discount=%d max_uses=%d",
+			promo.Code, promo.PromoType, promo.YADAmount, promo.DiscountPercent, promo.MaxUses)))
 	c.JSON(http.StatusCreated, promo)
 }
 
@@ -322,15 +342,21 @@ func (h *Handler) ReplyToTicket(c *gin.Context) {
 	}
 	_ = h.repo.UpdateTicketStatus(c.Request.Context(), ticketID, domain.TicketAnswered)
 
-	// Notify user via Telegram about admin reply.
+	// Notify user via Telegram about admin reply. Both ticket.Subject (user
+	// input) and req.Message (admin input) are HTML-escaped so a stray `<`
+	// or `&` doesn't break Telegram's HTML rendering and silently drop the
+	// notification.
 	if user, err := h.repo.GetByID(c.Request.Context(), ticket.UserID); err == nil && user != nil && user.TelegramID != nil {
-		notifyMsg := fmt.Sprintf("💬 <b>Ответ на тикет</b>\n\n📌 %s\n\n%s", ticket.Subject, req.Message)
+		notifyMsg := fmt.Sprintf("💬 <b>Ответ на тикет</b>\n\n📌 %s\n\n%s",
+			html.EscapeString(ticket.Subject),
+			html.EscapeString(req.Message))
 		_ = worker.Enqueue(context.Background(), h.rdb, worker.QueueNotifyTelegram, worker.NotifyTelegramJob{
 			TelegramID: *user.TelegramID,
 			Message:    notifyMsg,
 		})
 	}
 
+	h.audit(c, "ticket.reply", strPtr("ticket"), uidPtr(ticketID), nil)
 	c.JSON(http.StatusOK, gin.H{"message": "reply sent"})
 }
 
@@ -346,6 +372,7 @@ func (h *Handler) ResetPaymentLimit(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reset rate limit"})
 		return
 	}
+	h.audit(c, "user.reset_payment_limit", strPtr("user"), uidPtr(id), nil)
 	h.log.Info("payment rate limit reset by admin", zap.String("user_id", id.String()))
 	c.JSON(http.StatusOK, gin.H{"message": "payment rate limit cleared"})
 }
@@ -371,13 +398,15 @@ func (h *Handler) CloseTicket(c *gin.Context) {
 
 	// Notify user via Telegram that the ticket has been closed.
 	if user, err := h.repo.GetByID(c.Request.Context(), ticket.UserID); err == nil && user != nil && user.TelegramID != nil {
-		notifyMsg := fmt.Sprintf("🔒 <b>Тикет закрыт</b>\n\n📌 %s\n\nЕсли проблема не решена — создайте новый тикет.", ticket.Subject)
+		notifyMsg := fmt.Sprintf("🔒 <b>Тикет закрыт</b>\n\n📌 %s\n\nЕсли проблема не решена — создайте новый тикет.",
+			html.EscapeString(ticket.Subject))
 		_ = worker.Enqueue(context.Background(), h.rdb, worker.QueueNotifyTelegram, worker.NotifyTelegramJob{
 			TelegramID: *user.TelegramID,
 			Message:    notifyMsg,
 		})
 	}
 
+	h.audit(c, "ticket.close", strPtr("ticket"), uidPtr(ticketID), nil)
 	c.JSON(http.StatusOK, gin.H{"message": "ticket closed"})
 }
 
@@ -418,5 +447,7 @@ func (h *Handler) CreateShopItem(c *gin.Context) {
 		return
 	}
 
+	h.audit(c, "shop.item.create", strPtr("shop_item"), uidPtr(item.ID),
+		strPtr(fmt.Sprintf("name=%s price_yad=%d stock=%d", item.Name, item.PriceYAD, item.Stock)))
 	c.JSON(http.StatusCreated, item)
 }

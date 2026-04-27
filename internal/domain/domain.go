@@ -51,6 +51,11 @@ const (
 	YADTxPromo              YADTxType = "promo"
 	YADTxTrial              YADTxType = "trial"
 	YADTxChargebackClawback YADTxType = "chargeback_clawback"
+	// YADTxAdminAdjust marks balance changes performed manually by an admin.
+	// Carrying it as a distinct tx_type lets ledger queries separate genuine
+	// bonuses from administrative corrections — counting negative `bonus`
+	// rows as "bonuses given out" was misleading.
+	YADTxAdminAdjust YADTxType = "admin_adjust"
 )
 
 type TicketStatus string
