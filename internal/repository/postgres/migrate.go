@@ -587,6 +587,19 @@ ALTER TABLE yad_transactions ADD CONSTRAINT yad_transactions_tx_type_check
     CHECK (tx_type IN ('referral_reward','bonus','spent','promo','trial','chargeback_clawback'));
 `,
 		},
+		{
+			// 025 — Admin balance corrections get a dedicated tx_type so ledger
+			// queries can distinguish "bonus given out" from "operator
+			// debited/credited manually". Previously every admin adjustment
+			// was tagged 'bonus', so a negative balance change ended up
+			// counted as a bonus too.
+			version: "025_yad_admin_adjust_tx_type",
+			sql: `
+ALTER TABLE yad_transactions DROP CONSTRAINT IF EXISTS yad_transactions_tx_type_check;
+ALTER TABLE yad_transactions ADD CONSTRAINT yad_transactions_tx_type_check
+    CHECK (tx_type IN ('referral_reward','bonus','spent','promo','trial','chargeback_clawback','admin_adjust'));
+`,
+		},
 	}
 
 	for _, m := range migrations {

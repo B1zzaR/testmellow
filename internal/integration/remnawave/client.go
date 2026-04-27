@@ -4,16 +4,43 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/vpnplatform/internal/config"
 )
+
+// isTransientNetErr reports whether err is the kind of network-level error
+// that's worth retrying: timeouts, connection-resets, DNS hiccups, etc.
+// 4xx/5xx HTTP responses are NOT transient — those reach the caller as
+// nil err + non-2xx status and are handled separately.
+func isTransientNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var nerr net.Error
+	if errors.As(err, &nerr) && (nerr.Timeout() || nerr.Temporary()) { //nolint:staticcheck // Temporary is fine here
+		return true
+	}
+	if errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// io.EOF on idle keep-alive connection — retry once.
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	return false
+}
 
 type CreateUserRequest struct {
 	Username             string    `json:"username"`
@@ -214,41 +241,71 @@ func (c *Client) DeleteUserHwidDevice(ctx context.Context, hwid, remnaUUID strin
 	return nil
 }
 
+// Marshalled request body cached so we can rebuild the request reader on
+// each retry without losing data. The HTTP request consumes the body on
+// first attempt, so a bare `bytes.NewReader(b)` would arrive empty on retry.
 func (c *Client) do(ctx context.Context, method, path string, body, out interface{}) error {
-	var bodyReader io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		bodyReader = bytes.NewReader(b)
+		bodyBytes = b
 	}
 	url := c.cfg.BaseURL + path
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
-	if err != nil {
-		return err
+
+	const maxRetries = 2
+	var resp *http.Response
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		var bodyReader io.Reader
+		if bodyBytes != nil {
+			bodyReader = bytes.NewReader(bodyBytes)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+		if bodyBytes != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, lastErr = c.httpClient.Do(req)
+		if lastErr == nil {
+			break
+		}
+		if !isTransientNetErr(lastErr) || attempt == maxRetries {
+			c.log.Error("remnawave request failed",
+				zap.String("method", method), zap.String("url", url),
+				zap.Int("attempt", attempt+1), zap.Error(lastErr))
+			return lastErr
+		}
+		// Backoff 200ms, 400ms; bounded by ctx.
+		backoff := time.Duration(200*(1<<attempt)) * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		c.log.Error("remnawave request failed",
-			zap.String("method", method),
-			zap.String("url", url),
-			zap.Error(err))
-		return err
-	}
+
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
+		// Truncate body in logs — error responses may echo the request and
+		// leak UUIDs / structured fields into managed log destinations
+		// (Datadog/Loki). 500 chars is plenty for diagnostics.
+		preview := string(respBody)
+		if len(preview) > 500 {
+			preview = preview[:500] + "...(truncated)"
+		}
 		c.log.Warn("remnawave error response",
 			zap.String("method", method),
 			zap.String("url", url),
 			zap.Int("status", resp.StatusCode),
-			zap.String("body", string(respBody)))
-		return fmt.Errorf("remnawave: %s %s returned %d: %s", method, path, resp.StatusCode, string(respBody))
+			zap.String("body_preview", preview))
+		return fmt.Errorf("remnawave: %s %s returned %d: %s", method, path, resp.StatusCode, preview)
 	}
 	if out == nil || len(respBody) == 0 {
 		return nil

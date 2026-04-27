@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -88,7 +89,10 @@ func (h *Handler) AdjustUserYAD(c *gin.Context) {
 	}
 	defer tx.Rollback(c.Request.Context()) //nolint:errcheck
 
-	if err := h.repo.AdjustYADBalance(c.Request.Context(), tx, id, req.Delta, domain.YADTxBonus, nil, req.Note); err != nil {
+	// Tag as admin_adjust so the ledger row is distinguishable from genuine
+	// bonuses — previously every admin debit was recorded as YADTxBonus,
+	// which made "total bonuses given" reports lie when delta was negative.
+	if err := h.repo.AdjustYADBalance(c.Request.Context(), tx, id, req.Delta, domain.YADTxAdminAdjust, nil, req.Note); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -237,6 +241,15 @@ type assignSubscriptionRequest struct {
 }
 
 // POST /admin/subscriptions/assign вЂ” find user by login, activate subscription
+//
+// Mirrors the user-side activation hardening from audit-#1: the DB mutation
+// runs inside a serializable transaction with the user row (and the latest
+// subscription row, if any) FOR-UPDATE-locked, the new expiry is computed
+// with a relative-update SQL (GREATEST(expires_at, NOW()) + N days) so two
+// concurrent admins / admin + a confirmed payment can't both compute and
+// write the same target from the same prefetched value. Remnawave sync
+// happens AFTER the DB commit, so a Remnawave outage never grants free time
+// without a paired DB record.
 func (h *Handler) AssignSubscription(c *gin.Context) {
 	var req assignSubscriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -244,7 +257,8 @@ func (h *Handler) AssignSubscription(c *gin.Context) {
 		return
 	}
 
-	user, err := h.repo.GetByUsername(c.Request.Context(), req.Login)
+	ctx := c.Request.Context()
+	user, err := h.repo.GetByUsername(ctx, req.Login)
 	if err != nil || user == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
@@ -258,74 +272,59 @@ func (h *Handler) AssignSubscription(c *gin.Context) {
 	}
 
 	now := time.Now()
-	activeSub, err := h.repo.GetActiveSubscription(c.Request.Context(), user.ID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "subscription lookup failed"})
+
+	var sub *domain.Subscription
+	var newExpiry time.Time
+	for attempt := 0; attempt < 3; attempt++ {
+		var err error
+		sub, newExpiry, err = h.assignSubInTx(ctx, user.ID, plan, durationDays, now)
+		if err == nil {
+			break
+		}
+		if isSerializationFailure(err) && attempt < 2 {
+			h.log.Info("AssignSubscription serialisation retry",
+				zap.String("user_id", user.ID.String()), zap.Int("attempt", attempt))
+			continue
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	var newExpiry time.Time
-	if activeSub != nil && activeSub.ExpiresAt.After(now) {
-		newExpiry = activeSub.ExpiresAt.Add(time.Duration(durationDays) * 24 * time.Hour)
-	} else {
-		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
-	}
-
-	// Activate in Remnawave
-	var remnaUUID string
+	// Post-commit Remnawave sync. Use RemnaUsername() — same identifier the
+	// user-side flow uses — so a later user-side activation finds and reuses
+	// this Remnawave account instead of creating a duplicate.
 	if h.remna != nil {
-		if user.RemnaUserUUID == nil || *user.RemnaUserUUID == "" {
-			remnaUser, err := h.remna.CreateUser(c.Request.Context(), user.ID.String(), newExpiry)
-			if err != nil {
-				// Fallback: if the user already exists in Remnawave, recover UUID.
-				existing, lookupErr := h.remna.GetUserByUsername(c.Request.Context(), user.ID.String())
-				if lookupErr != nil || existing == nil {
-					c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-					return
-				}
-				remnaUUID = existing.UUID
-				_ = h.repo.UpdateRemnaUUID(c.Request.Context(), user.ID, remnaUUID)
-				_ = h.remna.UpdateExpiry(c.Request.Context(), remnaUUID, newExpiry)
-				_ = h.remna.EnableUser(c.Request.Context(), remnaUUID)
+		remnaName := user.RemnaUsername()
+		var remnaUUID string
+		if user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
+			remnaUUID = *user.RemnaUserUUID
+			if err := h.remna.UpdateExpiry(ctx, remnaUUID, newExpiry); err != nil {
+				h.log.Error("admin assign: remnawave update expiry failed",
+					zap.String("user_id", user.ID.String()), zap.Error(err))
 			} else {
-				remnaUUID = remnaUser.UUID
-				_ = h.repo.UpdateRemnaUUID(c.Request.Context(), user.ID, remnaUUID)
+				_ = h.remna.EnableUser(ctx, remnaUUID)
 			}
 		} else {
-			remnaUUID = *user.RemnaUserUUID
-			if err := h.remna.UpdateExpiry(c.Request.Context(), remnaUUID, newExpiry); err != nil {
-				c.JSON(http.StatusBadGateway, gin.H{"error": "remnawave update expiry: " + err.Error()})
-				return
+			remnaUser, err := h.remna.CreateUser(ctx, remnaName, newExpiry)
+			if err != nil {
+				existing, lookupErr := h.remna.GetUserByUsername(ctx, remnaName)
+				if lookupErr != nil || existing == nil {
+					// Legacy fallback: try UUID-based username from older registrations.
+					existing, lookupErr = h.remna.GetUserByUsername(ctx, user.ID.String())
+				}
+				if lookupErr != nil || existing == nil {
+					h.log.Error("admin assign: remnawave create user failed",
+						zap.String("user_id", user.ID.String()), zap.Error(err))
+				} else {
+					remnaUUID = existing.UUID
+					_ = h.repo.UpdateRemnaUUID(ctx, user.ID, remnaUUID)
+					_ = h.remna.UpdateExpiry(ctx, remnaUUID, newExpiry)
+					_ = h.remna.EnableUser(ctx, remnaUUID)
+				}
+			} else {
+				remnaUUID = remnaUser.UUID
+				_ = h.repo.UpdateRemnaUUID(ctx, user.ID, remnaUUID)
 			}
-			_ = h.remna.EnableUser(c.Request.Context(), remnaUUID)
-		}
-	}
-
-	var sub *domain.Subscription
-	if activeSub != nil {
-		if err := h.repo.ExtendSubscription(c.Request.Context(), nil, activeSub.ID, newExpiry, plan); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to extend subscription"})
-			return
-		}
-		activeSub.ExpiresAt = newExpiry
-		sub = activeSub
-	} else {
-		sub = &domain.Subscription{
-			ID:        uuid.New(),
-			UserID:    user.ID,
-			Plan:      plan,
-			Status:    domain.SubStatusActive,
-			StartsAt:  now,
-			ExpiresAt: newExpiry,
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
-		if remnaUUID != "" {
-			sub.RemnaSubUUID = &remnaUUID
-		}
-		if err := h.repo.CreateSubscription(c.Request.Context(), nil, sub); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create subscription"})
-			return
 		}
 	}
 
@@ -343,6 +342,59 @@ func (h *Handler) AssignSubscription(c *gin.Context) {
 		"expires_at":   newExpiry,
 		"login":        req.Login,
 	})
+}
+
+// assignSubInTx is the per-attempt body of AssignSubscription. Runs inside a
+// fresh Serializable transaction so the caller can simply retry on 40001.
+// No Remnawave I/O — that's done after commit.
+func (h *Handler) assignSubInTx(ctx context.Context, userID uuid.UUID,
+	plan domain.SubscriptionPlan, durationDays int, now time.Time,
+) (*domain.Subscription, time.Time, error) {
+	tx, err := h.repo.BeginSerializableTx(ctx)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := h.repo.LockUserForUpdate(ctx, tx, userID); err != nil {
+		return nil, time.Time{}, err
+	}
+	existing, err := h.repo.LockLatestSubscriptionForUpdate(ctx, tx, userID)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+
+	var sub *domain.Subscription
+	var newExpiry time.Time
+	if existing != nil {
+		newExpiry, err = h.repo.ExtendSubscriptionByDuration(ctx, tx, existing.ID, durationDays, plan)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		existing.ExpiresAt = newExpiry
+		existing.Plan = plan
+		existing.Status = domain.SubStatusActive
+		sub = existing
+	} else {
+		newExpiry = now.Add(time.Duration(durationDays) * 24 * time.Hour)
+		sub = &domain.Subscription{
+			ID:        uuid.New(),
+			UserID:    userID,
+			Plan:      plan,
+			Status:    domain.SubStatusActive,
+			StartsAt:  now,
+			ExpiresAt: newExpiry,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := h.repo.CreateSubscription(ctx, tx, sub); err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, time.Time{}, err
+	}
+	return sub, newExpiry, nil
 }
 
 // GET /admin/subscriptions?status=&user_id=&limit=&offset=
@@ -372,6 +424,11 @@ type setSubStatusRequest struct {
 }
 
 // PATCH /admin/subscriptions/:id/status
+//
+// Synchronises Remnawave with the new logical state. Without this, the
+// admin UI would display "expired" while the user is still happily online,
+// or "active" while VPN access is disabled — both confuse support and one
+// of them costs revenue.
 func (h *Handler) SetSubscriptionStatus(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -383,10 +440,47 @@ func (h *Handler) SetSubscriptionStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.repo.SetSubscriptionStatus(c.Request.Context(), id, domain.SubscriptionStatus(req.Status)); err != nil {
+
+	ctx := c.Request.Context()
+	sub, err := h.repo.GetSubscriptionByID(ctx, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "subscription lookup failed"})
+		return
+	}
+	if sub == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+		return
+	}
+
+	newStatus := domain.SubscriptionStatus(req.Status)
+	if err := h.repo.SetSubscriptionStatus(ctx, id, newStatus); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update status"})
 		return
 	}
+
+	// Best-effort Remnawave sync — log on failure but don't undo the DB write.
+	if h.remna != nil {
+		user, _ := h.repo.GetByID(ctx, sub.UserID)
+		if user != nil && user.RemnaUserUUID != nil && *user.RemnaUserUUID != "" {
+			switch newStatus {
+			case domain.SubStatusActive, domain.SubStatusTrial:
+				if err := h.remna.UpdateExpiry(ctx, *user.RemnaUserUUID, sub.ExpiresAt); err != nil {
+					h.log.Warn("set_status: remnawave update expiry failed",
+						zap.String("sub_id", id.String()), zap.Error(err))
+				}
+				if err := h.remna.EnableUser(ctx, *user.RemnaUserUUID); err != nil {
+					h.log.Warn("set_status: remnawave enable failed",
+						zap.String("sub_id", id.String()), zap.Error(err))
+				}
+			case domain.SubStatusExpired, domain.SubStatusCanceled, domain.SubStatusReverted:
+				if err := h.remna.DisableUser(ctx, *user.RemnaUserUUID); err != nil {
+					h.log.Warn("set_status: remnawave disable failed",
+						zap.String("sub_id", id.String()), zap.Error(err))
+				}
+			}
+		}
+	}
+
 	h.audit(c, "subscription.set_status", strPtr("subscription"), uidPtr(id), strPtr(req.Status))
 	c.JSON(http.StatusOK, gin.H{"message": "status updated"})
 }
@@ -467,7 +561,7 @@ func (h *Handler) AdjustYAD(c *gin.Context) {
 	}
 	defer tx.Rollback(c.Request.Context()) //nolint:errcheck
 
-	if err := h.repo.AdjustYADBalance(c.Request.Context(), tx, userID, req.Delta, domain.YADTxBonus, nil, req.Note); err != nil {
+	if err := h.repo.AdjustYADBalance(c.Request.Context(), tx, userID, req.Delta, domain.YADTxAdminAdjust, nil, req.Note); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

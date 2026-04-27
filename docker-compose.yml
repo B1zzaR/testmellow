@@ -14,6 +14,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Resource caps so a runaway query / memory leak in any service can't OOM
+    # the host and take down everything else (including the postgres-backup
+    # cycle on the same host).
+    mem_limit: 1g
+    cpus: 1.0
     networks:
       - internal
 
@@ -36,6 +41,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    mem_limit: 384m
+    cpus: 0.5
     networks:
       - internal
 
@@ -86,6 +93,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    mem_limit: 512m
+    cpus: 1.0
     networks:
       - internal
     logging:
@@ -124,6 +133,8 @@ services:
       # production when ALLOWED_ORIGINS is '*' or unset. Pass the API value through.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS is required}
       ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
+    mem_limit: 384m
+    cpus: 0.5
     networks:
       - internal
     logging:
@@ -171,6 +182,8 @@ services:
       # Bot doesn't issue admin promotions, but config.Load validates length
       # if non-empty, so pass it through for env consistency.
       ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN:-}
+    mem_limit: 256m
+    cpus: 0.5
     networks:
       - internal
     logging:
@@ -189,6 +202,15 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    healthcheck:
+      # The nginx alpine image ships wget; / serves the SPA index.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    mem_limit: 128m
+    cpus: 0.25
     networks:
       - internal
     logging:
@@ -205,22 +227,58 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      # PGPASSWORD must come from the same source as the postgres service so
+      # pg_dump authenticates with the right user. POSTGRES_USER and
+      # POSTGRES_DB are propagated explicitly — earlier this script silently
+      # fell back to defaults `vpn` / `vpnplatform`, which produced 0-byte
+      # backups (and rotated out good ones) whenever the operator changed
+      # POSTGRES_USER or POSTGRES_DB in .env.
       PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER:-vpn}
+      POSTGRES_DB: ${POSTGRES_DB:-vpnplatform}
     volumes:
       - pgbackups:/backups
     networks:
       - internal
-    # Daily dump at 03:00 UTC, keep last 7 files.
+    # Daily dump, keep last 7 files. The script:
+    #   - Writes to a .tmp file first, then renames on success (atomic publish).
+    #   - Refuses to keep dumps smaller than 1 KiB (those almost certainly mean
+    #     pg_dump failed and gzip wrote an empty stream — silently rotating out
+    #     a real backup of yesterday on the next iteration).
+    #   - Uses an explicit conditional on pg_dump exit code so the pipe-to-gzip
+    #     pattern can't swallow the failure (busybox sh has no pipefail).
     entrypoint: >
       sh -c "
+        set -eu;
         while true; do
-          FILENAME=/backups/vpnplatform_$$(date +%Y%m%d_%H%M%S).sql.gz;
-          pg_dump -h postgres -U $${POSTGRES_USER:-vpn} $${POSTGRES_DB:-vpnplatform} | gzip > $$FILENAME;
-          echo \"Backup created: $$FILENAME\";
-          ls -tp /backups/*.sql.gz 2>/dev/null | tail -n +8 | xargs -r rm --;
+          TS=$$(date +%Y%m%d_%H%M%S);
+          FINAL=/backups/vpnplatform_$${TS}.sql.gz;
+          TMP=/backups/.vpnplatform_$${TS}.sql.gz.partial;
+          DUMP=/backups/.vpnplatform_$${TS}.sql.partial;
+          if pg_dump -h postgres -U \"$${POSTGRES_USER}\" \"$${POSTGRES_DB}\" > $${DUMP}; then
+            if gzip -c $${DUMP} > $${TMP}; then
+              SIZE=$$(stat -c%s $${TMP} 2>/dev/null || wc -c < $${TMP});
+              if [ \"$${SIZE}\" -ge 1024 ]; then
+                mv $${TMP} $${FINAL};
+                echo \"Backup created: $${FINAL} ($${SIZE} bytes)\";
+                ls -tp /backups/vpnplatform_*.sql.gz 2>/dev/null | tail -n +8 | xargs -r rm --;
+              else
+                echo \"FATAL: backup too small ($${SIZE} bytes), refusing to publish\" >&2;
+                rm -f $${TMP};
+              fi;
+            else
+              echo \"FATAL: gzip failed\" >&2;
+              rm -f $${TMP};
+            fi;
+          else
+            echo \"FATAL: pg_dump failed\" >&2;
+          fi;
+          rm -f $${DUMP};
           sleep 86400;
         done
       "
+    mem_limit: 256m
+    cpus: 0.5
 
   caddy:
     image: caddy:2-alpine
@@ -240,7 +298,9 @@ services:
       backend:
         condition: service_healthy
       frontend:
-        condition: service_started
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.5
     networks:
       - internal
     logging:

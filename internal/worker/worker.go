@@ -150,8 +150,48 @@ func (w *Worker) Run(ctx context.Context) {
 	go w.periodicRewardSweep(ctx)
 	go w.periodicPaymentExpirySweep(ctx)
 	go w.periodicExpiryWarnings(ctx)
-<-ctx.Done()
+	go w.periodicDeadQueueAlert(ctx)
+	<-ctx.Done()
 	w.log.Info("worker shutting down")
+}
+
+// periodicDeadQueueAlert logs (loudly) when any DLQ has accumulated jobs.
+// The retry policy (requeueOrDead, max 5 attempts) silently moves failing
+// jobs to "dead:<queue>" and otherwise forgets about them — without an
+// alert path, payment activations stuck in the dead-letter queue can sit
+// there for days while the operator wonders why a user's "paid" subscription
+// never turned into VPN access. A periodic ERROR-level log is the minimum
+// observability hook; pair this with an alert rule on the log shipper.
+func (w *Worker) periodicDeadQueueAlert(ctx context.Context) {
+	queues := []string{
+		QueuePaymentProcess,
+		QueueSubscriptionActivate,
+		QueueDeviceExpansionActivate,
+		QueueReferralReward,
+		QueueReferralPayout,
+		QueueNotifyTelegram,
+		QueueTFAChallenge,
+	}
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, q := range queues {
+				n, err := w.rdb.LLen(ctx, "dead:"+q).Result()
+				if err != nil {
+					continue
+				}
+				if n > 0 {
+					w.log.Error("dead-letter queue has stuck messages",
+						zap.String("queue", q),
+						zap.Int64("count", n))
+				}
+			}
+		}
+	}
 }
 
 // loop is the main BRPOP consume loop for a queue
