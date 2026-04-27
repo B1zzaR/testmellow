@@ -74,7 +74,7 @@ export function AdminUsersPage() {
           {
             key: 'ltv',
             header: 'LTV',
-            render: (u) => formatRubles(u.ltv),
+            render: (u) => formatRubles(u.ltv_kopecks),
           },
           {
             key: 'risk_score',
