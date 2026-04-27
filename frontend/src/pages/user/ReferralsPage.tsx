@@ -5,7 +5,7 @@ import { Card, StatCard } from '@/components/ui/Card'
 import { Alert } from '@/components/ui/Alert'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { Icon } from '@/components/ui/Icons'
-import { formatDate, formatYAD, formatRubles } from '@/utils/formatters'
+import { formatDate, formatYAD } from '@/utils/formatters'
 
 export function ReferralsPage() {
   const { data, isLoading, isError } = useQuery({

@@ -293,29 +293,6 @@ export function DeviceList({ data }: DeviceListProps) {
   )
 }
 
-// ─── Tier badge ───────────────────────────────────────────────────────────────
-
-interface TierBadgeProps {
-  label: string
-  daysRemaining: number
-}
-
-function TierBadge({ label, daysRemaining }: TierBadgeProps) {
-  const isHot = daysRemaining < 8
-  return (
-    <span
-      className={[
-        'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide',
-        isHot
-          ? 'bg-red-500/10 text-red-500 dark:bg-red-500/20 dark:text-red-400'
-          : 'bg-orange-500/10 text-orange-500 dark:bg-orange-400/20 dark:text-orange-400',
-      ].join(' ')}
-    >
-      {isHot ? '⚡' : '🔥'} {label}
-    </span>
-  )
-}
-
 // ─── Expansion option row ─────────────────────────────────────────────────────
 
 interface ExpansionOptionProps {
