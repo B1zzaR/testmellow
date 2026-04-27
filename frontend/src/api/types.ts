@@ -18,7 +18,7 @@ export interface User {
   telegram_photo_url: string | null
   yad_balance: number
   referral_code: string
-  ltv: number
+  ltv_kopecks: number
   trial_used: boolean
   is_admin: boolean
   is_banned: boolean

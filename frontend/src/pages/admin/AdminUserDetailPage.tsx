@@ -219,7 +219,7 @@ export function AdminUserDetailPage() {
                 </div>
                 <div>
                   <dt className="text-slate-500">LTV</dt>
-                  <dd className="mt-0.5 font-semibold">{formatRubles(user.ltv)}</dd>
+                  <dd className="mt-0.5 font-semibold">{formatRubles(user.ltv_kopecks)}</dd>
                 </div>
                 <div>
                   <dt className="text-slate-500">Уровень риска</dt>
