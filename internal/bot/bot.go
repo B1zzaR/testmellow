@@ -261,17 +261,18 @@ func (b *Bot) mainMenuMarkup(user *domain.User) *tele.ReplyMarkup {
 	btnPromo := rm.Data("🎟 Промокод", "menu_promo")
 	btnRef := rm.Data("👥 Рефералы", "menu_referrals")
 	btnBalance := rm.Data("💰 Кошелёк", "menu_balance")
-	btnHelp := rm.Data("❓ Помощь", "menu_help")
+	btnAccount := rm.Data("🔐 Аккаунт", "menu_account")
 	btnSupport := rm.Data("🎫 Поддержка", "menu_support")
 	btnInfo := rm.Data("ℹ️ О сервисе", "menu_info")
+	btnHelp := rm.Data("❓ Помощь", "menu_help")
 
 	rows := []tele.Row{
 		rm.Row(btnBuy, btnSubs),
 		rm.Row(btnDevices, btnTraffic),
 		rm.Row(btnTrial, btnPromo),
 		rm.Row(btnRef, btnBalance),
-		rm.Row(btnHelp, btnSupport),
-		rm.Row(btnInfo),
+		rm.Row(btnAccount, btnSupport),
+		rm.Row(btnInfo, btnHelp),
 	}
 	if user.IsAdmin {
 		btnAdmin := rm.Data("⚙️ Админ-панель", "menu_admin")
@@ -791,13 +792,15 @@ func (b *Bot) handleTicketMenu(c tele.Context) error {
 	}
 	rm := &tele.ReplyMarkup{}
 	btnNew := rm.Data("✏️ Создать тикет", "menu_newticket")
-	rm.Inline(rm.Row(btnNew), rm.Row(backBtn(rm)))
+	btnSuggest := rm.Data("💡 Предложение", "menu_suggest")
+	rm.Inline(rm.Row(btnNew, btnSuggest), rm.Row(backBtn(rm)))
 
 	if len(tickets) == 0 {
 		return c.Send(
 			"*🎫 Поддержка*\n"+brandLine+"\n\n"+
 				"Открытых обращений нет.\n\n"+
-				"Создайте тикет: `/newticket тема сообщения`",
+				"Создайте тикет: `/newticket тема сообщения`\n"+
+				"Анонимная предложка: `/suggest текст`",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
@@ -1871,6 +1874,85 @@ func (b *Bot) RegisterBuyCallbacks() {
 				"📝  Пример:\n`/newticket Не подключается VPN на iPhone`",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_suggest"}, func(c tele.Context) error {
+		_ = c.Respond()
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(
+			"💡 *Анонимная предложка*\n"+brandLine+"\n\n"+
+				"✉️  Формат: `/suggest текст`\n\n"+
+				"📝  Пример:\n`/suggest Добавьте автопродление подписки`\n\n"+
+				"_Сообщения хранятся без привязки к аккаунту._\n"+
+				"_Лимит: 3 предложения в сутки._",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	})
+
+	// ─── Account submenu (link/unlink/2FA/reset password) ────────────────
+	b.bot.Handle(&tele.Btn{Unique: "menu_account"}, func(c tele.Context) error {
+		_ = c.Respond()
+		ctx := context.Background()
+		user, err := b.getUser(ctx, c)
+		if err != nil {
+			return c.Send("Ошибка: " + err.Error())
+		}
+		rm := &tele.ReplyMarkup{}
+		tfaState := "выкл"
+		if user.TFAEnabled {
+			tfaState = "вкл"
+		}
+		btnTFA := rm.Data("🛡 2FA: "+tfaState, "menu_toggle2fa")
+		btnReset := rm.Data("🔑 Сбросить пароль", "menu_resetpassword")
+		btnLink := rm.Data("🔗 Привязать сайт", "menu_link")
+		btnUnlink := rm.Data("🔓 Отвязать", "menu_unlink")
+		rm.Inline(
+			rm.Row(btnTFA, btnReset),
+			rm.Row(btnLink, btnUnlink),
+			rm.Row(backBtn(rm)),
+		)
+		login := "—"
+		if user.Username != nil {
+			login = *user.Username
+		}
+		return c.Send(fmt.Sprintf(
+			"🔐 *Аккаунт*\n"+brandLine+"\n\n"+
+				"👤  Логин: `%s`\n"+
+				"🆔  ID: `%d`\n"+
+				"🛡  2FA: *%s*\n\n"+
+				"_Управляйте безопасностью и привязкой к сайту._",
+			login, c.Sender().ID, tfaState,
+		), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_toggle2fa"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleToggle2FA(c)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_resetpassword"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleResetPassword(c)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_link"}, func(c tele.Context) error {
+		_ = c.Respond()
+		webURL := b.cfg.WebAppURL
+		if webURL == "" {
+			webURL = "https://vpn-platform.ru"
+		}
+		rm := &tele.ReplyMarkup{}
+		btnSite := rm.URL("🌐 Открыть сайт", webURL+"/settings")
+		rm.Inline(rm.Row(btnSite), rm.Row(backBtn(rm)))
+		return c.Send(
+			"🔗 *Привязать аккаунт сайта*\n"+brandLine+"\n\n"+
+				"  1️⃣  На сайте откройте *Настройки*\n"+
+				"  2️⃣  Нажмите *«Привязать Telegram»*\n"+
+				"  3️⃣  Скопируйте команду и пришлите её сюда\n\n"+
+				"📌  Формат: `/link КОД`",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_unlink"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handleUnlink(c)
 	})
 	b.bot.Handle(&tele.Btn{Unique: "menu_help"}, func(c tele.Context) error {
 		_ = c.Respond()
