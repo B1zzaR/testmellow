@@ -7,7 +7,7 @@ export function AppLayout() {
   const isOnline = useOnlineStatus()
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gradient-to-b from-gray-50 to-white dark:from-surface-950 dark:to-surface-950 dark:bg-surface-950">
+    <div className="flex h-screen h-[100dvh] overflow-hidden bg-gradient-to-b from-gray-50 to-white dark:from-surface-950 dark:to-surface-950 dark:bg-surface-950">
       {/* Sidebar — hidden on mobile, static on ≥lg */}
       <div className="hidden lg:flex lg:w-64 lg:shrink-0">
         <Sidebar />
@@ -24,8 +24,8 @@ export function AppLayout() {
           </div>
         )}
 
-        {/* pb-16 on mobile to clear the bottom nav bar */}
-        <main className="flex-1 overflow-y-auto p-4 pb-20 text-gray-900 dark:text-slate-100 scrollbar-thin mobile-scroll md:p-6 lg:pb-6">
+        {/* pb on mobile clears the bottom nav (~56px) + safe-area-inset; lg drops the extra space */}
+        <main className="flex-1 overflow-y-auto p-4 pb-[calc(env(safe-area-inset-bottom,0px)+6.5rem)] text-gray-900 dark:text-slate-100 scrollbar-thin mobile-scroll md:p-6 lg:pb-6">
           <Outlet />
         </main>
       </div>
