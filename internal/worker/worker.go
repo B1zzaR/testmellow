@@ -551,6 +551,25 @@ func (w *Worker) processRevertedPayment(ctx context.Context, txID, userID uuid.U
 		_ = w.remna.UpdateHwidDeviceLimit(ctx, *user.RemnaUserUUID, domain.DeviceMaxPerUser)
 	}
 
+	// Telegram notification: tell the user the payment was reverted so they
+	// don't sit waiting for VPN access that's never coming. Without this, the
+	// user only sees the change next time they open the bot/site.
+	if user != nil && user.TelegramID != nil {
+		var msg string
+		amount := float64(payment.AmountKopecks) / 100
+		switch newStatus {
+		case domain.PaymentStatusCanceled:
+			msg = fmt.Sprintf("❌ <b>Платёж отменён</b>\n\nТариф: %s\nСумма: %.0f ₽\nПлатёж: %s\n\nЕсли это ошибка — оформите новый платёж в боте.",
+				string(plan), amount, txID.String()[:8])
+		case domain.PaymentStatusChargebacked:
+			msg = fmt.Sprintf("🔄 <b>Возврат платежа</b>\n\nТариф: %s\nСумма: %.0f ₽\nПлатёж: %s\n\nДоступ скорректирован. Если есть вопросы — обратитесь в поддержку.",
+				string(plan), amount, txID.String()[:8])
+		}
+		if msg != "" {
+			w.enqueueNotify(ctx, *user.TelegramID, msg)
+		}
+	}
+
 	w.log.Info("payment reverted",
 		zap.String("tx_id", txID.String()),
 		zap.String("status", string(newStatus)),

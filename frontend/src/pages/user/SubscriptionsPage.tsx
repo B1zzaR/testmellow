@@ -20,6 +20,10 @@ function discountedPrice(price: number, percent: number): number {
   return Math.max(0, Math.round(price * (1 - percent / 100)))
 }
 
+// Number of days before expiry during which renewal is offered. Mirrors the
+// bot's renewalWindowDays constant — keep them in sync.
+const RENEWAL_WINDOW_DAYS = 10
+
 function ConnectionBlock() {
   const [copied, setCopied] = useState(false)
   const [showQR, setShowQR] = useState(false)
@@ -183,7 +187,7 @@ export function SubscriptionsPage() {
               </p>
             </div>
           )}
-          {daysUntil(activeSub.expires_at) > 0 && daysUntil(activeSub.expires_at) <= 15 && (
+          {daysUntil(activeSub.expires_at) > 0 && daysUntil(activeSub.expires_at) <= RENEWAL_WINDOW_DAYS && (
             <div className="mb-4 flex items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
               <span className="shrink-0 text-yellow-500">⚠</span>
               <p className="text-sm text-yellow-600 dark:text-yellow-400">
@@ -255,8 +259,8 @@ export function SubscriptionsPage() {
       {/* Devices */}
       {activeSub && devicesData && <DeviceList data={devicesData} isTrial={activeSub.status === 'trial'} />}
 
-      {/* Plan selector — shown when no active sub or ≤15 days remain */}
-      {(!activeSub || daysUntil(activeSub.expires_at) <= 15) && <Card title={activeSub ? 'Продлить подписку' : 'Выбрать тариф'}>
+      {/* Plan selector — shown when no active sub or ≤RENEWAL_WINDOW_DAYS remain */}
+      {(!activeSub || daysUntil(activeSub.expires_at) <= RENEWAL_WINDOW_DAYS) && <Card title={activeSub ? 'Продлить подписку' : 'Выбрать тариф'}>
 
         {/* Active discount banner */}
         {discount > 0 && (

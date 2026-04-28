@@ -595,6 +595,11 @@ func (s *SubscriptionService) GetPendingPayments(ctx context.Context, userID uui
 	return s.repo.GetPendingPayments(ctx, userID)
 }
 
+// GetRecentPayments returns the most recent payments for a user (any status).
+func (s *SubscriptionService) GetRecentPayments(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Payment, error) {
+	return s.repo.GetRecentPayments(ctx, userID, limit)
+}
+
 // TouchPayment resets the expiry of a PENDING payment to now+30 minutes,
 // called when the user returns to the app after visiting the payment page.
 // Returns the updated payment (with new expires_at) or an error.

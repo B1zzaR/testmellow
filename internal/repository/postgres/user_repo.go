@@ -890,13 +890,15 @@ func (r *UserRepo) ListSubscriptions(ctx context.Context, userID uuid.UUID) ([]*
 	return subs, rows.Err()
 }
 
-// GetSubscriptionsExpiringIn returns active subscriptions expiring within the given duration.
+// GetSubscriptionsExpiringIn returns active and trial subscriptions expiring within the given duration.
+// Trial subs were previously excluded, so trial users never received the
+// expiry warning sequence and silently lost access at the end of the period.
 func (r *UserRepo) GetSubscriptionsExpiringIn(ctx context.Context, within time.Duration) ([]*domain.Subscription, error) {
 	deadline := time.Now().Add(within)
 	rows, err := r.db.Query(ctx, `
 		SELECT id, user_id, plan, status, starts_at, expires_at, remna_sub_uuid, paid_kopecks, payment_id, created_at, updated_at
 		FROM subscriptions
-		WHERE status = 'active' AND expires_at > NOW() AND expires_at <= $1
+		WHERE status IN ('active','trial') AND expires_at > NOW() AND expires_at <= $1
 		ORDER BY expires_at ASC`, deadline)
 	if err != nil {
 		return nil, err
@@ -1092,6 +1094,29 @@ func (r *UserRepo) GetPendingPaymentByPlan(ctx context.Context, userID uuid.UUID
 		return nil, nil
 	}
 	return p, err
+}
+
+// GetRecentPayments returns the most recent payments for a user across all
+// statuses (PENDING/CONFIRMED/EXPIRED/CANCELED/CHARGEBACKED). Used by the bot's
+// /paystatus command so the user can see what happened to a specific payment
+// — the "history" endpoint only returns CONFIRMED, which hides failures.
+func (r *UserRepo) GetRecentPayments(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Payment, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id, user_id, amount_kopecks, currency, status, plan,
+		       payment_method, platega_payload, redirect_url, addon_qty, webhook_received_at, idempotency,
+		       expires_at, created_at, updated_at
+		FROM payments
+		WHERE user_id=$1
+		ORDER BY created_at DESC
+		LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPayments(rows)
 }
 
 // GetPendingPayments returns non-expired PENDING payments for a user.

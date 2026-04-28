@@ -211,6 +211,8 @@ func (b *Bot) registerHandlers() {
 	b.bot.Handle("/traffic", b.handleTraffic)
 	b.bot.Handle("/history", b.handleHistory)
 	b.bot.Handle("/payments", b.handlePayments)
+	b.bot.Handle("/paystatus", b.handlePaymentStatus)
+	b.bot.Handle("/suggest", b.handleSuggest)
 	b.bot.Handle("/toggle2fa", b.handleToggle2FA)
 
 	b.bot.Handle(tele.OnCallback, b.handleGenericCallback)
@@ -219,6 +221,12 @@ func (b *Bot) registerHandlers() {
 // ─── Brand helpers ────────────────────────────────────────────────────────────
 
 const brandLine = "━━━━━━━━━━━━━━━━━━━━━"
+
+// renewalWindowDays is the number of days before subscription expiry during
+// which the user may purchase/renew. Outside this window a renewal attempt
+// is rejected so a user with a long active subscription can't stack a second
+// one onto it (which would "lose" days when extended).
+const renewalWindowDays = 10
 
 func mainMenuText(user *domain.User, tgID int64, username string) string {
 	name := username
@@ -457,18 +465,18 @@ func (b *Bot) handleBuy(c tele.Context) error {
 		return c.Send("Ошибка: " + err.Error())
 	}
 
-	// Block renewal if active subscription has more than 15 days left.
+	// Block renewal if active subscription has more than renewalWindowDays left.
 	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
 	if activeSub != nil {
 		daysLeft := int(time.Until(activeSub.ExpiresAt).Hours() / 24)
-		if daysLeft > 15 {
+		if daysLeft > renewalWindowDays {
 			rm := &tele.ReplyMarkup{}
 			rm.Inline(rm.Row(backBtn(rm)))
 			return c.Send(fmt.Sprintf(
 				"⏳ *Продление недоступно*\n"+brandLine+"\n\n"+
 					"До окончания подписки ещё *%d дн.*\n\n"+
-					"_Продление откроется за 15 дней до конца._",
-				daysLeft,
+					"_Продление откроется за %d дней до конца._",
+				daysLeft, renewalWindowDays,
 			), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 		}
 	}
@@ -519,14 +527,14 @@ func (b *Bot) handleBuyRubles(plan domain.SubscriptionPlan) tele.HandlerFunc {
 
 		activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
 		if activeSub != nil {
-			if daysLeft := int(time.Until(activeSub.ExpiresAt).Hours() / 24); daysLeft > 15 {
+			if daysLeft := int(time.Until(activeSub.ExpiresAt).Hours() / 24); daysLeft > renewalWindowDays {
 				rm := &tele.ReplyMarkup{}
 				rm.Inline(rm.Row(backBtn(rm)))
 				return c.Send(fmt.Sprintf(
 					"⏳ *Продление недоступно*\n"+brandLine+"\n\n"+
 						"До окончания подписки ещё *%d дн.*\n\n"+
-						"_Продление откроется за 15 дней до конца._",
-					daysLeft,
+						"_Продление откроется за %d дней до конца._",
+					daysLeft, renewalWindowDays,
 				), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 			}
 		}
@@ -565,14 +573,14 @@ func (b *Bot) handleBuyYAD(plan domain.SubscriptionPlan) tele.HandlerFunc {
 
 		activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
 		if activeSub != nil {
-			if daysLeft := int(time.Until(activeSub.ExpiresAt).Hours() / 24); daysLeft > 15 {
+			if daysLeft := int(time.Until(activeSub.ExpiresAt).Hours() / 24); daysLeft > renewalWindowDays {
 				rm := &tele.ReplyMarkup{}
 				rm.Inline(rm.Row(backBtn(rm)))
 				return c.Send(fmt.Sprintf(
 					"⏳ *Продление недоступно*\n"+brandLine+"\n\n"+
 						"До окончания подписки ещё *%d дн.*\n\n"+
-						"_Продление откроется за 15 дней до конца._",
-					daysLeft,
+						"_Продление откроется за %d дней до конца._",
+					daysLeft, renewalWindowDays,
 				), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 			}
 		}
@@ -655,9 +663,9 @@ func (b *Bot) handleMySubs(c tele.Context) error {
 	btnVPN := rm.Data("🔗 Подключить VPN", "get_vpn_link")
 	var rows []tele.Row
 	rows = append(rows, rm.Row(btnVPN))
-	// Show renew button only when ≤15 days remain on the active subscription.
+	// Show renew button only when ≤renewalWindowDays remain on the active subscription.
 	activeSub, _ := b.repo.GetActiveSubscription(ctx, user.ID)
-	if activeSub == nil || int(time.Until(activeSub.ExpiresAt).Hours()/24) <= 15 {
+	if activeSub == nil || int(time.Until(activeSub.ExpiresAt).Hours()/24) <= renewalWindowDays {
 		btnRenew := rm.Data("🔄 Продлить", "menu_buy")
 		rows = append(rows, rm.Row(btnRenew))
 	}
@@ -1135,34 +1143,171 @@ func (b *Bot) handlePayments(c tele.Context) error {
 	}
 
 	payments, err := b.subSvc.GetPendingPayments(ctx, user.ID)
+	rm := &tele.ReplyMarkup{}
+	btnStatus := rm.Data("🔍 Проверить статус", "menu_paystatus")
+
 	if err != nil || len(payments) == 0 {
-		rm := &tele.ReplyMarkup{}
-		rm.Inline(rm.Row(backBtn(rm)))
+		rm.Inline(rm.Row(btnStatus), rm.Row(backBtn(rm)))
 		return c.Send(
-			"💳 *Платежи*\n"+brandLine+"\n\n✅  Незавершённых платежей нет.",
+			"💳 *Платежи*\n"+brandLine+"\n\n✅  Незавершённых платежей нет.\n\n"+
+				"_Все прошлые платежи доступны через_ /paystatus",
 			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 		)
 	}
 
 	msg := "💳 *Незавершённые платежи*\n" + brandLine + "\n\n"
-	rm := &tele.ReplyMarkup{}
 	var rows []tele.Row
 	for _, p := range payments {
+		expStr := "—"
+		if p.ExpiresAt != nil {
+			expStr = p.ExpiresAt.Format("15:04")
+		}
 		msg += fmt.Sprintf(
 			"  ▸ *%s* — %.0f ₽\n      `%s` · до %s\n",
 			planName(p.Plan),
 			float64(p.AmountKopecks)/100,
 			p.ID.String()[:8],
-			p.ExpiresAt.Format("15:04"),
+			expStr,
 		)
 		if p.RedirectURL != "" {
 			btn := rm.URL("💳 Оплатить "+p.ID.String()[:8], p.RedirectURL)
 			rows = append(rows, rm.Row(btn))
 		}
+		rows = append(rows, rm.Row(rm.Data("🔄 Проверить "+p.ID.String()[:8], "paychk_"+p.ID.String())))
 	}
+	rows = append(rows, rm.Row(btnStatus), rm.Row(backBtn(rm)))
+	rm.Inline(rows...)
+	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /paystatus ───────────────────────────────────────────────────────────────
+
+// payStatusLabel maps a payment status to a Russian label + emoji for the UI.
+func payStatusLabel(s domain.PaymentStatus) string {
+	switch s {
+	case domain.PaymentStatusPending:
+		return "🟡 Ожидает оплаты"
+	case domain.PaymentStatusConfirmed:
+		return "🟢 Оплачен"
+	case domain.PaymentStatusCanceled:
+		return "🔴 Отменён"
+	case domain.PaymentStatusChargebacked:
+		return "🟠 Возврат"
+	case domain.PaymentStatusExpired:
+		return "⚫ Истёк"
+	default:
+		return string(s)
+	}
+}
+
+func (b *Bot) handlePaymentStatus(c tele.Context) error {
+	ctx := context.Background()
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	payments, err := b.subSvc.GetRecentPayments(ctx, user.ID, 10)
+	if err != nil {
+		b.log.Warn("handlePaymentStatus: load payments", zap.Error(err))
+		return c.Send("Не удалось загрузить платежи — попробуйте позже.")
+	}
+
+	rm := &tele.ReplyMarkup{}
+	if len(payments) == 0 {
+		btnBuy := rm.Data("🛒 Купить VPN", "menu_buy")
+		rm.Inline(rm.Row(btnBuy), rm.Row(backBtn(rm)))
+		return c.Send(
+			"💳 *Статус платежей*\n"+brandLine+"\n\n❌  Платежей пока нет.",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	}
+
+	msg := "💳 *Статус платежей*\n" + brandLine + "\n" +
+		"_Последние " + fmt.Sprintf("%d", len(payments)) + " транзакций:_\n"
+	var rows []tele.Row
+	for _, p := range payments {
+		amount := "Бесплатно"
+		if p.AmountKopecks > 0 {
+			amount = fmt.Sprintf("%.0f ₽", float64(p.AmountKopecks)/100)
+		}
+		msg += fmt.Sprintf(
+			"\n%s\n  📦 %s · %s\n  🆔 `%s` · %s\n",
+			payStatusLabel(p.Status),
+			planName(p.Plan), amount,
+			p.ID.String()[:8],
+			p.CreatedAt.Format("02.01 15:04"),
+		)
+		// Re-check button only for pending payments — terminal statuses are final.
+		if p.Status == domain.PaymentStatusPending {
+			rows = append(rows, rm.Row(
+				rm.Data("🔄 Обновить "+p.ID.String()[:8], "paychk_"+p.ID.String()),
+			))
+			if p.RedirectURL != "" {
+				rows = append(rows, rm.Row(
+					rm.URL("💳 Оплатить "+p.ID.String()[:8], p.RedirectURL),
+				))
+			}
+		}
+	}
+	msg += "\n" + brandLine + "\n_Используйте «Обновить» чтобы проверить статус у платёжной системы._"
+
 	rows = append(rows, rm.Row(backBtn(rm)))
 	rm.Inline(rows...)
 	return c.Send(msg, &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
+}
+
+// ─── /suggest ─────────────────────────────────────────────────────────────────
+
+// handleSuggest accepts an anonymous suggestion (mirrors the website's /suggestions
+// page). Format: `/suggest <текст>` — the user identity is intentionally not
+// stored so the rate-limit key uses the Telegram ID instead of the user UUID.
+func (b *Bot) handleSuggest(c tele.Context) error {
+	ctx := context.Background()
+	if _, err := b.getUser(ctx, c); err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	text := strings.TrimSpace(c.Text())
+	parts := strings.SplitN(text, " ", 2)
+	body := ""
+	if len(parts) >= 2 {
+		body = strings.TrimSpace(parts[1])
+	}
+	if body == "" {
+		rm := &tele.ReplyMarkup{}
+		rm.Inline(rm.Row(backBtn(rm)))
+		return c.Send(
+			"💡 *Анонимная предложка*\n"+brandLine+"\n\n"+
+				"✉️  Формат: `/suggest текст`\n\n"+
+				"📝  Пример:\n`/suggest Добавьте автопродление подписки`\n\n"+
+				"_Сообщения хранятся без привязки к аккаунту._\n"+
+				"_Лимит: 3 предложения в сутки._",
+			&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+		)
+	}
+	if len(body) > 3000 {
+		body = body[:3000]
+	}
+
+	tgID := c.Sender().ID
+	rlKey := fmt.Sprintf("rl:bot:suggest:%d", tgID)
+	count, _ := redisrepo.Increment(ctx, b.rdb, rlKey, 24*time.Hour)
+	if count > 3 {
+		return c.Send("⏳ Лимит предложений на сегодня исчерпан (макс. 3 в сутки).")
+	}
+
+	if _, err := b.repo.CreateSuggestion(ctx, body); err != nil {
+		b.log.Error("handleSuggest: store", zap.Error(err))
+		return c.Send("Не удалось сохранить предложение — попробуйте позже.")
+	}
+
+	rm := &tele.ReplyMarkup{}
+	rm.Inline(rm.Row(backBtn(rm)))
+	return c.Send(
+		"✅ *Спасибо!* Ваше предложение принято анонимно.",
+		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
+	)
 }
 
 // ─── /toggle2fa ───────────────────────────────────────────────────────────────
@@ -1214,6 +1359,7 @@ func (b *Bot) handleHelp(c tele.Context) error {
 			"  ▸ /balance — баланс ЯД\n"+
 			"  ▸ /history — история транзакций\n"+
 			"  ▸ /payments — незавершённые платежи\n"+
+			"  ▸ /paystatus — статус последних платежей\n"+
 			"  ▸ /referral — реферальная программа\n"+
 			"  ▸ /promo КОД — активировать промокод\n\n"+
 			"🔑 *Аккаунт:*\n"+
@@ -1224,6 +1370,7 @@ func (b *Bot) handleHelp(c tele.Context) error {
 			"🎟 *Прочее:*\n"+
 			"  ▸ /ticket — поддержка\n"+
 			"  ▸ /newticket — создать тикет\n"+
+			"  ▸ /suggest текст — анонимное предложение\n"+
 			"  ▸ /info — документы и контакты",
 		&tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm,
 	)
@@ -1749,6 +1896,10 @@ func (b *Bot) RegisterBuyCallbacks() {
 		_ = c.Respond()
 		return b.handlePayments(c)
 	})
+	b.bot.Handle(&tele.Btn{Unique: "menu_paystatus"}, func(c tele.Context) error {
+		_ = c.Respond()
+		return b.handlePaymentStatus(c)
+	})
 b.bot.Handle(&tele.Btn{Unique: "menu_yadshop"}, func(c tele.Context) error {
 		_ = c.Respond()
 		ctx := context.Background()
@@ -1881,9 +2032,80 @@ func (b *Bot) handleGenericCallback(c tele.Context) error {
 		return b.handleTFACallback(c, data[len("tfa_deny_"):], false)
 	case strings.HasPrefix(data, "disconnect_"):
 		return b.handleDisconnectCallback(c, data[len("disconnect_"):])
+	case strings.HasPrefix(data, "paychk_"):
+		return b.handlePaymentCheckCallback(c, data[len("paychk_"):])
 	default:
 		return nil
 	}
+}
+
+// handlePaymentCheckCallback re-syncs a single PENDING payment with Platega
+// and reports the resulting status to the user. Mirrors the website's
+// "Проверить статус" button on the Active Payments card.
+func (b *Bot) handlePaymentCheckCallback(c tele.Context, rawID string) error {
+	ctx := context.Background()
+	_ = c.Respond()
+
+	user, err := b.getUser(ctx, c)
+	if err != nil {
+		return c.Send("Ошибка: " + err.Error())
+	}
+
+	paymentID, err := uuid.Parse(rawID)
+	if err != nil {
+		return c.Send("Некорректный идентификатор платежа.")
+	}
+
+	// Per-user rate-limit so spamming the button can't hammer Platega.
+	rlKey := fmt.Sprintf("rl:bot:paychk:%s", user.ID.String())
+	cnt, _ := redisrepo.Increment(ctx, b.rdb, rlKey, time.Minute)
+	if cnt > 10 {
+		return c.Send("⏳ Слишком частые проверки — подождите минуту.")
+	}
+
+	payment, err := b.subSvc.CheckPaymentStatus(ctx, user.ID, paymentID)
+	if err != nil {
+		return c.Send("Не удалось проверить платёж: " + err.Error())
+	}
+
+	rm := &tele.ReplyMarkup{}
+	var rows []tele.Row
+	tail := ""
+	switch payment.Status {
+	case domain.PaymentStatusPending:
+		tail = "_Платёж ещё в обработке. Если уже оплатили — подождите 1–2 минуты._"
+		if payment.RedirectURL != "" {
+			rows = append(rows, rm.Row(rm.URL("💳 Оплатить", payment.RedirectURL)))
+		}
+		rows = append(rows, rm.Row(rm.Data("🔄 Проверить ещё раз", "paychk_"+payment.ID.String())))
+	case domain.PaymentStatusConfirmed:
+		tail = "_Оплата прошла. Подписка активируется в течение минуты._"
+		rows = append(rows, rm.Row(rm.Data("📋 Мои подписки", "menu_mysubs")))
+	case domain.PaymentStatusCanceled:
+		tail = "_Платёж отменён. Создайте новый, если хотите оплатить._"
+	case domain.PaymentStatusChargebacked:
+		tail = "_Платёж возвращён. Подписка снята с этого пополнения._"
+	case domain.PaymentStatusExpired:
+		tail = "_Время оплаты истекло. Оформите новый платёж через_ /buy"
+	}
+
+	rows = append(rows, rm.Row(backBtn(rm)))
+	rm.Inline(rows...)
+
+	return c.Send(fmt.Sprintf(
+		"💳 *Платёж* `%s`\n"+brandLine+"\n\n"+
+			"📦 Тариф: *%s*\n"+
+			"💰 Сумма: *%.0f ₽*\n"+
+			"📅 Создан: %s\n"+
+			"📊 Статус: *%s*\n\n"+
+			"%s",
+		payment.ID.String()[:8],
+		planName(payment.Plan),
+		float64(payment.AmountKopecks)/100,
+		payment.CreatedAt.Format("02.01.2006 15:04"),
+		payStatusLabel(payment.Status),
+		tail,
+	), &tele.SendOptions{ParseMode: tele.ModeMarkdown}, rm)
 }
 
 func (b *Bot) handleTFACallback(c tele.Context, challengeID string, approve bool) error {
